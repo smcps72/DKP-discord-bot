@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name
 # --- Load Environment Variables ---
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 LICENSE_KEY = os.getenv("GUILD_LICENSE_KEY")
-LICENSE_SERVER_URL = os.getenv("LICENSE_SERVER_URL")
+LICENSE_SERVER_URL = os.getenv("LICENSE_SERVER_URL", "http://vibrant-happiness.railway.internal:5000")
 
 print('DEBUG: DISCORD_BOT_TOKEN:', os.getenv('DISCORD_BOT_TOKEN'))
 print('DEBUG: GUILD_LICENSE_KEY:', os.getenv('GUILD_LICENSE_KEY'))
