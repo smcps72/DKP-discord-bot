@@ -1,0 +1,116 @@
+import aiosqlite
+import logging
+
+DB_FILE = "dkp_bot.db"
+
+class Database:
+    def __init__(self, db_file):
+        self.db_file = db_file
+
+    async def connect(self):
+        self.conn = await aiosqlite.connect(self.db_file)
+        self.conn.row_factory = aiosqlite.Row
+        await self._create_tables()
+
+    async def _create_tables(self):
+        async with self.conn.cursor() as cursor:
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS guilds (
+                    guild_id INTEGER PRIMARY KEY,
+                    license_key TEXT,
+                    license_status TEXT DEFAULT 'unknown',
+                    warning_sent INTEGER DEFAULT 0,
+                    dkp_category_id INTEGER,
+                    dkp_channel_id INTEGER,
+                    raid_channel_id INTEGER,
+                    raid_vc_template_id INTEGER,
+                    officer_role_id INTEGER,
+                    default_dkp_award INTEGER DEFAULT 5
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER,
+                    guild_id INTEGER,
+                    dkp INTEGER DEFAULT 0,
+                    PRIMARY KEY (user_id, guild_id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raids (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER,
+                    leader_id INTEGER,
+                    vc_id INTEGER,
+                    thread_id INTEGER UNIQUE,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS auctions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    raid_id INTEGER,
+                    item_name TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    highest_bidder_id INTEGER,
+                    highest_bid INTEGER DEFAULT 0,
+                    message_id INTEGER,
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER,
+                    user_id INTEGER,
+                    change INTEGER,
+                    reason TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await self.conn.commit()
+    
+    # Generic execute/fetch methods
+    async def execute(self, sql, params=()):
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(sql, params)
+            await self.conn.commit()
+
+    async def fetchone(self, sql, params=()):
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(sql, params)
+            return await cursor.fetchone()
+
+    async def fetchall(self, sql, params=()):
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(sql, params)
+            return await cursor.fetchall()
+
+    # ... add specific helper methods as needed below ...
+    
+    async def get_guild_config(self, guild_id):
+        return await self.fetchone("SELECT * FROM guilds WHERE guild_id = ?", (guild_id,))
+
+    async def get_user_dkp(self, user_id, guild_id):
+        await self.execute("INSERT OR IGNORE INTO users (user_id, guild_id) VALUES (?, ?)", (user_id, guild_id))
+        row = await self.fetchone("SELECT dkp FROM users WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
+        return row['dkp'] if row else 0
+
+    async def modify_user_dkp(self, user_id, guild_id, amount, reason):
+        await self.get_user_dkp(user_id, guild_id) # Ensure user exists
+        await self.execute("UPDATE users SET dkp = dkp + ? WHERE user_id = ? AND guild_id = ?", (amount, user_id, guild_id))
+        await self.execute(
+            "INSERT INTO transactions (guild_id, user_id, change, reason) VALUES (?, ?, ?, ?)",
+            (guild_id, user_id, amount, reason)
+        )
+        logging.info(f"Modified DKP for {user_id} by {amount} in {guild_id}. Reason: {reason}")
+    
+    async def get_raid_by_thread(self, thread_id):
+        return await self.fetchone("SELECT * FROM raids WHERE thread_id = ? AND is_active = 1", (thread_id,))
+
+    async def get_raid_by_vc(self, vc_id):
+        return await self.fetchone("SELECT * FROM raids WHERE vc_id = ? AND is_active = 1", (vc_id,))
+
+    async def get_active_auction(self, raid_id):
+        return await self.fetchone("SELECT * FROM auctions WHERE raid_id = ? AND is_active = 1", (raid_id,))
