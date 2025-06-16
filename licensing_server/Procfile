@@ -1,1 +1,1 @@
-web: PYTHONPATH=. python licensing_server/server.py
+web: gunicorn licensing_server.server:app --bind 0.0.0.0:5000
