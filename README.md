@@ -38,6 +38,13 @@ This project contains a fully functional Discord DKP Bot as specified.
         - `GUILD_LICENSE_KEY`: A secret key you create. This is what you'd "sell" to a guild.
         - `LICENSE_SERVER_URL`: The URL where your licensing server will be running. For local testing, this will be `http://127.0.0.1:5000`.
 
+
+## Adding the Bot to Your Server
+
+To invite the bot to your Discord server, use the following link:
+
+[Add DKP Bot to your server](https://discord.com/oauth2/authorize?client_id=1383638451508871270&scope=bot+applications.commands&permissions=8)
+
 ### 3. Running the Services
 
 You need to run two services in separate terminals.
