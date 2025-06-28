@@ -9,19 +9,22 @@ class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="status", description="Check the bot's operational status.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def status_cmd(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        config = await self.bot.db.get_guild_config(interaction.guild.id)
+    async def _create_status_embed(self, guild_id: int) -> discord.Embed:
+        config = await self.bot.db.get_guild_config(guild_id)
         license_status = config['license_status'].capitalize() if config else "Unknown"
-        active_raids_count = await self.bot.db.fetchone("SELECT COUNT(*) as count FROM raids WHERE guild_id = ? AND is_active = 1", (interaction.guild.id,))
-        embed = create_info_embed(
+        active_raids_count = await self.bot.db.fetchone("SELECT COUNT(*) as count FROM raids WHERE guild_id = ? AND is_active = 1", (guild_id,))
+        return create_info_embed(
             "Bot Status",
             f"• **Discord API:** {self.bot.latency*1000:.2f}ms\n"
             f"• **Subscription:** `{license_status}`\n"
             f"• **Active Raids:** {active_raids_count['count']}"
         )
+
+    @app_commands.command(name="status", description="Check the bot's operational status.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def status_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        embed = await self._create_status_embed(interaction.guild.id)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="history", description="Downloads a CSV of the last 30 days of DKP transactions.")
