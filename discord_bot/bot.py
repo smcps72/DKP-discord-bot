@@ -58,13 +58,14 @@ class DkpBot(commands.Bot):
 
         # Load Cogs
         cogs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cogs")
-        for filename in os.listdir(cogs_dir):
-            if filename.endswith('.py'):
-                try:
-                    await self.load_extension(f'discord_bot.cogs.{filename[:-3]}')
-                    logging.info(f'Loaded cog: {filename}')
-                except Exception as e:
-                    logging.error(f'Failed to load cog {filename}: {e}')
+        if os.path.isdir(cogs_dir):
+            for filename in os.listdir(cogs_dir):
+                if filename.endswith('.py'):
+                    try:
+                        await self.load_extension(f'discord_bot.cogs.{filename[:-3]}')
+                        logging.info(f'Loaded cog: {filename}')
+                    except Exception as e:
+                        logging.error(f'Failed to load cog {filename}: {e}')
         
         # Add persistent views
         self.add_view(WelcomeView(self))
@@ -87,6 +88,5 @@ class DkpBot(commands.Bot):
         await self.db.conn.close()
 
 # --- Run the Bot ---
-if __name__ == "__main__":
-    bot = DkpBot()
-    bot.run(TOKEN)
+bot = DkpBot()
+bot.run(TOKEN)
