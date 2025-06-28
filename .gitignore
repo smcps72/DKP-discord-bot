@@ -8,3 +8,4 @@ __pycache__/
 .DS_Store
 bash.exe.stackdump
 .env.backup
+dkp_bot.db
