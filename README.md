@@ -31,13 +31,21 @@ This project contains a fully functional Discord DKP Bot as specified.
     ```bash
     pip install -r requirements.txt
     ```
-3.  **Configure Environment:**
-    - Rename `.env.example` to `.env`.
-    - Open the `.env` file and fill in the required values:
-        - `DISCORD_BOT_TOKEN`: Your bot's token from the Discord Developer Portal.
-        - `GUILD_LICENSE_KEY`: A secret key you create. This is what you'd "sell" to a guild.
-        - `LICENSE_SERVER_URL`: The URL where your licensing server will be running. For local testing, this will be `http://127.0.0.1:5000`.
+3.  ### 3. Configure Environment:
 
+    - Create a copy of `.env.example` and rename it to `.env.local`.
+    - Open the `.env.local` file and fill in the required values.
+    - The bot is configured to automatically load this file, keeping your secrets safe.
+
+    **Required Variables:**
+
+    - `DISCORD_BOT_TOKEN`: Your bot's token from the Discord Developer Portal.
+
+    **License Check (Optional):**
+
+    - `LICENSE_CHECK_ENABLED`: Set to `false` to disable the license check for local testing. Defaults to `true`.
+    - `GUILD_LICENSE_KEY`: Required if license checks are enabled.
+    - `LICENSE_SERVER_URL`: Required if license checks are enabled. For local testing, use `http://127.0.0.1:5000`.
 
 ## Adding the Bot to Your Server
 
@@ -45,21 +53,33 @@ To invite the bot to your Discord server, use the following link:
 
 [Add DKP Bot to your server](https://discord.com/oauth2/authorize?client_id=1383638451508871270&scope=bot+applications.commands&permissions=8)
 
-### 3. Running the Services
+### 3. Running the Bot
 
-You need to run two services in separate terminals.
+**Running with the Licensing Server:**
+
+If you have `LICENSE_CHECK_ENABLED` set to `true` (or omitted), you need to run two services in separate terminals.
 
 **Terminal 1: Start the Licensing Server**
 ```bash
 cd licensing_server
-python3 server.py
+python server.py
 ```
-It should say it's running on http://127.0.0.1:5000.
+It should say it's running on `http://127.0.0.1:5000`.
 
 **Terminal 2: Start the Discord Bot**
 ```bash
 cd discord_bot
-python3 bot.py
+python bot.py
+```
+
+**Running in Offline Mode (No Licensing Server):**
+
+If you have `LICENSE_CHECK_ENABLED` set to `false` in your `.env.local` file, you only need to start the bot.
+
+**Terminal 1: Start the Discord Bot**
+```bash
+cd discord_bot
+python bot.py
 ```
 
 ### 4. Inviting the Bot
