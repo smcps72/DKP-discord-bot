@@ -1,5 +1,7 @@
 import discord
+import discord
 from discord.ext import commands
+from discord import app_commands
 from ..ui.views import WelcomeView
 from ..utils import create_info_embed
 import logging
@@ -10,11 +12,18 @@ class SetupCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
-        logging.info(f"Joined new guild: {guild.name} ({guild.id})")
+        await self.run_setup(guild)
+
+    async def run_setup(self, guild: discord.Guild, interaction=None):
+        logging.info(f"Running DKP setup for guild: {guild.name} ({guild.id})")
         # Check if setup has already been run
         config = await self.bot.db.get_guild_config(guild.id)
         if config and config['dkp_category_id']:
+            msg = f"Setup already exists for {guild.name}."
             logging.warning(f"Bot re-joined {guild.name}, setup already exists.")
+            if interaction:
+                # followup.send is used because we deferred the response
+                await interaction.followup.send(msg, ephemeral=True)
             return
         # Create a DKP category
         try:
@@ -49,6 +58,8 @@ class SetupCog(commands.Cog):
             message = await dkp_channel.send(embed=embed, view=view)
             await message.pin()
             logging.info(f"Successfully set up DKP system for guild {guild.name}")
+            if interaction:
+                await interaction.followup.send("DKP system setup complete!", ephemeral=True)
         except discord.Forbidden:
             logging.error(f"Missing permissions to set up channels in {guild.name}")
             # Try to send a message to the owner or the first available channel
@@ -56,6 +67,16 @@ class SetupCog(commands.Cog):
                 await guild.owner.send("I tried to set up my channels in your server but I'm missing the 'Manage Channels' permission. Please grant it and re-invite me.")
             except discord.Forbidden:
                 pass # Can't do anything else
+            if interaction:
+                await interaction.followup.send("Missing permissions to set up channels. Please grant 'Manage Channels' and try again.", ephemeral=True)
+
+    @app_commands.command(name="setup_dkp", description="Manually (re)run the DKP system setup. Admins only.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_dkp(self, interaction: discord.Interaction):
+        """Manually (re)run the DKP system setup."""
+        # We need to defer here because the setup can take a moment
+        await interaction.response.defer(ephemeral=True)
+        await self.run_setup(interaction.guild, interaction=interaction)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(SetupCog(bot))
