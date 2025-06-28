@@ -5,21 +5,35 @@ from dotenv import load_dotenv
 import logging
 import asyncio
 import aiohttp
+import sys
+from pathlib import Path
+
+# Fix for 'RuntimeError: Event loop is closed' on Windows
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# --- Path Setup ---
+# This allows the script to be run from anywhere by adding the project root to the system path.
+# This ensures that imports like `from discord_bot.database...` work correctly.
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+
 from discord_bot.database import Database, DB_FILE
 from discord_bot.ui.views import WelcomeView, RaidControlView
 
-# Compute absolute path to project root .env or .env.local
-from pathlib import Path
-project_root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-dotenv_local = project_root / ".env.local"
+# --- Environment Variable Loading ---
+# The bot will look for .env files in the project root.
+dotenv_local_path = project_root / ".env.local"
 dotenv_path = project_root / ".env"
-if dotenv_local.exists():
-    print(f"DEBUG: Loading .env.local from {dotenv_local}")
-    load_dotenv(dotenv_path=dotenv_local)
-else:
-    print(f"DEBUG: Loading .env from {dotenv_path}")
-    load_dotenv(dotenv_path=dotenv_path)
 
+if dotenv_local_path.exists():
+    print(f"INFO: Loading environment from {dotenv_local_path}")
+    load_dotenv(dotenv_path=dotenv_local_path, override=True)
+elif dotenv_path.exists():
+    print(f"INFO: Loading environment from {dotenv_path}")
+    load_dotenv(dotenv_path=dotenv_path, override=True)
+else:
+    print("WARNING: No .env or .env.local file found. Relying on system environment variables.")
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
@@ -28,13 +42,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 LICENSE_KEY = os.getenv("GUILD_LICENSE_KEY")
 LICENSE_SERVER_URL = os.getenv("LICENSE_SERVER_URL", "https://dkp-discord-bot-production.up.railway.app")
+LICENSE_CHECK_ENABLED = os.getenv("LICENSE_CHECK_ENABLED", "false").lower() == "true"
 
 print('DEBUG: DISCORD_BOT_TOKEN:', os.getenv('DISCORD_BOT_TOKEN'))
 print('DEBUG: GUILD_LICENSE_KEY:', os.getenv('GUILD_LICENSE_KEY'))
 print('DEBUG: LICENSE_SERVER_URL:', os.getenv('LICENSE_SERVER_URL'))
+print('DEBUG: LICENSE_CHECK_ENABLED:', LICENSE_CHECK_ENABLED)
 
-if not all([TOKEN, LICENSE_KEY, LICENSE_SERVER_URL]):
-    raise ValueError("One or more environment variables are missing. Please check your .env file.")
+if not TOKEN:
+    raise ValueError("DISCORD_BOT_TOKEN is missing. Please check your .env file.")
+if LICENSE_CHECK_ENABLED and not all([LICENSE_KEY, LICENSE_SERVER_URL]):
+    raise ValueError("GUILD_LICENSE_KEY or LICENSE_SERVER_URL are missing for license check. Please check your .env file or disable license check.")
 
 # --- Bot Class ---
 class DkpBot(commands.Bot):
@@ -50,6 +68,7 @@ class DkpBot(commands.Bot):
         self.db = Database(DB_FILE)
         self.license_key = LICENSE_KEY
         self.license_server_url = LICENSE_SERVER_URL
+        self.license_check_enabled = LICENSE_CHECK_ENABLED
         
     async def setup_hook(self):
         # This is called before the bot logs in
