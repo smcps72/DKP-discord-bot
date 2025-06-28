@@ -11,15 +11,10 @@ class RaidCog(commands.Cog):
         self.bot = bot
 
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
         if not await is_officer(interaction):
-            return await interaction.response.send_message("You must be an officer to create a raid.", ephemeral=True)
-        try:
-            await interaction.response.defer(ephemeral=True, thinking=True)
-        except (discord.InteractionResponded, discord.NotFound):
-            try:
-                await interaction.followup.send("This interaction has expired or already received a response. Please try again.", ephemeral=True)
-            except Exception:
-                pass
+            return await interaction.followup.send("You must be an officer to create a raid.", ephemeral=True)
         config = await self.bot.db.get_guild_config(interaction.guild.id)
         if not config or not all([config['raid_vc_template_id'], config['raid_channel_id']]):
             return await interaction.followup.send(embed=create_error_embed("Setup Incomplete", "The bot is not fully set up. Please ask an admin to re-invite the bot."))
@@ -52,6 +47,12 @@ class RaidCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def raid_create_cmd(self, interaction: discord.Interaction):
         await self.create_raid_from_interaction(interaction)
+
+    @app_commands.command(name="raid_end", description="Ends and closes the current raid.")
+    async def raid_end_cmd(self, interaction: discord.Interaction):
+        if not await is_officer(interaction):
+            return await interaction.response.send_message("You must be an officer or admin to end a raid.", ephemeral=True)
+        await self.close_raid(interaction)
 
     async def update_team_list(self, interaction: discord.Interaction):
         await interaction.response.defer()
