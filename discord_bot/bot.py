@@ -22,18 +22,14 @@ from discord_bot.database import Database, DB_FILE
 from discord_bot.ui.views import WelcomeView, RaidControlView
 
 # --- Environment Variable Loading ---
-# The bot will look for .env files in the project root.
-dotenv_local_path = project_root / ".env.local"
+# The bot will look for the .env file in the project root.
 dotenv_path = project_root / ".env"
 
-if dotenv_local_path.exists():
-    print(f"INFO: Loading environment from {dotenv_local_path}")
-    load_dotenv(dotenv_path=dotenv_local_path, override=True)
-elif dotenv_path.exists():
+if dotenv_path.exists():
     print(f"INFO: Loading environment from {dotenv_path}")
     load_dotenv(dotenv_path=dotenv_path, override=True)
 else:
-    print("WARNING: No .env or .env.local file found. Relying on system environment variables.")
+    print("WARNING: No .env file found. Relying on system environment variables.")
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
