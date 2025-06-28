@@ -52,15 +52,92 @@ class AuctionCog(commands.Cog):
             if bid_amount <= 0: raise ValueError
         except ValueError:
             return await interaction.response.send_message("Bid must be a positive number.", ephemeral=True)
+
         await interaction.response.defer(ephemeral=True)
-        auction = await self.bot.db.fetchone("SELECT * FROM auctions WHERE id = ? AND is_active = 1", (auction_id,))
+
+        # Get auction details and the associated guild_id to handle bids from DMs
+        auction_details_query = """
+            SELECT a.*, r.guild_id 
+            FROM auctions a
+            JOIN raids r ON a.raid_id = r.id
+            WHERE a.id = ? AND a.is_active = 1
+        """
+        auction = await self.bot.db.fetchone(auction_details_query, (auction_id,))
+
         if not auction:
             return await interaction.followup.send("This auction has ended.", ephemeral=True)
-        user_dkp = await self.bot.db.get_user_dkp(interaction.user.id, interaction.guild.id)
+
+        guild_id = auction['guild_id']
+        user_dkp = await self.bot.db.get_user_dkp(interaction.user.id, guild_id)
+        
         if bid_amount > user_dkp:
             return await interaction.followup.send(f"Your bid of **{bid_amount}** exceeds your available DKP of **{user_dkp}**.", ephemeral=True)
+        
         if bid_amount <= auction['highest_bid']:
             return await interaction.followup.send(f"You must bid higher than the current top bid of **{auction['highest_bid']} DKP**.", ephemeral=True)
+
+        # Notify previous high bidder
+        previous_high_bidder_id = auction['highest_bidder_id']
+        if previous_high_bidder_id and previous_high_bidder_id != interaction.user.id:
+            try:
+                previous_bidder = await self.bot.fetch_user(previous_high_bidder_id)
+                outbid_embed = create_error_embed(
+                    "You've been outbid!",
+                    f"Your bid for **{auction['item_name']}** has been surpassed. The new high bid is **{bid_amount} DKP**."
+                )
+                await previous_bidder.send(embed=outbid_embed)
+            except (discord.NotFound, discord.Forbidden):
+                pass # User not found or DMs disabled, safe to ignore
+
+        # Update DB with new highest bid
+        await self.bot.db.execute(
+            "UPDATE auctions SET highest_bid = ?, highest_bidder_id = ? WHERE id = ?",
+            (bid_amount, interaction.user.id, auction_id)
+        )
+
+        # Confirm successful bid
+        await interaction.followup.send(embed=create_success_embed(
+            "Bid Placed Successfully!", 
+            f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** is currently the highest."
+        ), ephemeral=True)
+
+    async def end_auction_from_button(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException as e:
+            # If interaction is already acknowledged, we can ignore the error and proceed
+            if e.code == 40060: 
+                pass
+            else:
+                # Re-raise other exceptions
+                raise
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send(embed=create_error_embed("Error", "This is not a raid thread."), ephemeral=True)
+
+        auction = await self.bot.db.get_active_auction(raid['id'])
+        if not auction:
+            return await interaction.followup.send(embed=create_error_embed("Error", "There is no active auction to end."), ephemeral=True)
+
+        # Deactivate auction
+        await self.bot.db.execute("UPDATE auctions SET is_active = 0 WHERE id = ?", (auction['id'],))
+
+        if not auction['highest_bidder_id']:
+            embed = create_info_embed("Auction Ended", f"The auction for **{auction['item_name']}** has ended with no bids.")
+            return await interaction.followup.send(embed=embed)
+
+        winner = interaction.guild.get_member(auction['highest_bidder_id'])
+        winner_name = winner.mention if winner else f"User ID: {auction['highest_bidder_id']}"
+
+        # Deduct DKP
+        if auction['highest_bidder_id']:
+            await self.bot.db.modify_user_dkp(auction['highest_bidder_id'], interaction.guild.id, -auction['highest_bid'], f"Won auction for {auction['item_name']}")
+
+        embed = create_success_embed(
+            f"Auction Concluded: {auction['item_name']}",
+            f"Congratulations to {winner_name} for winning with a bid of **{auction['highest_bid']} DKP**!"
+        )
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):
