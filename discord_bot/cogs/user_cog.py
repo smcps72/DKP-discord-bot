@@ -8,7 +8,6 @@ class UserCog(commands.Cog):
         self.bot = bot
 
     async def show_my_dkp(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         dkp = await self.bot.db.get_user_dkp(interaction.user.id, interaction.guild.id)
         embed = create_info_embed(
             f"💰 Your DKP Balance",
@@ -29,7 +28,7 @@ class UserCog(commands.Cog):
             "5. **Winning:** The Raid Leader ends the auction. The highest bidder wins and the DKP is automatically deducted."
         )
         embed = create_info_embed("❓ Auction Help", help_text)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="auction_help", description="Explains how the auction system works.")
     async def auction_help_cmd(self, interaction: discord.Interaction):

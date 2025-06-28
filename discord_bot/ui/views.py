@@ -9,43 +9,47 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Create Raid 🏰", style=discord.ButtonStyle.success, custom_id="welcome_create_raid")
     async def create_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         raid_cog = self.bot.get_cog("RaidCog")
         if raid_cog:
             await raid_cog.create_raid_from_interaction(interaction)
         else:
-            await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+            await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
 
     @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="welcome_my_dkp")
     async def my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         user_cog = self.bot.get_cog("UserCog")
         if user_cog:
             await user_cog.show_my_dkp(interaction)
         else:
-            await interaction.response.send_message("User module is currently offline.", ephemeral=True)
+            await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
     @discord.ui.button(label="Auction Help ❓", style=discord.ButtonStyle.primary, custom_id="welcome_auction_help")
     async def auction_help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         user_cog = self.bot.get_cog("UserCog")
         if user_cog:
             await user_cog.show_auction_help(interaction)
         else:
-            await interaction.response.send_message("User module is currently offline.", ephemeral=True)
+            await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
     @discord.ui.button(label="Admin ⚙️", style=discord.ButtonStyle.danger, custom_id="welcome_admin_panel")
     async def admin_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         if not await is_officer(interaction):
-            return await interaction.response.send_message("You must be an officer to use this.", ephemeral=True)
+            return await interaction.followup.send("You must be an officer to use this.", ephemeral=True)
+
         admin_cog = self.bot.get_cog("AdminCog")
         if admin_cog:
             try:
-                await interaction.response.defer(ephemeral=True)
                 embed = await admin_cog._create_status_embed(interaction.guild.id)
                 await interaction.followup.send(embed=embed, ephemeral=True)
             except discord.NotFound:
                 # This might happen if the original interaction is deleted or expires before we can respond.
                 pass
         else:
-            await interaction.response.send_message("Admin module is currently offline.", ephemeral=True)
+            await interaction.followup.send("Admin module is currently offline.", ephemeral=True)
 
 class RaidControlView(discord.ui.View):
     def __init__(self, bot):

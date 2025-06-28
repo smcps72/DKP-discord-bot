@@ -11,7 +11,6 @@ class RaidCog(commands.Cog):
         self.bot = bot
 
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
 
         if not await is_officer(interaction):
             return await interaction.followup.send("You must be an officer to create a raid.", ephemeral=True)
