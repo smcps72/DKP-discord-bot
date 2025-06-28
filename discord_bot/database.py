@@ -23,8 +23,9 @@ class Database:
                     dkp_category_id INTEGER,
                     dkp_channel_id INTEGER,
                     raid_channel_id INTEGER,
-                    raid_vc_template_id INTEGER,
                     officer_role_id INTEGER,
+                    raider_role_id INTEGER,
+                    raid_vc_template_id INTEGER,
                     default_dkp_award INTEGER DEFAULT 5
                 )
             """)
