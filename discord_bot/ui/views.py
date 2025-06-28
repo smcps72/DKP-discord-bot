@@ -9,12 +9,12 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Create Raid 🏰", style=discord.ButtonStyle.success, custom_id="welcome_create_raid")
     async def create_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
         raid_cog = self.bot.get_cog("RaidCog")
         if raid_cog:
             await raid_cog.create_raid_from_interaction(interaction)
         else:
-            await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+            # If the cog isn't loaded, we still need to respond to the interaction.
+            await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
 
     @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="welcome_my_dkp")
     async def my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):

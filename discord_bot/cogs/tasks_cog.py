@@ -7,7 +7,8 @@ from ..utils import create_error_embed, create_info_embed
 class TasksCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.license_check.start()
+        if self.bot.license_check_enabled:
+            self.license_check.start()
         self.cleanup_channels.start()
 
     def cog_unload(self):

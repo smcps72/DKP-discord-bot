@@ -11,6 +11,10 @@ class RaidCog(commands.Cog):
         self.bot = bot
 
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
+        # Defer the response if it hasn't been done yet. 
+        # This makes the function safe to call from commands or views.
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
 
         if not await is_officer(interaction):
             return await interaction.followup.send("You must be an officer to create a raid.", ephemeral=True)
