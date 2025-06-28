@@ -7,3 +7,4 @@ __pycache__/
 *.db
 .DS_Store
 bash.exe.stackdump
+.env.backup
