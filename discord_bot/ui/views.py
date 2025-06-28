@@ -38,12 +38,12 @@ class WelcomeView(discord.ui.View):
         admin_cog = self.bot.get_cog("AdminCog")
         if admin_cog:
             try:
-                await admin_cog.show_admin_panel(interaction)
+                await interaction.response.defer(ephemeral=True)
+                embed = await admin_cog._create_status_embed(interaction.guild.id)
+                await interaction.followup.send(embed=embed, ephemeral=True)
             except discord.NotFound:
-                try:
-                    await interaction.followup.send("This interaction has expired. Please use the command or button again.", ephemeral=True)
-                except Exception:
-                    pass  # Interaction is fully expired, ignore
+                # This might happen if the original interaction is deleted or expires before we can respond.
+                pass
         else:
             await interaction.response.send_message("Admin module is currently offline.", ephemeral=True)
 
@@ -53,21 +53,18 @@ class RaidControlView(discord.ui.View):
         self.bot = bot
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        try:
-            raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-            if not raid or interaction.user.id != raid['leader_id']:
-                try:
-                    await interaction.response.send_message("You are not the leader of this raid.", ephemeral=True)
-                except (discord.InteractionResponded, discord.NotFound):
-                    try:
-                        await interaction.followup.send("You are not the leader of this raid (interaction expired).", ephemeral=True)
-                    except Exception:
-                        pass
-                return False
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if raid and interaction.user.id == raid['leader_id']:
             return True
-        except Exception:
-            # Suppress all exceptions to prevent error spam in discord.ui.view
-            return False
+        
+        # If the check fails, respond to the user if we haven't already.
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.send_message("You are not the leader of this raid.", ephemeral=True)
+            except discord.HTTPException:
+                # This can happen in a race condition, it's safe to ignore.
+                pass
+        return False
 
     @discord.ui.button(label="Update Team", style=discord.ButtonStyle.secondary, custom_id="raid_update_team", row=0)
     async def update_team(self, interaction: discord.Interaction, button: discord.ui.Button):
