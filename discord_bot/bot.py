@@ -8,10 +8,18 @@ import aiohttp
 from discord_bot.database import Database, DB_FILE
 from discord_bot.ui.views import WelcomeView, RaidControlView
 
-# Compute absolute path to project root .env
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-print("DEBUG: Loading .env from", dotenv_path)
-load_dotenv(dotenv_path=dotenv_path)
+# Compute absolute path to project root .env or .env.local
+from pathlib import Path
+project_root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+dotenv_local = project_root / ".env.local"
+dotenv_path = project_root / ".env"
+if dotenv_local.exists():
+    print(f"DEBUG: Loading .env.local from {dotenv_local}")
+    load_dotenv(dotenv_path=dotenv_local)
+else:
+    print(f"DEBUG: Loading .env from {dotenv_path}")
+    load_dotenv(dotenv_path=dotenv_path)
+
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
