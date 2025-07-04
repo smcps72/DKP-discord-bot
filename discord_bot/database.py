@@ -78,6 +78,13 @@ class Database:
             await cursor.execute(sql, params)
             await self.conn.commit()
 
+    async def execute_insert(self, sql, params=()):
+        """Execute an insert statement and return the last row id."""
+        async with self.conn.cursor() as cursor:
+            await cursor.execute(sql, params)
+            await self.conn.commit()
+            return cursor.lastrowid
+
     async def fetchone(self, sql, params=()):
         async with self.conn.cursor() as cursor:
             await cursor.execute(sql, params)
