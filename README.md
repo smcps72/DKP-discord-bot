@@ -7,6 +7,7 @@ This project contains a fully functional Discord DKP Bot as specified.
 - Automatic channel setup on server join.
 - Raid creation with dedicated voice channels and text threads.
 - Point awards and deductions for all members in a voice channel.
+- Optional single-member DKP awards via slash command or raid control panel.
 - A complete, private auction system.
 - Subscription-based activation checked against a simple licensing server.
 - Slash commands and buttons for all major actions.
@@ -102,3 +103,8 @@ python bot.py
 - Copy the generated URL and paste it into your browser to invite the bot to your server.
 
 Once invited, the bot will automatically set up its channels. The Admin ⚙️ button will only be visible to server administrators by default.
+
+### Awarding DKP
+
+- Use `/award_dkp <member> <points> [reason]` to grant DKP to a single user.
+- The "Award DKP" button in a raid thread now includes a field for an optional target member. Leave it blank to adjust everyone in the raid voice channel.

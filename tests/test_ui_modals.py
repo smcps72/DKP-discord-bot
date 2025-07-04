@@ -40,6 +40,11 @@ class TestDKPAdjustmentModal:
         modal.amount.value = "10"
         modal.reason = MagicMock()
         modal.reason.value = "Test Reason"
+        modal.target_member = MagicMock()
+        modal.target_member.value = "123"
+        mock_member = MagicMock()
+        mock_interaction.guild = MagicMock()
+        mock_interaction.guild.get_member.return_value = mock_member
 
         # Act
         await modal.on_submit(mock_interaction)
@@ -49,7 +54,8 @@ class TestDKPAdjustmentModal:
             mock_interaction,
             action,
             "10",
-            "Test Reason"
+            "Test Reason",
+            mock_member,
         )
 
 @pytest.mark.asyncio

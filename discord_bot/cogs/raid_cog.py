@@ -57,6 +57,13 @@ class RaidCog(commands.Cog):
             return await interaction.response.send_message("You must be an officer or admin to end a raid.", ephemeral=True)
         await self.close_raid(interaction)
 
+    @app_commands.command(name="award_dkp", description="Award DKP to a single member.")
+    @app_commands.describe(member="Target member", points="Amount of DKP", reason="Reason for the award")
+    async def award_dkp_cmd(self, interaction: discord.Interaction, member: discord.Member, points: int, reason: str | None = None):
+        if not await is_officer(interaction):
+            return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
+        await self.process_dkp_adjustment(interaction, "Award", str(points), reason or "Manual Award", member)
+
     async def update_team_list(self, interaction: discord.Interaction):
         await interaction.response.defer()
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -73,30 +80,62 @@ class RaidCog(commands.Cog):
         )
         await interaction.followup.send(embed=embed)
 
-    async def process_dkp_adjustment(self, interaction: discord.Interaction, action: str, amount_str: str, reason: str):
+    async def process_dkp_adjustment(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        amount_str: str,
+        reason: str,
+        member: discord.Member | None = None,
+    ):
         await interaction.response.defer()
         try:
             amount = int(amount_str)
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            return await interaction.followup.send(embed=create_error_embed("Invalid Amount", "DKP amount must be a positive number."), ephemeral=True)
+            return await interaction.followup.send(
+                embed=create_error_embed("Invalid Amount", "DKP amount must be a positive number."),
+                ephemeral=True,
+            )
+
         if action == "Deduct":
             amount = -amount
+
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        vc = interaction.guild.get_channel(raid['vc_id'])
-        if not vc or not vc.members:
-            return await interaction.followup.send("The raid voice channel is empty. No points awarded.", ephemeral=True)
-        for member in vc.members:
-            if member.bot: continue
-            await self.bot.db.modify_user_dkp(member.id, interaction.guild.id, amount, f"{action}: {reason} (Raid)")
+        vc = interaction.guild.get_channel(raid["vc_id"]) if raid else None
+
+        if member is None:
+            if not vc or not vc.members:
+                return await interaction.followup.send(
+                    "The raid voice channel is empty. No points awarded.",
+                    ephemeral=True,
+                )
+            targets = [m for m in vc.members if not m.bot]
+        else:
+            targets = [] if member.bot else [member]
+
+        for m in targets:
+            await self.bot.db.modify_user_dkp(
+                m.id,
+                interaction.guild.id,
+                amount,
+                f"{action}: {reason} (Raid)",
+            )
+
         action_word = "Awarded" if action == "Award" else "Deducted"
+        if member:
+            description = f"**{abs(amount)} DKP** {action_word.lower()} to {member.mention} for: *{reason}*."
+        else:
+            description = (
+                f"**{abs(amount)} DKP** {action_word.lower()} to **{len(targets)}** players for: *{reason}*."
+            )
+
         embed = create_success_embed(
             f"DKP {action_word}!",
-            f"**{abs(amount)} DKP** {action_word.lower()} to **{len(vc.members)}** players for: *{reason}*."
+            description,
         )
         await interaction.followup.send(embed=embed)
-
     async def close_raid(self, interaction: discord.Interaction):
         await interaction.response.defer()
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)

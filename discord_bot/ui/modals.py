@@ -18,11 +18,31 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             style=discord.TextStyle.long,
             required=True
         )
+        self.target_member = TextInput(
+            label="Target Member ID (optional)",
+            placeholder="Leave blank to adjust everyone in VC",
+            style=discord.TextStyle.short,
+            required=False,
+        )
         self.add_item(self.amount)
         self.add_item(self.reason)
+        self.add_item(self.target_member)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.raid_cog.process_dkp_adjustment(interaction, self.action, self.amount.value, self.reason.value)
+        member = None
+        if self.target_member.value:
+            member_id = None
+            digits = [c for c in self.target_member.value if c.isdigit()]
+            if digits:
+                try:
+                    member_id = int("".join(digits))
+                except ValueError:
+                    member_id = None
+            if member_id:
+                member = interaction.guild.get_member(member_id)
+            if member is None:
+                return await interaction.response.send_message("Member not found.", ephemeral=True)
+        await self.raid_cog.process_dkp_adjustment(interaction, self.action, self.amount.value, self.reason.value, member)
 
 class AuctionStartModal(Modal, title="Start New Auction"):
     def __init__(self, auction_cog):

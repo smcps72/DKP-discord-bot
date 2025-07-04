@@ -135,6 +135,7 @@ class TestRaidControlView:
         assert modal_sent.title == "DKP Adjustment"
         assert modal_sent.action == "Award"
         assert modal_sent.raid_cog == mock_raid_cog
+        assert hasattr(modal_sent, "target_member")
 
     async def test_deduct_dkp_button(self, mock_bot, mock_raid_control_interaction):
         """Tests that the 'Deduct DKP' button calls send_modal with DKPAdjustmentModal."""
