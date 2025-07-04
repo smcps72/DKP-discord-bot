@@ -65,5 +65,12 @@ class AdminCog(commands.Cog):
             ephemeral=True
         )
 
+    async def set_role(self, interaction: discord.Interaction, role_type: str, role: discord.Role):
+        await self.bot.db.execute(
+            f"UPDATE guilds SET {role_type.lower()}_role_id = ? WHERE guild_id = ?",
+            (role.id, interaction.guild.id)
+        )
+        await interaction.response.send_message(f"{role_type} role has been updated to {role.mention}.", ephemeral=True)
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))
