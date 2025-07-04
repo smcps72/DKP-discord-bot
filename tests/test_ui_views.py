@@ -45,7 +45,7 @@ async def test_welcome_view_create_raid_button(mock_bot, mock_interaction):
     view = WelcomeView(bot=mock_bot)
 
     # Act
-    await view.create_raid.callback(mock_interaction, MagicMock())
+    await view.create_raid.callback(mock_interaction)
 
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True, thinking=True)
@@ -61,7 +61,7 @@ async def test_welcome_view_my_dkp_button(mock_bot, mock_interaction):
     view = WelcomeView(bot=mock_bot)
 
     # Act
-    await view.my_dkp.callback(mock_interaction, MagicMock())
+    await view.my_dkp.callback(mock_interaction)
 
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
@@ -79,7 +79,7 @@ async def test_welcome_view_admin_button_as_officer(mock_is_officer, mock_bot, m
     view = WelcomeView(bot=mock_bot)
 
     # Act
-    await view.admin_panel.callback(mock_interaction, MagicMock())
+    await view.admin_panel.callback(mock_interaction)
 
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
@@ -96,7 +96,7 @@ async def test_welcome_view_admin_button_as_non_officer(mock_is_officer, mock_bo
     view = WelcomeView(bot=mock_bot)
 
     # Act
-    await view.admin_panel.callback(mock_interaction, MagicMock())
+    await view.admin_panel.callback(mock_interaction)
 
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
