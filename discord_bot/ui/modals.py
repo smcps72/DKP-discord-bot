@@ -2,10 +2,12 @@ import discord
 from discord.ui import Modal, TextInput
 
 class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
-    def __init__(self, action: str, raid_cog):
+    def __init__(self, action: str, raid_cog, member: discord.Member | None = None):
         super().__init__()
-        self.action = action  # "Award" or "Deduct"
+        self.action = action
         self.raid_cog = raid_cog
+        self.target_member_obj = member  # The member passed from the command
+
         self.amount = TextInput(
             label="Amount of DKP",
             placeholder="e.g., 5 or 10",
@@ -18,30 +20,48 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             style=discord.TextStyle.long,
             required=True
         )
-        self.target_member = TextInput(
-            label="Target Member ID (optional)",
-            placeholder="Leave blank to adjust everyone in VC",
-            style=discord.TextStyle.short,
-            required=False,
-        )
         self.add_item(self.amount)
         self.add_item(self.reason)
-        self.add_item(self.target_member)
+
+        # Only add the text input if no member was pre-selected
+        self.target_member_input = None
+        if member is None:
+            self.target_member_input = TextInput(
+                label="Target Member Name (optional)",
+                placeholder="Leave blank to adjust everyone in VC",
+                style=discord.TextStyle.short,
+                required=False,
+            )
+            self.add_item(self.target_member_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        member = None
-        if self.target_member.value:
-            member_id = None
-            digits = [c for c in self.target_member.value if c.isdigit()]
-            if digits:
-                try:
-                    member_id = int("".join(digits))
-                except ValueError:
+        member = self.target_member_obj
+        
+        # If no member was passed, get it from the text input
+        if member is None and self.target_member_input:
+            target_value = self.target_member_input.value
+            if target_value:
+                # First, try to find by name/nickname
+                member = interaction.guild.get_member_named(target_value)
+
+                # If not found, try to parse as an ID or mention
+                if member is None:
                     member_id = None
-            if member_id:
-                member = interaction.guild.get_member(member_id)
-            if member is None:
-                return await interaction.response.send_message("Member not found.", ephemeral=True)
+                    digits = [c for c in target_value if c.isdigit()]
+                    if digits:
+                        try:
+                            member_id = int("".join(digits))
+                        except ValueError:
+                            pass
+                    if member_id:
+                        member = interaction.guild.get_member(member_id)
+
+                if member is None:
+                    return await interaction.response.send_message(
+                        f"Member '{target_value}' not found. Please use their exact Discord name, nickname, or ID.",
+                        ephemeral=True
+                    )
+        
         await self.raid_cog.process_dkp_adjustment(interaction, self.action, self.amount.value, self.reason.value, member)
 
 class AuctionStartModal(Modal, title="Start New Auction"):

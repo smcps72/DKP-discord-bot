@@ -57,12 +57,49 @@ class RaidCog(commands.Cog):
             return await interaction.response.send_message("You must be an officer or admin to end a raid.", ephemeral=True)
         await self.close_raid(interaction)
 
-    @app_commands.command(name="award_dkp", description="Award DKP to a single member.")
-    @app_commands.describe(member="Target member", points="Amount of DKP", reason="Reason for the award")
-    async def award_dkp_cmd(self, interaction: discord.Interaction, member: discord.Member, points: int, reason: str | None = None):
+    async def member_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel_id)
+        if not raid:
+            return []
+        vc = interaction.guild.get_channel(raid['vc_id'])
+        if not vc:
+            return []
+        
+        members = vc.members
+        return [
+            app_commands.Choice(name=member.display_name, value=str(member.id))
+            for member in members
+            if not member.bot and current.lower() in member.display_name.lower()
+        ][:25]
+
+    @app_commands.command(name="award", description="Award DKP to a member or the entire raid.")
+    @app_commands.autocomplete(member=member_autocomplete)
+    @app_commands.describe(member="(Optional) The member to award DKP to. Leave blank to award to the entire raid.")
+    async def award_cmd(self, interaction: discord.Interaction, member: str | None = None):
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
-        await self.process_dkp_adjustment(interaction, "Award", str(points), reason or "Manual Award", member)
+        target_member = await self._get_member_from_str(interaction, member)
+        modal = DKPAdjustmentModal(action="Award", raid_cog=self, member=target_member)
+        await interaction.response.send_modal(modal)
+
+    @app_commands.command(name="deduct", description="Deduct DKP from a member or the entire raid.")
+    @app_commands.autocomplete(member=member_autocomplete)
+    @app_commands.describe(member="(Optional) The member to deduct DKP from. Leave blank to deduct from the entire raid.")
+    async def deduct_cmd(self, interaction: discord.Interaction, member: str | None = None):
+        if not await is_officer(interaction):
+            return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
+        target_member = await self._get_member_from_str(interaction, member)
+        modal = DKPAdjustmentModal(action="Deduct", raid_cog=self, member=target_member)
+        await interaction.response.send_modal(modal)
+
+    async def _get_member_from_str(self, interaction: discord.Interaction, member_str: str | None) -> discord.Member | None:
+        if not member_str:
+            return None
+        try:
+            member_id = int(member_str)
+            return interaction.guild.get_member(member_id)
+        except (ValueError, TypeError):
+            return None
 
     async def update_team_list(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -88,7 +125,9 @@ class RaidCog(commands.Cog):
         reason: str,
         member: discord.Member | None = None,
     ):
-        await interaction.response.defer()
+        # Defer if not already deferred
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         try:
             amount = int(amount_str)
             if amount <= 0:

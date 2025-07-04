@@ -79,14 +79,16 @@ class RaidControlView(discord.ui.View):
     @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_award_dkp", row=0)
     async def award_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
-        modal = DKPAdjustmentModal(action="Award", raid_cog=raid_cog)
+        modal = DKPAdjustmentModal(action="Award", raid_cog=raid_cog, member=None)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Deduct DKP", style=discord.ButtonStyle.danger, custom_id="raid_deduct_dkp", row=0)
     async def deduct_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
-        modal = DKPAdjustmentModal(action="Deduct", raid_cog=raid_cog)
+        modal = DKPAdjustmentModal(action="Deduct", raid_cog=raid_cog, member=None)
         await interaction.response.send_modal(modal)
+
+
 
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
