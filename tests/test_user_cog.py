@@ -1,5 +1,4 @@
 import pytest
-import discord
 from discord.ext import commands
 from unittest.mock import AsyncMock, MagicMock
 
