@@ -1,6 +1,6 @@
 import pytest
 from discord.ext import commands
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from discord_bot.cogs.user_cog import UserCog
 from discord_bot.utils import create_info_embed
