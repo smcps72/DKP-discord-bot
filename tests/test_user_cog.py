@@ -39,7 +39,7 @@ async def test_my_dkp_cmd(user_cog, bot):
 
     await user_cog.my_dkp_cmd.callback(user_cog, mock_interaction)
 
-    bot.db.get_user_dkp.assert_called_once_with(123, 456)
+    bot.db.get_user_dkp.assert_awaited_once_with(123, 456)
 
     expected_embed = create_info_embed(
         f"💰 Your DKP Balance",
