@@ -9,6 +9,7 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Create Raid 🏰", style=discord.ButtonStyle.success, custom_id="welcome_create_raid")
     async def create_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         raid_cog = self.bot.get_cog("RaidCog")
         if raid_cog:
             await raid_cog.create_raid_from_interaction(interaction)
