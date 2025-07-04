@@ -7,14 +7,18 @@ from discord_bot.database import Database
 # Mock discord.py objects
 class MockRole(MagicMock):
     def __init__(self, id, *args, **kwargs):
+        name = kwargs.pop('name', None)
         super().__init__(*args, **kwargs)
         self.id = id
+        self.name = name
         self.delete = AsyncMock()
 
 class MockChannel(MagicMock):
     def __init__(self, id, *args, **kwargs):
+        name = kwargs.pop('name', None)
         super().__init__(*args, **kwargs)
         self.id = id
+        self.name = name
         self.delete = AsyncMock()
 
 class MockGuild(MagicMock):
@@ -45,12 +49,13 @@ async def test_reset_command():
     category_id, dkp_channel_id, raid_channel_id = 200, 201, 202
     officer_role_id, raider_role_id = 300, 301
 
-    mock_guild = MockGuild(id=guild_id)
-    mock_category = MockChannel(id=category_id)
-    mock_dkp_channel = MockChannel(id=dkp_channel_id)
-    mock_raid_channel = MockChannel(id=raid_channel_id)
-    mock_officer_role = MockRole(id=officer_role_id)
-    mock_raider_role = MockRole(id=raider_role_id)
+    mock_guild = MockGuild(guild_id)
+    mock_guild.name = "Test Guild"
+    mock_category = MockChannel(id=category_id, name='dkp-category')
+    mock_dkp_channel = MockChannel(id=dkp_channel_id, name='dkp')
+    mock_raid_channel = MockChannel(id=raid_channel_id, name='raids')
+    mock_officer_role = MockRole(id=officer_role_id, name='Officer')
+    mock_raider_role = MockRole(id=raider_role_id, name='Raider')
 
     def get_channel_side_effect(channel_id):
         if channel_id == category_id: return mock_category
@@ -79,7 +84,7 @@ async def test_reset_command():
     await db.execute("INSERT INTO users (user_id, guild_id, dkp) VALUES (?, ?, ?)", (123, guild_id, 50))
 
     # 2. Run the Command
-    mock_interaction = MockInteraction(guild=mock_guild)
+    mock_interaction = MockInteraction(mock_guild)
     await cog.reset.callback(cog, mock_interaction)
 
     # 3. Assert Results
