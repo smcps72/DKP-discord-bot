@@ -28,6 +28,21 @@ class RaidCog(commands.Cog):
         try:
             raid_date = datetime.now().strftime("%Y-%m-%d")
             new_vc = await template_vc.clone(name=f"Raid-{raid_date}")
+            # Assign raid leader role and permissions
+            raid_leader_role_id = config['raid_leader_role_id'] if 'raid_leader_role_id' in config else None
+            if raid_leader_role_id:
+                raid_leader_role = interaction.guild.get_role(raid_leader_role_id)
+                if raid_leader_role:
+                    await interaction.user.add_roles(raid_leader_role, reason="Started a raid.")
+                    overwrite = discord.PermissionOverwrite(manage_channels=True, move_members=True, view_channel=True)
+                    await new_vc.set_permissions(raid_leader_role, overwrite=overwrite)
+                else:
+                    await interaction.followup.send("The configured Raid-Leader role was not found. Please have an admin set a new one.", ephemeral=True)
+            else:
+                # If no role is set, just give the user perms
+                overwrite = discord.PermissionOverwrite(manage_channels=True, move_members=True, view_channel=True)
+                await new_vc.set_permissions(interaction.user, overwrite=overwrite)
+
             await new_vc.set_permissions(interaction.guild.default_role, view_channel=True)
             raid_message = await active_raids_channel.send(f"Raid started by {interaction.user.mention} on <t:{int(datetime.now().timestamp())}:F>")
             thread = await raid_message.create_thread(name=f"Raid Log - {raid_date}")
@@ -186,6 +201,19 @@ class RaidCog(commands.Cog):
         await self.bot.db.execute("UPDATE raids SET is_active = 0 WHERE id = ?", (raid['id'],))
         if vc:
             await vc.delete(reason="Raid closed.")
+
+        # Remove raid leader role
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        raid_leader_role_id = config['raid_leader_role_id'] if 'raid_leader_role_id' in config else None
+        if raid_leader_role_id:
+            raid_leader_role = interaction.guild.get_role(raid_leader_role_id)
+            leader = interaction.guild.get_member(raid['leader_id'])
+            if raid_leader_role and leader:
+                try:
+                    await leader.remove_roles(raid_leader_role, reason="Raid ended.")
+                except discord.HTTPException:
+                    pass # Ignore if user left or role is gone
+
         await thread.send(f"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.")
         await thread.edit(archived=True, locked=True)
 

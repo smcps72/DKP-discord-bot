@@ -39,10 +39,15 @@ class SetupCog(commands.Cog):
                 guild.default_role: discord.PermissionOverwrite(view_channel=False)
             }
             vc_template = await category.create_voice_channel("Raid-Template", overwrites=vc_overwrites)
+            # Create roles
+            officer_role = await guild.create_role(name="Officer", permissions=discord.Permissions.none(), hoist=True, mentionable=True)
+            raider_role = await guild.create_role(name="Raider", permissions=discord.Permissions.none(), hoist=True, mentionable=True)
+            raid_leader_role = await guild.create_role(name="Raid-Leader", permissions=discord.Permissions.none(), hoist=True, mentionable=True)
+
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, raid_vc_template_id, license_key) VALUES (?, ?, ?, ?, ?, ?)",
-                (guild.id, category.id, dkp_channel.id, raid_channel.id, vc_template.id, self.bot.license_key)
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, raid_vc_template_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guild.id, category.id, dkp_channel.id, raid_channel.id, vc_template.id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
             )
             # Send welcome panel
             embed = create_info_embed(
@@ -61,14 +66,14 @@ class SetupCog(commands.Cog):
             if interaction:
                 await interaction.followup.send("DKP system setup complete!", ephemeral=True)
         except discord.Forbidden:
-            logging.error(f"Missing permissions to set up channels in {guild.name}")
+            logging.error(f"Missing permissions to set up channels or roles in {guild.name}")
             # Try to send a message to the owner or the first available channel
             try:
-                await guild.owner.send("I tried to set up my channels in your server but I'm missing the 'Manage Channels' permission. Please grant it and re-invite me.")
+                await guild.owner.send("I tried to set up my channels and roles in your server but I'm missing the 'Manage Channels' or 'Manage Roles' permission. Please grant them and re-invite me.")
             except discord.Forbidden:
                 pass # Can't do anything else
             if interaction:
-                await interaction.followup.send("Missing permissions to set up channels. Please grant 'Manage Channels' and try again.", ephemeral=True)
+                await interaction.followup.send("Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True)
 
     @app_commands.command(name="setup_dkp", description="Manually (re)run the DKP system setup. Admins only.")
     @app_commands.checks.has_permissions(administrator=True)

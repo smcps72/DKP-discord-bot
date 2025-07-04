@@ -35,13 +35,20 @@ def mock_interaction():
     user = MockUser(id=456)
     return MockInteraction(guild=guild, user=user)
 
+@patch('discord_bot.utils.is_officer', new_callable=AsyncMock)
 @pytest.mark.asyncio
-async def test_welcome_view_create_raid_button(mock_bot, mock_interaction):
+async def test_welcome_view_create_raid_button(mock_is_officer, mock_bot, mock_interaction):
     """Tests that the 'Create Raid' button defers and calls the correct cog method."""
     # Arrange
+    mock_is_officer.return_value = True
     mock_raid_cog = MagicMock()
     mock_raid_cog.create_raid_from_interaction = AsyncMock()
     mock_bot.get_cog.return_value = mock_raid_cog
+    mock_bot.db.get_guild_config.return_value = {
+        'raid_vc_template_id': 1,
+        'raid_channel_id': 2,
+        'raid_leader_role_id': 3
+    }
     view = WelcomeView(bot=mock_bot)
 
     # Act
@@ -67,15 +74,30 @@ async def test_welcome_view_my_dkp_button(mock_bot, mock_interaction):
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
     mock_user_cog.show_my_dkp.assert_called_once_with(mock_interaction)
 
-@patch('discord_bot.ui.views.is_officer', new_callable=AsyncMock)
 @pytest.mark.asyncio
-async def test_welcome_view_admin_button_as_officer(mock_is_officer, mock_bot, mock_interaction):
-    """Tests the admin button for an authorized officer."""
+async def test_welcome_view_bot_status_button(mock_bot, mock_interaction):
+    """Tests the bot status button."""
     # Arrange
-    mock_is_officer.return_value = True
     mock_admin_cog = MagicMock()
     mock_admin_cog._create_status_embed = AsyncMock(return_value="embed_content")
     mock_bot.get_cog.return_value = mock_admin_cog
+    view = WelcomeView(bot=mock_bot)
+
+    # Act
+    await view.bot_status.callback(mock_interaction)
+
+    # Assert
+    mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
+    mock_admin_cog._create_status_embed.assert_called_once_with(mock_interaction.guild.id)
+    mock_interaction.followup.send.assert_called_once_with(embed="embed_content", ephemeral=True)
+
+@patch('discord_bot.ui.views.is_officer', new_callable=AsyncMock)
+@patch('discord_bot.ui.views.AdminPanelView')
+@pytest.mark.asyncio
+async def test_welcome_view_admin_panel_button_as_officer(mock_AdminPanelView, mock_is_officer, mock_bot, mock_interaction):
+    """Tests the admin panel button for an authorized officer."""
+    # Arrange
+    mock_is_officer.return_value = True
     view = WelcomeView(bot=mock_bot)
 
     # Act
@@ -84,13 +106,12 @@ async def test_welcome_view_admin_button_as_officer(mock_is_officer, mock_bot, m
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
     mock_is_officer.assert_called_once_with(mock_interaction)
-    mock_admin_cog._create_status_embed.assert_called_once_with(mock_interaction.guild.id)
-    mock_interaction.followup.send.assert_called_once_with(embed="embed_content", ephemeral=True)
+    mock_interaction.followup.send.assert_called_once_with("Welcome to the Admin Panel.", view=mock_AdminPanelView.return_value, ephemeral=True)
 
 @patch('discord_bot.ui.views.is_officer', new_callable=AsyncMock)
 @pytest.mark.asyncio
-async def test_welcome_view_admin_button_as_non_officer(mock_is_officer, mock_bot, mock_interaction):
-    """Tests the admin button for a non-officer."""
+async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_officer, mock_bot, mock_interaction):
+    """Tests the admin panel button for a non-officer."""
     # Arrange
     mock_is_officer.return_value = False
     view = WelcomeView(bot=mock_bot)
