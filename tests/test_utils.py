@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import MagicMock
 import discord
 
 from discord_bot import utils
