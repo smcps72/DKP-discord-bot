@@ -36,7 +36,7 @@ class ResetCog(commands.Cog):
             async def safe_delete(item_id, get_method, item_type):
                 if item_id:
                     item = get_method(item_id)
-                    if item:
+                    if item is not None:
                         await item.delete(reason="DKP Bot Reset")
                         logging.info(f"Deleted {item_type} {item.name} ({item_id})")
 

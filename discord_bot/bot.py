@@ -99,8 +99,10 @@ class DkpBot(commands.Bot):
 
     async def close(self):
         await super().close()
-        await self.http_session.close()
-        await self.db.conn.close()
+        if hasattr(self, 'http_session'):
+            await self.http_session.close()
+        if hasattr(self.db, 'conn') and self.db.conn:
+            await self.db.conn.close()
 
 # --- Run the Bot ---
 bot = DkpBot()

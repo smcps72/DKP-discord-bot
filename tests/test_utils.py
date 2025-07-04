@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 import discord
 
 from discord_bot import utils
@@ -19,13 +19,27 @@ async def test_is_officer_not_admin():
     mock_interaction.user = MagicMock(spec=discord.Member)
     mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
     mock_interaction.user.guild_permissions.administrator = False
-    # If officer role check was active, we'd also mock roles here
-    # mock_interaction.user.roles = []
-    # mock_interaction.client = MagicMock()
-    # mock_interaction.client.db = MagicMock()
-    # mock_interaction.client.db.get_guild_config = AsyncMock(return_value={'officer_role_id': 12345})
+    mock_interaction.user.roles = []
+    mock_interaction.client = MagicMock()
+    mock_interaction.client.db = MagicMock()
+    mock_interaction.client.db.get_guild_config = AsyncMock(return_value={'officer_role_id': 12345})
 
     assert await utils.is_officer(mock_interaction) is False
+
+@pytest.mark.asyncio
+async def test_is_officer_with_role():
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.user = MagicMock(spec=discord.Member)
+    mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
+    mock_interaction.user.guild_permissions.administrator = False
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 12345
+    mock_interaction.user.roles = [mock_role]
+    mock_interaction.client = MagicMock()
+    mock_interaction.client.db = MagicMock()
+    mock_interaction.client.db.get_guild_config = AsyncMock(return_value={'officer_role_id': 12345})
+
+    assert await utils.is_officer(mock_interaction) is True
 
 def test_create_info_embed():
     title = "Test Info"
