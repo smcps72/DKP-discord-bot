@@ -127,24 +127,19 @@ async def test_get_active_auction():
         leader_id = 10
         vc_id = 300
         thread_id_raid1 = 3000
-        raid_id_1 = 1 # Assuming auto-increment starts at 1
-        raid_id_2 = 2 # For a different raid
-
         # Insert a raid to link auctions to
         await db.execute(
             "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
             (guild_id, leader_id, vc_id, thread_id_raid1, 1)
         )
-        # raid_id_1 should be the ID of the raid inserted above.
-        # We can fetch it or assume it's 1 if the table is empty before this test.
-        # For robustness, let's assume it's 1 for this test setup with :memory:
+        raid_id_1 = db.conn.lastrowid  # Dynamically fetch the ID of the inserted raid
 
         # Insert another raid for testing no active auction
         await db.execute(
             "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
             (guild_id, leader_id, vc_id + 1, thread_id_raid1 + 1, 1)
         )
-        # raid_id_2 should be 2
+        raid_id_2 = db.conn.lastrowid  # Dynamically fetch the ID of the second inserted raid
 
         item_name_active = "Active Item"
         item_name_inactive = "Inactive Item"
