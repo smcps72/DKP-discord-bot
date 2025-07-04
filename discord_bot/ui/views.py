@@ -279,25 +279,27 @@ class RaidControlView(discord.ui.View):
     async def _show_dkp_adjustment_view(self, interaction: discord.Interaction, action: str):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
-            return await interaction.response.send_message("This raid is not active.", ephemeral=True)
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
         vc = interaction.guild.get_channel(raid['vc_id'])
         if not vc or not isinstance(vc, discord.VoiceChannel):
-            return await interaction.response.send_message("Raid voice channel not found.", ephemeral=True)
+            return await interaction.followup.send("Raid voice channel not found.", ephemeral=True)
 
         members = [m for m in vc.members if not m.bot]
         if not members:
-            return await interaction.response.send_message("The voice channel is empty.", ephemeral=True)
+            return await interaction.followup.send("The voice channel is empty.", ephemeral=True)
 
         view = DKPAdjustmentView(self.bot, action, members)
-        await interaction.response.send_message(f"Who do you want to {action.lower()} DKP?", view=view, ephemeral=True)
+        await interaction.followup.send(f"Who do you want to {action.lower()} DKP?", view=view, ephemeral=True)
 
     @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_award_dkp", row=0)
     async def award_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await self._show_dkp_adjustment_view(interaction, "Award")
 
     @discord.ui.button(label="Deduct DKP", style=discord.ButtonStyle.danger, custom_id="raid_deduct_dkp", row=0)
     async def deduct_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await self._show_dkp_adjustment_view(interaction, "Deduct")
 
 
