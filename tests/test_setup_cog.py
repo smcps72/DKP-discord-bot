@@ -109,7 +109,8 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     overwrite_vc = kwargs_vc["overwrites"][mock_guild.default_role]
     assert overwrite_vc.view_channel is False
     # Check other permissions are not set / default if necessary
-    assert overwrite_vc.read_messages is False # If view_channel is False, read_messages will also be False
+    # discord.PermissionOverwrite(view_channel=False) also sets read_messages to False.
+    assert overwrite_vc.read_messages is False
 
     # 5. Verify database execute call
     mock_bot.db.execute.assert_called_once_with(
