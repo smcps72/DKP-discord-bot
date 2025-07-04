@@ -77,10 +77,10 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Admin Panel ⚙️", style=discord.ButtonStyle.danger, custom_id="welcome_admin_panel")
     async def admin_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         if not await is_officer(interaction):
             return await interaction.followup.send("You must be an officer to use this.", ephemeral=True)
-        
+
         view = AdminPanelView(self.bot)
         await interaction.followup.send("Welcome to the Admin Panel.", view=view, ephemeral=True)
 
