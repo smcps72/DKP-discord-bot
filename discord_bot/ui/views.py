@@ -1,7 +1,36 @@
 import discord
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RoleSetupModal
-from discord.ui import UserSelect
+from discord.ui import UserSelect, Select
 from ..utils import is_officer
+
+
+class MemberSelect(Select):
+    def __init__(self, bot, action: str, members: list[discord.Member]):
+        self.bot = bot
+        self.action = action
+        options = [discord.SelectOption(label=member.display_name, value=str(member.id)) for member in members]
+        super().__init__(placeholder=f"Select a member to {action.lower()} DKP...", options=options[:25])
+
+    async def callback(self, interaction: discord.Interaction):
+        raid_cog = self.bot.get_cog("RaidCog")
+        member_id = int(self.values[0])
+        member = interaction.guild.get_member(member_id)
+        modal = DKPAdjustmentModal(action=self.action, raid_cog=raid_cog, member=member)
+        await interaction.response.send_modal(modal)
+
+
+class DKPAdjustmentView(discord.ui.View):
+    def __init__(self, bot, action: str, members: list[discord.Member]):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.action = action
+        self.add_item(MemberSelect(bot, action, members))
+
+    @discord.ui.button(label="All in VC", style=discord.ButtonStyle.primary)
+    async def all_in_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        modal = DKPAdjustmentModal(action=self.action, raid_cog=raid_cog, member=None)
+        await interaction.response.send_modal(modal)
 
 class WelcomeView(discord.ui.View):
     def __init__(self, bot):
@@ -247,17 +276,29 @@ class RaidControlView(discord.ui.View):
         raid_cog = self.bot.get_cog("RaidCog")
         await raid_cog.update_team_list(interaction)
 
+    async def _show_dkp_adjustment_view(self, interaction: discord.Interaction, action: str):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This raid is not active.", ephemeral=True)
+
+        vc = interaction.guild.get_channel(raid['vc_id'])
+        if not vc or not isinstance(vc, discord.VoiceChannel):
+            return await interaction.response.send_message("Raid voice channel not found.", ephemeral=True)
+
+        members = [m for m in vc.members if not m.bot]
+        if not members:
+            return await interaction.response.send_message("The voice channel is empty.", ephemeral=True)
+
+        view = DKPAdjustmentView(self.bot, action, members)
+        await interaction.response.send_message(f"Who do you want to {action.lower()} DKP?", view=view, ephemeral=True)
+
     @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_award_dkp", row=0)
     async def award_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_cog = self.bot.get_cog("RaidCog")
-        modal = DKPAdjustmentModal(action="Award", raid_cog=raid_cog, member=None)
-        await interaction.response.send_modal(modal)
+        await self._show_dkp_adjustment_view(interaction, "Award")
 
     @discord.ui.button(label="Deduct DKP", style=discord.ButtonStyle.danger, custom_id="raid_deduct_dkp", row=0)
     async def deduct_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_cog = self.bot.get_cog("RaidCog")
-        modal = DKPAdjustmentModal(action="Deduct", raid_cog=raid_cog, member=None)
-        await interaction.response.send_modal(modal)
+        await self._show_dkp_adjustment_view(interaction, "Deduct")
 
 
 
