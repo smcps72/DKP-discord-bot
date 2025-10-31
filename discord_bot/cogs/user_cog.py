@@ -8,6 +8,9 @@ class UserCog(commands.Cog):
         self.bot = bot
 
     async def show_my_dkp(self, interaction: discord.Interaction):
+        # Ensure we've acknowledged the interaction before using followups
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         dkp = await self.bot.db.get_user_dkp(interaction.user.id, interaction.guild.id)
         embed = create_info_embed(
             f"💰 Your DKP Balance",
@@ -20,6 +23,9 @@ class UserCog(commands.Cog):
         await self.show_my_dkp(interaction)
 
     async def show_auction_help(self, interaction: discord.Interaction):
+        # Ensure we've acknowledged the interaction before using followups
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         help_text = (
             "1. **Starting:** The Raid Leader starts an auction for an item.\n"
             "2. **Bidding:** You will receive a private message (or a hidden message in the raid thread) to bid.\n"

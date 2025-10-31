@@ -7,6 +7,7 @@ import asyncio
 import aiohttp
 import sys
 from pathlib import Path
+from discord import app_commands
 
 # Fix for 'RuntimeError: Event loop is closed' on Windows
 if sys.platform == "win32":
@@ -106,4 +107,23 @@ class DkpBot(commands.Bot):
 
 # --- Run the Bot ---
 bot = DkpBot()
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    logging.error(f"App command error: {type(error).__name__}: {error}")
+    try:
+        msg = "An error occurred while processing that command."
+        if isinstance(error, app_commands.MissingPermissions) or isinstance(error, app_commands.CheckFailure):
+            msg = "You don't have permission to use this command."
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception as e:
+        logging.error(f"Failed to send error response: {e}")
+
+@bot.tree.command(name="ping", description="Simple connectivity check")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("Pong", ephemeral=True)
+
 bot.run(TOKEN)
