@@ -52,7 +52,7 @@ class SetupCog(commands.Cog):
             # Send welcome panel
             embed = create_info_embed(
                 "Welcome to the DKP Bot!",
-                "This bot helps you manage your guild's DKP system right here in Discord.\n\n"
+                "This bot helps you manage your guild's Dragon Kill Points system right here in Discord.\n\n"
                 "**Buttons:**\n"
                 "🏰 **Create Raid:** Starts a new raid, creating a voice channel and thread.\n"
                 "💰 **My DKP:** Privately check your current DKP balance.\n"
