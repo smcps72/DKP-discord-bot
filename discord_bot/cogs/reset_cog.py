@@ -40,12 +40,40 @@ class ResetCog(commands.Cog):
                         await item.delete(reason="DKP Bot Reset")
                         logging.info(f"Deleted {item_type} {item.name} ({item_id})")
 
+            # Remove all roles except admin roles and @everyone. Skip managed roles.
+            # Requires the bot's top role to be above roles it tries to delete.
+            deleted_roles = []
+            skipped_roles = []  # tuples of (name, reason)
+            for role in list(guild.roles):
+                try:
+                    if role.is_default():
+                        skipped_roles.append((role.name, "default role"))
+                        continue
+                    if role.managed:
+                        skipped_roles.append((role.name, "managed role"))
+                        continue
+                    if role.permissions.administrator:
+                        skipped_roles.append((role.name, "administrator role"))
+                        continue
+                    await role.delete(reason="DKP Bot Reset: remove all roles except admin")
+                    deleted_roles.append(role.name)
+                    logging.info(f"Deleted role {role.name} ({role.id})")
+                except discord.Forbidden:
+                    skipped_roles.append((role.name, "insufficient permissions / role above bot"))
+                    logging.warning(f"Insufficient permissions to delete role {role.name} ({role.id})")
+                except Exception as e:
+                    skipped_roles.append((role.name, f"error: {e}"))
+                    logging.error(f"Error deleting role {role.name} ({role.id}): {e}")
+
             # Delete Discord entities using correct names from database.py
             await safe_delete(config['dkp_channel_id'], guild.get_channel, "channel")
             await safe_delete(config['raid_channel_id'], guild.get_channel, "channel")
             await safe_delete(config['dkp_category_id'], guild.get_channel, "category")
             await safe_delete(config['officer_role_id'], guild.get_role, "role")
             await safe_delete(config['raider_role_id'], guild.get_role, "role")
+            # Also try to delete raid leader role by ID if present
+            if 'raid_leader_role_id' in config:
+                await safe_delete(config['raid_leader_role_id'], guild.get_role, "role")
             await safe_delete(config['raid_vc_template_id'], guild.get_channel, "channel")
 
             # Delete from all database tables for a full, clean reset.
@@ -57,7 +85,17 @@ class ResetCog(commands.Cog):
             await db.execute("DELETE FROM guilds WHERE guild_id = ?", (guild.id,))
             logging.info(f"Finished deleting database entries for guild {guild.id}")
 
-            await interaction.followup.send("Bot configuration has been completely reset. You can now run `/setup` again.", ephemeral=True)
+            # Compose summary
+            summary = (
+                f"Reset complete. Deleted roles: {len(deleted_roles)}. "
+                f"Skipped roles: {len(skipped_roles)}.\n"
+            )
+            if skipped_roles:
+                preview = "\n".join([f"- {name}: {reason}" for name, reason in skipped_roles[:10]])
+                if len(skipped_roles) > 10:
+                    preview += f"\n... and {len(skipped_roles) - 10} more"
+                summary += "Roles skipped (first 10):\n" + preview
+            await interaction.followup.send(summary + "\nYou can run `/setup_dkp` again when ready.", ephemeral=True)
 
         except discord.Forbidden:
             logging.error(f"Reset failed for {guild.name}: Bot lacks permissions.")
