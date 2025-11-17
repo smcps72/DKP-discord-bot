@@ -52,6 +52,16 @@ class ResetCog(commands.Cog):
                     if role.managed:
                         skipped_roles.append((role.name, "managed role"))
                         continue
+                    # Preserve Officer role and assignments
+                    try:
+                        if 'officer_role_id' in config and role.id == config['officer_role_id']:
+                            skipped_roles.append((role.name, "preserved Officer role"))
+                            continue
+                    except Exception:
+                        pass
+                    if role.name == "Officer":
+                        skipped_roles.append((role.name, "preserved Officer role (by name)"))
+                        continue
                     if role.permissions.administrator:
                         skipped_roles.append((role.name, "administrator role"))
                         continue
@@ -69,7 +79,7 @@ class ResetCog(commands.Cog):
             await safe_delete(config['dkp_channel_id'], guild.get_channel, "channel")
             await safe_delete(config['raid_channel_id'], guild.get_channel, "channel")
             await safe_delete(config['dkp_category_id'], guild.get_channel, "category")
-            await safe_delete(config['officer_role_id'], guild.get_role, "role")
+            # Officer role is preserved intentionally (role object and assignments)
             await safe_delete(config['raider_role_id'], guild.get_role, "role")
             # Also try to delete raid leader role by ID if present
             if 'raid_leader_role_id' in config:
