@@ -44,6 +44,13 @@ class ResetCog(commands.Cog):
             # Requires the bot's top role to be above roles it tries to delete.
             deleted_roles = []
             skipped_roles = []  # tuples of (name, reason)
+            # Known DKP role names to force-delete (case-insensitive)
+            dkp_role_names = {"raider", "raid-leader", "raid leader"}
+
+            # Determine the bot member and top role position for diagnostics
+            bot_member = guild.get_member(self.bot.user.id) if self.bot.user else None
+            bot_top_pos = bot_member.top_role.position if bot_member and bot_member.top_role else None
+
             for role in list(guild.roles):
                 try:
                     if role.is_default():
@@ -62,14 +69,23 @@ class ResetCog(commands.Cog):
                     if role.name == "Officer":
                         skipped_roles.append((role.name, "preserved Officer role (by name)"))
                         continue
-                    if role.permissions.administrator:
-                        skipped_roles.append((role.name, "administrator role"))
+                    # Allow forced deletion for known DKP roles even if they have admin perms
+                    normalized_name = role.name.lower()
+                    if role.permissions.administrator and normalized_name not in dkp_role_names:
+                        # Skip true admin roles
+                        reason = "administrator role"
+                        if bot_top_pos is not None:
+                            reason += f" (role_pos={role.position}, bot_top_pos={bot_top_pos})"
+                        skipped_roles.append((role.name, reason))
                         continue
                     await role.delete(reason="DKP Bot Reset: remove all roles except admin")
                     deleted_roles.append(role.name)
                     logging.info(f"Deleted role {role.name} ({role.id})")
                 except discord.Forbidden:
-                    skipped_roles.append((role.name, "insufficient permissions / role above bot"))
+                    reason = "insufficient permissions / role above bot"
+                    if bot_top_pos is not None:
+                        reason += f" (role_pos={role.position}, bot_top_pos={bot_top_pos})"
+                    skipped_roles.append((role.name, reason))
                     logging.warning(f"Insufficient permissions to delete role {role.name} ({role.id})")
                 except Exception as e:
                     skipped_roles.append((role.name, f"error: {e}"))
@@ -100,6 +116,8 @@ class ResetCog(commands.Cog):
                 f"Reset complete. Deleted roles: {len(deleted_roles)}. "
                 f"Skipped roles: {len(skipped_roles)}.\n"
             )
+            if bot_top_pos is not None:
+                summary += f"Bot top role position: {bot_top_pos}.\n"
             if skipped_roles:
                 preview = "\n".join([f"- {name}: {reason}" for name, reason in skipped_roles[:10]])
                 if len(skipped_roles) > 10:
