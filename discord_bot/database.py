@@ -6,14 +6,18 @@ DB_FILE = "dkp_bot.db"
 class Database:
     def __init__(self, db_file):
         self.db_file = db_file
+        self.pool = None
 
     async def connect(self):
-        self.conn = await aiosqlite.connect(self.db_file)
-        self.conn.row_factory = aiosqlite.Row
+        self.pool = await aiosqlite.connect(self.db_file)
+        # The connection object from aiosqlite.connect can be used like a pool of size 1.
+        # For more complex scenarios, a dedicated pool object might be used, but for a single
+        # bot process, this is robust.
+        self.pool.row_factory = aiosqlite.Row
         await self._create_tables()
 
     async def _create_tables(self):
-        async with self.conn.cursor() as cursor:
+        async with self.pool.cursor() as cursor:
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS guilds (
                     guild_id INTEGER PRIMARY KEY,
@@ -71,29 +75,25 @@ class Database:
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            await self.conn.commit()
-    
+            await self.pool.commit()
+
     # Generic execute/fetch methods
     async def execute(self, sql, params=()):
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(sql, params)
-            await self.conn.commit()
+        async with self.pool.execute(sql, params) as cursor:
+            await self.pool.commit()
 
     async def execute_insert(self, sql, params=()):
         """Execute an insert statement and return the last row id."""
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(sql, params)
-            await self.conn.commit()
+        async with self.pool.execute(sql, params) as cursor:
+            await self.pool.commit()
             return cursor.lastrowid
 
     async def fetchone(self, sql, params=()):
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(sql, params)
+        async with self.pool.execute(sql, params) as cursor:
             return await cursor.fetchone()
 
     async def fetchall(self, sql, params=()):
-        async with self.conn.cursor() as cursor:
-            await cursor.execute(sql, params)
+        async with self.pool.execute(sql, params) as cursor:
             return await cursor.fetchall()
 
     # ... add specific helper methods as needed below ...

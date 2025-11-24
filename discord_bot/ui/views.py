@@ -258,17 +258,29 @@ class RaidControlView(discord.ui.View):
         self.bot = bot
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # On bot startup, interaction_check can be called with a mock interaction
+        # that has no channel. We return False to prevent errors.
+        if not interaction.channel:
+            return False
+
+        # Defer the interaction immediately to prevent timeouts.
+        # We need to check if it's a modal submission, as those can't be deferred in the same way.
+        if interaction.type != discord.InteractionType.modal_submit:
+            try:
+                await interaction.response.defer(ephemeral=True, thinking=True)
+            except (discord.InteractionResponded, discord.NotFound):
+                pass # Already responded to or expired, we can ignore.
+
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if raid and interaction.user.id == raid['leader_id']:
             return True
-        
-        # If the check fails, respond to the user if we haven't already.
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.send_message("You are not the leader of this raid.", ephemeral=True)
-            except discord.HTTPException:
-                # This can happen in a race condition, it's safe to ignore.
-                pass
+
+        # If we deferred, we need to use a followup.
+        try:
+            await interaction.followup.send("You are not the leader of this raid.", ephemeral=True)
+        except discord.HTTPException:
+            pass # Interaction may have expired in the meantime.
+
         return False
 
     @discord.ui.button(label="Update Team", style=discord.ButtonStyle.secondary, custom_id="raid_update_team", row=0)
@@ -294,12 +306,10 @@ class RaidControlView(discord.ui.View):
 
     @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_award_dkp", row=0)
     async def award_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
         await self._show_dkp_adjustment_view(interaction, "Award")
 
     @discord.ui.button(label="Deduct DKP", style=discord.ButtonStyle.danger, custom_id="raid_deduct_dkp", row=0)
     async def deduct_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
         await self._show_dkp_adjustment_view(interaction, "Deduct")
 
 

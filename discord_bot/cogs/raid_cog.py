@@ -117,7 +117,6 @@ class RaidCog(commands.Cog):
             return None
 
     async def update_team_list(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         vc = interaction.guild.get_channel(raid['vc_id'])
         if not vc:
@@ -191,7 +190,6 @@ class RaidCog(commands.Cog):
         )
         await interaction.followup.send(embed=embed)
     async def close_raid(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This raid is already closed or does not exist.", ephemeral=True)
