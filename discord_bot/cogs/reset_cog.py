@@ -94,6 +94,19 @@ class ResetCog(commands.Cog):
                 await safe_delete(config['raid_leader_role_id'], guild.get_role, "role")
             await safe_delete(config['raid_vc_template_id'], guild.get_channel, "channel")
 
+            # Additionally, clean up any legacy "Raid-Template" voice channels that might not
+            # be referenced by the current guild config. Older versions of the bot created
+            # this template; the current design no longer uses it.
+            for vc in list(guild.voice_channels):
+                if vc.name.lower() == "raid-template":
+                    try:
+                        await vc.delete(reason="DKP Bot Reset: remove legacy Raid-Template voice channel")
+                        logging.info(f"Deleted legacy Raid-Template voice channel {vc.name} ({vc.id})")
+                    except discord.Forbidden:
+                        logging.warning("Failed to delete legacy Raid-Template voice channel due to permissions.")
+                    except Exception as e:
+                        logging.warning(f"Error deleting legacy Raid-Template voice channel: {e}")
+
             # Delete from all database tables for a full, clean reset.
             logging.info(f"Deleting database entries for guild {guild.id}")
             await db.execute("DELETE FROM auctions WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)", (guild.id,))

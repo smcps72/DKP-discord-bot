@@ -357,37 +357,41 @@ class RaidControlView(discord.ui.View):
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
-    @discord.ui.button(label="View Rules 📜", style=discord.ButtonStyle.secondary, custom_id="raid_view_rules", row=2)
-    async def raid_view_rules(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        if not raid:
-            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+    # The View Rules button is temporarily disabled. To re-enable in the future,
+    # uncomment the decorator and method below.
+    # @discord.ui.button(label="View Rules \ud83d\udcdd", style=discord.ButtonStyle.secondary, custom_id="raid_view_rules", row=2)
+    # async def raid_view_rules(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #     raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+    #     if not raid:
+    #         return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+    #
+    #     try:
+    #         rules = raid["rules"]
+    #     except (KeyError, TypeError):
+    #         rules = None
+    #
+    #     if not rules:
+    #         msg = "No rules have been set for this raid yet."
+    #     else:
+    #         msg = f"**Raid Rules:**\n{rules}"
+    #
+    #     await interaction.followup.send(msg, ephemeral=True)
 
-        try:
-            rules = raid["rules"]
-        except (KeyError, TypeError):
-            rules = None
-
-        if not rules:
-            msg = "No rules have been set for this raid yet."
-        else:
-            msg = f"**Raid Rules:**\n{rules}"
-
-        await interaction.followup.send(msg, ephemeral=True)
-
-    @discord.ui.button(label="Add Rule ✏️", style=discord.ButtonStyle.primary, custom_id="raid_add_rule", row=2)
-    async def raid_add_rule(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        if not raid:
-            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
-
-        try:
-            existing_rules = raid["rules"]
-        except (KeyError, TypeError):
-            existing_rules = None
-
-        modal = RaidRulesModal(bot=self.bot, raid_id=raid["id"], existing_rules=existing_rules)
-        await interaction.response.send_modal(modal)
+    # The Add Rule button is temporarily disabled. To re-enable in the future,
+    # uncomment the decorator and method below.
+    # @discord.ui.button(label="Add Rule \u270f\ufe0f", style=discord.ButtonStyle.primary, custom_id="raid_add_rule", row=2)
+    # async def raid_add_rule(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #     raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+    #     if not raid:
+    #         return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+    #
+    #     try:
+    #         existing_rules = raid["rules"]
+    #     except (KeyError, TypeError):
+    #         existing_rules = None
+    #
+    #     modal = RaidRulesModal(bot=self.bot, raid_id=raid["id"], existing_rules=existing_rules)
+    #     await interaction.response.send_modal(modal)
 
 class AuctionBidView(discord.ui.View):
     def __init__(self, bot, auction_id):
