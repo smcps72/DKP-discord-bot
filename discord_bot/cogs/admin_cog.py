@@ -90,7 +90,6 @@ class AdminCog(commands.Cog):
 
         description = (
             f"**Guild ID:** `{config['guild_id']}`\n"
-            f"**License Key:** `{config['license_key'] or 'None'}`\n"
             f"**License Status:** `{config['license_status']}`\n"
             f"**DKP Category:** {fmt_channel(config['dkp_category_id'])}\n"
             f"**DKP Channel:** {fmt_channel(config['dkp_channel_id'])}\n"
@@ -130,7 +129,6 @@ class AdminCog(commands.Cog):
 
         description = (
             f"**Guild ID:** `{config['guild_id']}`\n"
-            f"**License Key:** `{config['license_key'] or 'None'}`\n"
             f"**License Status:** `{config['license_status']}`\n"
             f"**DKP Category:** {fmt_channel(config['dkp_category_id'])}\n"
             f"**DKP Channel:** {fmt_channel(config['dkp_channel_id'])}\n"

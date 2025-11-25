@@ -41,11 +41,6 @@ LICENSE_KEY = os.getenv("GUILD_LICENSE_KEY")
 LICENSE_SERVER_URL = os.getenv("LICENSE_SERVER_URL", "https://dkp-discord-bot-production.up.railway.app")
 LICENSE_CHECK_ENABLED = os.getenv("LICENSE_CHECK_ENABLED", "false").lower() == "true"
 
-print('DEBUG: DISCORD_BOT_TOKEN:', os.getenv('DISCORD_BOT_TOKEN'))
-print('DEBUG: GUILD_LICENSE_KEY:', os.getenv('GUILD_LICENSE_KEY'))
-print('DEBUG: LICENSE_SERVER_URL:', os.getenv('LICENSE_SERVER_URL'))
-print('DEBUG: LICENSE_CHECK_ENABLED:', LICENSE_CHECK_ENABLED)
-
 if not TOKEN:
     raise ValueError("DISCORD_BOT_TOKEN is missing. Please check your .env file.")
 if LICENSE_CHECK_ENABLED and not all([LICENSE_KEY, LICENSE_SERVER_URL]):
