@@ -34,6 +34,18 @@ class SetupCog(commands.Cog):
             # Create text channels
             dkp_channel = await category.create_text_channel("dkp-system")
             raid_channel = await category.create_text_channel("active-raids")
+
+            # Explicitly clean up any legacy "Raid-Template" voice channel under this category.
+            # Older versions of the bot created a template VC; the current design does not use it.
+            for channel in list(category.voice_channels):
+                if channel.name.lower() == "raid-template":
+                    try:
+                        await channel.delete(reason="Remove legacy Raid-Template voice channel")
+                    except discord.Forbidden:
+                        logging.warning("Failed to delete legacy Raid-Template voice channel due to permissions.")
+                    except Exception as e:
+                        logging.warning(f"Error deleting legacy Raid-Template voice channel: {e}")
+
             # (Legacy) Raid voice channel template is no longer used; store NULL for compatibility.
             vc_template_id = None
             # Create roles

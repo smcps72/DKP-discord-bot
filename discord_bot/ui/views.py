@@ -1,5 +1,5 @@
 import discord
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RoleSetupModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RoleSetupModal, RaidRulesModal
 from discord.ui import UserSelect, Select
 from ..utils import is_officer
 
@@ -268,16 +268,17 @@ class RaidControlView(discord.ui.View):
         if getattr(interaction, "data", None) and isinstance(interaction.data, dict):
             custom_id = interaction.data.get("custom_id")
 
-        # Defer the interaction immediately to prevent timeouts.
-        # We need to check if it's a modal submission, as those can't be deferred in the same way.
-        if interaction.type != discord.InteractionType.modal_submit:
+        # Defer most interactions immediately to prevent timeouts.
+        # IMPORTANT: Do NOT defer for buttons that will open a modal, since
+        # modals must be sent via the initial interaction response.
+        if interaction.type != discord.InteractionType.modal_submit and custom_id not in ("raid_add_rule",):
             try:
                 await interaction.response.defer(ephemeral=True, thinking=True)
             except (discord.InteractionResponded, discord.NotFound):
                 pass # Already responded to or expired, we can ignore.
 
-        # Allow everyone to use the raid "My DKP" button.
-        if custom_id == "raid_my_dkp":
+        # Allow everyone to use the raid "My DKP" button and view rules.
+        if custom_id in ("raid_my_dkp", "raid_view_rules"):
             return True
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -355,6 +356,38 @@ class RaidControlView(discord.ui.View):
             await user_cog.show_my_dkp(interaction)
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
+
+    @discord.ui.button(label="View Rules 📜", style=discord.ButtonStyle.secondary, custom_id="raid_view_rules", row=2)
+    async def raid_view_rules(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        try:
+            rules = raid["rules"]
+        except (KeyError, TypeError):
+            rules = None
+
+        if not rules:
+            msg = "No rules have been set for this raid yet."
+        else:
+            msg = f"**Raid Rules:**\n{rules}"
+
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @discord.ui.button(label="Add Rule ✏️", style=discord.ButtonStyle.primary, custom_id="raid_add_rule", row=2)
+    async def raid_add_rule(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        try:
+            existing_rules = raid["rules"]
+        except (KeyError, TypeError):
+            existing_rules = None
+
+        modal = RaidRulesModal(bot=self.bot, raid_id=raid["id"], existing_rules=existing_rules)
+        await interaction.response.send_modal(modal)
 
 class AuctionBidView(discord.ui.View):
     def __init__(self, bot, auction_id):

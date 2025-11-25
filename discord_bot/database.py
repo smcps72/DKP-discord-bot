@@ -50,7 +50,8 @@ class Database:
                     vc_id INTEGER,
                     thread_id INTEGER UNIQUE,
                     is_active INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    rules TEXT
                 )
             """)
             await cursor.execute("""
@@ -123,3 +124,15 @@ class Database:
 
     async def get_active_auction(self, raid_id):
         return await self.fetchone("SELECT * FROM auctions WHERE raid_id = ? AND is_active = 1", (raid_id,))
+
+    async def get_raid_rules(self, raid_id: int):
+        row = await self.fetchone("SELECT rules FROM raids WHERE id = ?", (raid_id,))
+        if row is None:
+            return None
+        try:
+            return row["rules"]
+        except (KeyError, TypeError):
+            return None
+
+    async def set_raid_rules(self, raid_id: int, rules):
+        await self.execute("UPDATE raids SET rules = ? WHERE id = ?", (rules, raid_id))

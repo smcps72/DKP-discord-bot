@@ -123,14 +123,34 @@ class ResetCog(commands.Cog):
                 if len(skipped_roles) > 10:
                     preview += f"\n... and {len(skipped_roles) - 10} more"
                 summary += "Roles skipped (first 10):\n" + preview
-            await interaction.followup.send(summary + "\nYou can run `/setup_dkp` again when ready.", ephemeral=True)
+
+            try:
+                await interaction.followup.send(
+                    summary + "\nYou can run `/setup_dkp` again when ready.",
+                    ephemeral=True,
+                )
+            except (discord.NotFound, discord.HTTPException):
+                # Interaction or underlying webhook message may have expired or been deleted.
+                logging.warning("Reset completed but could not send summary (interaction expired or unknown message).")
 
         except discord.Forbidden:
             logging.error(f"Reset failed for {guild.name}: Bot lacks permissions.")
-            await interaction.followup.send("The bot lacks permissions to delete required roles/channels. Please check its permissions.", ephemeral=True)
+            try:
+                await interaction.followup.send(
+                    "The bot lacks permissions to delete required roles/channels. Please check its permissions.",
+                    ephemeral=True,
+                )
+            except (discord.NotFound, discord.HTTPException):
+                logging.warning("Could not send reset permissions error because the interaction is no longer valid.")
         except Exception as e:
             logging.error(f"Error during reset for {guild.name}: {e}", exc_info=True)
-            await interaction.followup.send(f"An unexpected error occurred during the reset process. Please check the logs.", ephemeral=True)
+            try:
+                await interaction.followup.send(
+                    "An unexpected error occurred during the reset process. Please check the logs.",
+                    ephemeral=True,
+                )
+            except (discord.NotFound, discord.HTTPException):
+                logging.warning("Could not send reset error message because the interaction is no longer valid.")
 
 async def setup(bot: commands.Bot):
     """Standard setup function to load the cog."""
