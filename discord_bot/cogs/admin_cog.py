@@ -65,6 +65,86 @@ class AdminCog(commands.Cog):
             ephemeral=True
         )
 
+    @app_commands.command(name="debug_config", description="Show DKP configuration for this server.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def debug_config(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        if not config:
+            return await interaction.followup.send("No guild configuration found in the database.", ephemeral=True)
+
+        guild = interaction.guild
+
+        def fmt_channel(channel_id):
+            if not channel_id:
+                return "None"
+            channel = guild.get_channel(channel_id)
+            return f"{channel.mention} (`{channel_id}`)" if channel else f"Missing channel (`{channel_id}`)"
+
+        def fmt_role(role_id):
+            if not role_id:
+                return "None"
+            role = guild.get_role(role_id)
+            return f"{role.mention} (`{role_id}`)" if role else f"Missing role (`{role_id}`)"
+
+        description = (
+            f"**Guild ID:** `{config['guild_id']}`\n"
+            f"**License Key:** `{config['license_key'] or 'None'}`\n"
+            f"**License Status:** `{config['license_status']}`\n"
+            f"**DKP Category:** {fmt_channel(config['dkp_category_id'])}\n"
+            f"**DKP Channel:** {fmt_channel(config['dkp_channel_id'])}\n"
+            f"**Raid Channel:** {fmt_channel(config['raid_channel_id'])}\n"
+            f"**Officer Role:** {fmt_role(config['officer_role_id'])}\n"
+            f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
+            f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
+            f"**Raid VC Template:** {fmt_channel(config['raid_vc_template_id'])}\n"
+            f"**Default DKP Award:** `{config['default_dkp_award']}`"
+        )
+
+        embed = create_info_embed("Guild Configuration Debug", description)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @commands.command(name="debug_config", help="Show DKP configuration for this server (prefix version).")
+    @commands.has_permissions(administrator=True)
+    async def debug_config_prefix(self, ctx: commands.Context):
+        guild = ctx.guild
+        if guild is None:
+            return await ctx.reply("This command can only be used in a server.")
+
+        config = await self.bot.db.get_guild_config(guild.id)
+        if not config:
+            return await ctx.reply("No guild configuration found in the database.")
+
+        def fmt_channel(channel_id):
+            if not channel_id:
+                return "None"
+            channel = guild.get_channel(channel_id)
+            return f"{channel.mention} (`{channel_id}`)" if channel else f"Missing channel (`{channel_id}`)"
+
+        def fmt_role(role_id):
+            if not role_id:
+                return "None"
+            role = guild.get_role(role_id)
+            return f"{role.mention} (`{role_id}`)" if role else f"Missing role (`{role_id}`)"
+
+        description = (
+            f"**Guild ID:** `{config['guild_id']}`\n"
+            f"**License Key:** `{config['license_key'] or 'None'}`\n"
+            f"**License Status:** `{config['license_status']}`\n"
+            f"**DKP Category:** {fmt_channel(config['dkp_category_id'])}\n"
+            f"**DKP Channel:** {fmt_channel(config['dkp_channel_id'])}\n"
+            f"**Raid Channel:** {fmt_channel(config['raid_channel_id'])}\n"
+            f"**Officer Role:** {fmt_role(config['officer_role_id'])}\n"
+            f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
+            f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
+            f"**Raid VC Template:** {fmt_channel(config['raid_vc_template_id'])}\n"
+            f"**Default DKP Award:** `{config['default_dkp_award']}`"
+        )
+
+        embed = create_info_embed("Guild Configuration Debug", description)
+        await ctx.reply(embed=embed)
+
     async def set_role(self, interaction: discord.Interaction, role_type: str, role: discord.Role):
         await self.bot.db.execute(
             f"UPDATE guilds SET {role_type.lower()}_role_id = ? WHERE guild_id = ?",
