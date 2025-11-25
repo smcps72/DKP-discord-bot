@@ -197,8 +197,40 @@ class RaidCog(commands.Cog):
         thread = interaction.channel
         # Deactivate raid in DB
         await self.bot.db.execute("UPDATE raids SET is_active = 0 WHERE id = ?", (raid['id'],))
-        if vc:
-            await vc.delete(reason="Raid closed.")
+
+        # If the raid voice channel still exists, try to move members out before deleting it.
+        if vc and isinstance(vc, discord.VoiceChannel):
+            # Find a suitable voice channel to move members into.
+            target_vc = None
+
+            # Prefer the configured raid template voice channel, if available.
+            config = await self.bot.db.get_guild_config(interaction.guild.id)
+            template_vc_id = config["raid_vc_template_id"] if (config and "raid_vc_template_id" in config.keys()) else None
+            if template_vc_id:
+                tmpl = interaction.guild.get_channel(template_vc_id)
+                if isinstance(tmpl, discord.VoiceChannel) and tmpl.id != vc.id:
+                    target_vc = tmpl
+
+            # If no template VC is available, fall back to the first other voice channel.
+            if target_vc is None:
+                for channel in interaction.guild.voice_channels:
+                    if channel.id != vc.id:
+                        target_vc = channel
+                        break
+
+            # Move members to the target voice channel
+            for member in list(vc.members):
+                # Skip bots and users not actually connected to this VC
+                if member.bot or not member.voice or member.voice.channel != vc:
+                    continue
+                try:
+                    if target_vc is not None:
+                        await member.move_to(target_vc, reason="Raid closed.")
+                    else:
+                        await member.move_to(None, reason="Raid closed.")
+                except discord.HTTPException as e:
+                    # Ignore cases where the user is no longer in voice (error 40032) or other move issues.
+                    pass
 
         # Remove raid leader role
         config = await self.bot.db.get_guild_config(interaction.guild.id)
@@ -211,6 +243,9 @@ class RaidCog(commands.Cog):
                     await leader.remove_roles(raid_leader_role, reason="Raid ended.")
                 except discord.HTTPException:
                     pass # Ignore if user left or role is gone
+
+        if vc:
+            await vc.delete(reason="Raid closed.")
 
         await thread.send(f"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.")
         await thread.edit(archived=True, locked=True)
