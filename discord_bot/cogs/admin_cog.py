@@ -4,6 +4,7 @@ from discord import app_commands
 from ..utils import is_officer, create_info_embed
 import csv
 import io
+from datetime import datetime
 
 class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -88,6 +89,7 @@ class AdminCog(commands.Cog):
             role = guild.get_role(role_id)
             return f"{role.mention} (`{role_id}`)" if role else f"Missing role (`{role_id}`)"
 
+        ts = int(datetime.utcnow().timestamp())
         description = (
             f"**Guild ID:** `{config['guild_id']}`\n"
             f"**License Status:** `{config['license_status']}`\n"
@@ -98,7 +100,8 @@ class AdminCog(commands.Cog):
             f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
             f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
             f"**Raid VC Template:** {fmt_channel(config['raid_vc_template_id'])}\n"
-            f"**Default DKP Award:** `{config['default_dkp_award']}`"
+            f"**Default DKP Award:** `{config['default_dkp_award']}`\n"
+            f"**Generated At:** <t:{ts}:F>"
         )
 
         embed = create_info_embed("Guild Configuration Debug", description)
@@ -127,6 +130,7 @@ class AdminCog(commands.Cog):
             role = guild.get_role(role_id)
             return f"{role.mention} (`{role_id}`)" if role else f"Missing role (`{role_id}`)"
 
+        ts = int(datetime.utcnow().timestamp())
         description = (
             f"**Guild ID:** `{config['guild_id']}`\n"
             f"**License Status:** `{config['license_status']}`\n"
@@ -137,7 +141,8 @@ class AdminCog(commands.Cog):
             f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
             f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
             f"**Raid VC Template:** {fmt_channel(config['raid_vc_template_id'])}\n"
-            f"**Default DKP Award:** `{config['default_dkp_award']}`"
+            f"**Default DKP Award:** `{config['default_dkp_award']}`\n"
+            f"**Generated At:** <t:{ts}:F>"
         )
 
         embed = create_info_embed("Guild Configuration Debug", description)
