@@ -48,10 +48,33 @@ class SetupCog(commands.Cog):
 
             # (Legacy) Raid voice channel template is no longer used; store NULL for compatibility.
             vc_template_id = None
-            # Create roles
-            officer_role = await guild.create_role(name="Officer", permissions=discord.Permissions.none(), hoist=True, mentionable=True)
-            raider_role = await guild.create_role(name="Raider", permissions=discord.Permissions.none(), hoist=True, mentionable=True)
-            raid_leader_role = await guild.create_role(name="Raid-Leader", permissions=discord.Permissions.none(), hoist=True, mentionable=True)
+            # Create or reuse roles
+            officer_role = discord.utils.get(guild.roles, name="Officer")
+            if officer_role is None:
+                officer_role = await guild.create_role(
+                    name="Officer",
+                    permissions=discord.Permissions.none(),
+                    hoist=True,
+                    mentionable=True,
+                )
+
+            raider_role = discord.utils.get(guild.roles, name="Raider")
+            if raider_role is None:
+                raider_role = await guild.create_role(
+                    name="Raider",
+                    permissions=discord.Permissions.none(),
+                    hoist=True,
+                    mentionable=True,
+                )
+
+            raid_leader_role = discord.utils.get(guild.roles, name="Raid-Leader")
+            if raid_leader_role is None:
+                raid_leader_role = await guild.create_role(
+                    name="Raid-Leader",
+                    permissions=discord.Permissions.none(),
+                    hoist=True,
+                    mentionable=True,
+                )
 
             # Save to DB
             await self.bot.db.execute(

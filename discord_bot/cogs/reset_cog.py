@@ -45,7 +45,9 @@ class ResetCog(commands.Cog):
             deleted_roles = []
             skipped_roles = []  # tuples of (name, reason)
             # Known DKP role names to force-delete (case-insensitive)
-            dkp_role_names = {"raider", "raid-leader", "raid leader"}
+            # These will be deleted even if they have administrator permissions,
+            # as long as the bot's top role is high enough.
+            dkp_role_names = {"officer", "raider", "raid-leader", "raid leader"}
 
             # Determine the bot member and top role position for diagnostics
             bot_member = guild.get_member(self.bot.user.id) if self.bot.user else None
@@ -58,16 +60,6 @@ class ResetCog(commands.Cog):
                         continue
                     if role.managed:
                         skipped_roles.append((role.name, "managed role"))
-                        continue
-                    # Preserve Officer role and assignments
-                    try:
-                        if 'officer_role_id' in config and role.id == config['officer_role_id']:
-                            skipped_roles.append((role.name, "preserved Officer role"))
-                            continue
-                    except Exception:
-                        pass
-                    if role.name == "Officer":
-                        skipped_roles.append((role.name, "preserved Officer role (by name)"))
                         continue
                     # Allow forced deletion for known DKP roles even if they have admin perms
                     normalized_name = role.name.lower()
