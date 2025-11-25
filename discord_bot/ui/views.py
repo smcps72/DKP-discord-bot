@@ -263,6 +263,11 @@ class RaidControlView(discord.ui.View):
         if not interaction.channel:
             return False
 
+        # Determine which button was pressed, if any.
+        custom_id = None
+        if getattr(interaction, "data", None) and isinstance(interaction.data, dict):
+            custom_id = interaction.data.get("custom_id")
+
         # Defer the interaction immediately to prevent timeouts.
         # We need to check if it's a modal submission, as those can't be deferred in the same way.
         if interaction.type != discord.InteractionType.modal_submit:
@@ -270,6 +275,10 @@ class RaidControlView(discord.ui.View):
                 await interaction.response.defer(ephemeral=True, thinking=True)
             except (discord.InteractionResponded, discord.NotFound):
                 pass # Already responded to or expired, we can ignore.
+
+        # Allow everyone to use the raid "My DKP" button.
+        if custom_id == "raid_my_dkp":
+            return True
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if raid and interaction.user.id == raid['leader_id']:
@@ -338,6 +347,14 @@ class RaidControlView(discord.ui.View):
     async def close_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
         await raid_cog.close_raid(interaction)
+
+    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="raid_my_dkp", row=0)
+    async def raid_my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_cog = self.bot.get_cog("UserCog")
+        if user_cog:
+            await user_cog.show_my_dkp(interaction)
+        else:
+            await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
 class AuctionBidView(discord.ui.View):
     def __init__(self, bot, auction_id):
