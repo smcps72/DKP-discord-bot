@@ -19,15 +19,29 @@ class RaidCog(commands.Cog):
         if not await is_officer(interaction):
             return await interaction.followup.send("You must be an officer to create a raid.", ephemeral=True)
         config = await self.bot.db.get_guild_config(interaction.guild.id)
-        if not config or not all([config['raid_vc_template_id'], config['raid_channel_id']]):
+        if not config or not config['raid_channel_id']:
             return await interaction.followup.send(embed=create_error_embed("Setup Incomplete", "The bot is not fully set up. Please ask an admin to re-invite the bot."))
-        template_vc = interaction.guild.get_channel(config['raid_vc_template_id'])
+
+        template_vc = None
+        if 'raid_vc_template_id' in config.keys() and config['raid_vc_template_id']:
+            template_vc = interaction.guild.get_channel(config['raid_vc_template_id'])
+
         active_raids_channel = interaction.guild.get_channel(config['raid_channel_id'])
-        if not template_vc or not active_raids_channel:
+        if not active_raids_channel:
             return await interaction.followup.send(embed=create_error_embed("Setup Error", "Required channels are missing. Please re-invite the bot."))
+
         try:
             raid_date = datetime.now().strftime("%Y-%m-%d")
-            new_vc = await template_vc.clone(name=f"Raid-{raid_date}")
+            if template_vc and isinstance(template_vc, discord.VoiceChannel):
+                new_vc = await template_vc.clone(name=f"Raid-{raid_date}")
+            else:
+                # Create a new raid voice channel under the DKP category
+                category = interaction.guild.get_channel(config['dkp_category_id']) if 'dkp_category_id' in config.keys() else None
+                overwrite = discord.PermissionOverwrite(view_channel=True)
+                if isinstance(category, discord.CategoryChannel):
+                    new_vc = await category.create_voice_channel(f"Raid-{raid_date}", overwrites={interaction.guild.default_role: overwrite})
+                else:
+                    new_vc = await interaction.guild.create_voice_channel(f"Raid-{raid_date}", overwrites={interaction.guild.default_role: overwrite})
             # Assign raid leader role and permissions
             raid_leader_role_id = config['raid_leader_role_id'] if 'raid_leader_role_id' in config else None
             if raid_leader_role_id:
@@ -203,15 +217,22 @@ class RaidCog(commands.Cog):
             # Find a suitable voice channel to move members into.
             target_vc = None
 
-            # Prefer the configured raid template voice channel, if available.
-            config = await self.bot.db.get_guild_config(interaction.guild.id)
-            template_vc_id = config["raid_vc_template_id"] if (config and "raid_vc_template_id" in config.keys()) else None
-            if template_vc_id:
-                tmpl = interaction.guild.get_channel(template_vc_id)
-                if isinstance(tmpl, discord.VoiceChannel) and tmpl.id != vc.id:
-                    target_vc = tmpl
+            # 1) Prefer the configured General voice channel by ID, if it exists and is not the raid VC.
+            general_vc_id = 1388467074346516625
+            general_vc = interaction.guild.get_channel(general_vc_id)
+            if isinstance(general_vc, discord.VoiceChannel) and general_vc.id != vc.id:
+                target_vc = general_vc
 
-            # If no template VC is available, fall back to the first other voice channel.
+            # 2) If that didn't work, prefer a channel actually named "General" (case-insensitive).
+            if target_vc is None:
+                for channel in interaction.guild.voice_channels:
+                    if channel.id == vc.id:
+                        continue
+                    if channel.name.lower() == "general":
+                        target_vc = channel
+                        break
+
+            # 3) If no explicit General channel is available, fall back to the first other voice channel.
             if target_vc is None:
                 for channel in interaction.guild.voice_channels:
                     if channel.id != vc.id:
