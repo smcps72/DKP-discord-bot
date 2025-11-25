@@ -55,7 +55,10 @@ class SetupCog(commands.Cog):
 
             if interaction:
                 # followup.send is used because we deferred the response
-                await interaction.followup.send(msg, ephemeral=True)
+                try:
+                    await interaction.followup.send(msg, ephemeral=True)
+                except (discord.NotFound, discord.HTTPException):
+                    logging.warning("Setup finished but interaction is no longer valid.")
             return
         # Create a DKP category
         try:
@@ -128,7 +131,10 @@ class SetupCog(commands.Cog):
             await message.pin()
             logging.info(f"Successfully set up DKP system for guild {guild.name}")
             if interaction:
-                await interaction.followup.send("DKP system setup complete!", ephemeral=True)
+                try:
+                    await interaction.followup.send("DKP system setup complete!", ephemeral=True)
+                except (discord.NotFound, discord.HTTPException):
+                    logging.warning("Setup complete but interaction is no longer valid.")
         except discord.Forbidden:
             logging.error(f"Missing permissions to set up channels or roles in {guild.name}")
             # Try to send a message to the owner or the first available channel
@@ -137,7 +143,10 @@ class SetupCog(commands.Cog):
             except discord.Forbidden:
                 pass # Can't do anything else
             if interaction:
-                await interaction.followup.send("Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True)
+                try:
+                    await interaction.followup.send("Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True)
+                except (discord.NotFound, discord.HTTPException):
+                    logging.warning("Setup permissions error but interaction is no longer valid.")
 
     @app_commands.command(name="setup_dkp", description="Manually (re)run the DKP system setup. Admins only.")
     @app_commands.checks.has_permissions(administrator=True)

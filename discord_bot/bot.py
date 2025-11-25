@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 import sys
 from pathlib import Path
-from discord import app_commands
+from discord import app_commands, HTTPException
 
 # Fix for 'RuntimeError: Event loop is closed' on Windows
 if sys.platform == "win32":
@@ -111,6 +111,11 @@ bot = DkpBot()
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     logging.error(f"App command error: {type(error).__name__}: {error}")
+    # If the underlying HTTP request failed because the interaction is unknown/expired,
+    # just log and return without trying to respond again.
+    cause = getattr(error, "__cause__", None)
+    if isinstance(cause, HTTPException) and cause.status == 404:
+        return
     try:
         msg = "An error occurred while processing that command."
         if isinstance(error, app_commands.MissingPermissions) or isinstance(error, app_commands.CheckFailure):
