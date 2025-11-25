@@ -13,17 +13,37 @@ class ResetCog(commands.Cog):
     async def reset(self, interaction: discord.Interaction):
         """Allows an admin to wipe the bot's configuration and channels."""
         guild = interaction.guild
-        await interaction.response.defer(ephemeral=True)
 
         # Access the database instance from the bot object.
         # This assumes the database object is attached to the bot instance as 'db'.
         if not hasattr(self.bot, 'db'):
             logging.error("Database instance not found on bot object. Cannot perform reset.")
-            await interaction.followup.send("A critical error occurred: Database connection not found.", ephemeral=True)
+            await interaction.response.send_message("A critical error occurred: Database connection not found.", ephemeral=True)
             return
 
         db = self.bot.db
         config = await db.get_guild_config(guild.id)
+
+        # For safety, do not allow /reset to run from within the DKP-System
+        # category or its primary channels, since those may be deleted as part
+        # of the reset while the command is running.
+        channel = interaction.channel
+        if config and isinstance(channel, (discord.TextChannel, discord.Thread)):
+            dkp_category_id = config['dkp_category_id']
+            dkp_channel_id = config['dkp_channel_id']
+            raid_channel_id = config['raid_channel_id']
+
+            in_dkp_category = getattr(channel, 'category_id', None) == dkp_category_id
+            is_dkp_channel = channel.id in (dkp_channel_id, raid_channel_id)
+
+            if in_dkp_category or is_dkp_channel:
+                await interaction.response.send_message(
+                    "For safety, please run `/reset` in a non-DKP channel such as #general.",
+                    ephemeral=True,
+                )
+                return
+
+        await interaction.response.defer(ephemeral=True)
         
         if not config:
             await interaction.followup.send("The bot has not been set up on this server yet.", ephemeral=True)
