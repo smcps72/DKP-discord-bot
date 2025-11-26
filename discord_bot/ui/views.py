@@ -272,10 +272,14 @@ class RaidControlView(discord.ui.View):
         # IMPORTANT: Do NOT defer for buttons that will open a modal, since
         # modals must be sent via the initial interaction response.
         if interaction.type != discord.InteractionType.modal_submit and custom_id not in ("raid_add_rule",):
-            try:
-                await interaction.response.defer(ephemeral=True, thinking=True)
-            except (discord.InteractionResponded, discord.NotFound):
-                pass # Already responded to or expired, we can ignore.
+            # Only defer if the interaction hasn't already been acknowledged
+            # by another handler (e.g., a command or previous callback).
+            if not interaction.response.is_done():
+                try:
+                    await interaction.response.defer(ephemeral=True, thinking=True)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    # Already responded to, expired, or otherwise invalid; safe to ignore.
+                    pass
 
         # Allow everyone to use the raid "My DKP" button and view rules.
         if custom_id in ("raid_my_dkp", "raid_view_rules"):
