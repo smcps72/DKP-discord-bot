@@ -1,7 +1,12 @@
 import aiosqlite
 import logging
+import os
 
-DB_FILE = "dkp_bot.db"
+# Allow overriding the database file path via environment variable so that
+# production deployments (e.g., Railway) can store the SQLite file on a
+# persistent volume. Locally, this will continue to default to "dkp_bot.db"
+# in the current working directory.
+DB_FILE = os.getenv("DKP_DB_FILE", "dkp_bot.db")
 
 class Database:
     def __init__(self, db_file):
