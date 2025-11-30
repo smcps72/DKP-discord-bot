@@ -102,15 +102,6 @@ class AuctionCog(commands.Cog):
         ), ephemeral=True)
 
     async def end_auction_from_button(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException as e:
-            # If interaction is already acknowledged, we can ignore the error and proceed
-            if e.code == 40060: 
-                pass
-            else:
-                # Re-raise other exceptions
-                raise
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send(embed=create_error_embed("Error", "This is not a raid thread."), ephemeral=True)
