@@ -271,7 +271,7 @@ class RaidControlView(discord.ui.View):
         # Defer most interactions immediately to prevent timeouts.
         # IMPORTANT: Do NOT defer for buttons that will open a modal, since
         # modals must be sent via the initial interaction response.
-        if interaction.type != discord.InteractionType.modal_submit and custom_id not in ("raid_add_rule",):
+        if interaction.type != discord.InteractionType.modal_submit and custom_id not in ("raid_add_rule", "raid_start_auction"):
             # Only defer if the interaction hasn't already been acknowledged
             # by another handler (e.g., a command or previous callback).
             if not interaction.response.is_done():
