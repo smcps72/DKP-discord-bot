@@ -2,11 +2,39 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
+import os
+import shutil
+from datetime import datetime
 
 class ResetCog(commands.Cog):
     """A cog for resetting the bot's configuration on a server."""
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def _backup_database(self, guild_id: int) -> str:
+        """Create a backup copy of the SQLite database file.
+
+        Returns the path to the backup file on success. Raises on failure.
+        """
+        # Expect the Database instance to expose the DB file path via db_file
+        db = getattr(self.bot, "db", None)
+        if db is None or not hasattr(db, "db_file"):
+            raise RuntimeError("Database instance or db_file attribute not found on bot.")
+
+        source_path = db.db_file
+        # Store backups in a "backups" folder next to the primary DB file
+        base_dir = os.path.dirname(os.path.abspath(source_path)) or "."
+        backup_dir = os.getenv("DKP_DB_BACKUP_DIR") or os.path.join(base_dir, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+
+        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        backup_filename = f"dkp_bot_backup_guild_{guild_id}_{timestamp}.db"
+        backup_path = os.path.join(backup_dir, backup_filename)
+
+        # Copy the live SQLite file. This gives us a simple snapshot of the DB.
+        shutil.copy2(source_path, backup_path)
+        logging.info(f"Created database backup for guild {guild_id} at {backup_path}")
+        return backup_path
 
     @app_commands.command(name="reset", description="Resets the DKP bot's configuration on this server.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -51,6 +79,18 @@ class ResetCog(commands.Cog):
 
         try:
             logging.info(f"Starting reset for guild: {guild.name} ({guild.id})")
+
+            # First, back up the current database before making any destructive changes.
+            try:
+                backup_path = await self._backup_database(guild.id)
+                logging.info(f"Database backup completed for guild {guild.id}: {backup_path}")
+            except Exception as backup_err:
+                logging.error(f"Failed to back up database for guild {guild.id}: {backup_err}", exc_info=True)
+                await interaction.followup.send(
+                    "Reset aborted because the database backup step failed. Please check the bot logs.",
+                    ephemeral=True,
+                )
+                return
 
             # Helper to safely delete channels/roles
             async def safe_delete(item_id, get_method, item_type):
@@ -176,6 +216,133 @@ class ResetCog(commands.Cog):
                 )
             except (discord.NotFound, discord.HTTPException):
                 logging.warning("Could not send reset error message because the interaction is no longer valid.")
+
+    @app_commands.command(name="list_backups", description="Lists database backups for this server.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def list_backups(self, interaction: discord.Interaction):
+        guild = interaction.guild
+
+        if not hasattr(self.bot, "db"):
+            logging.error("Database instance not found on bot object. Cannot list backups.")
+            await interaction.response.send_message("A critical error occurred: Database connection not found.", ephemeral=True)
+            return
+
+        db = self.bot.db
+        source_path = getattr(db, "db_file", None)
+        if not source_path:
+            await interaction.response.send_message("Database file path is not configured.", ephemeral=True)
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(source_path)) or "."
+        backup_dir = os.getenv("DKP_DB_BACKUP_DIR") or os.path.join(base_dir, "backups")
+
+        try:
+            entries = []
+            if os.path.isdir(backup_dir):
+                prefix = f"dkp_bot_backup_guild_{guild.id}_"
+                for name in os.listdir(backup_dir):
+                    if name.startswith(prefix) and name.endswith(".db"):
+                        entries.append(name)
+
+            if not entries:
+                await interaction.response.send_message("No backups found for this server.", ephemeral=True)
+                return
+
+            entries.sort(reverse=True)
+            preview = entries[:10]
+            lines = [f"{i+1}. {name}" for i, name in enumerate(preview)]
+            extra = ""
+            if len(entries) > len(preview):
+                extra = f"\n... and {len(entries) - len(preview)} more"
+
+            message = "Backups for this server (newest first):\n" + "\n".join(lines) + extra
+            await interaction.response.send_message(message, ephemeral=True)
+        except Exception as e:
+            logging.error(f"Error listing backups for guild {guild.id}: {e}", exc_info=True)
+            await interaction.response.send_message("Failed to list backups. Please check the logs.", ephemeral=True)
+
+    @app_commands.command(name="restore_backup", description="Restores the database from a named backup file for this server.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def restore_backup(self, interaction: discord.Interaction, backup_filename: str, confirm: bool):
+        guild = interaction.guild
+
+        if not hasattr(self.bot, "db"):
+            logging.error("Database instance not found on bot object. Cannot restore backup.")
+            await interaction.response.send_message("A critical error occurred: Database connection not found.", ephemeral=True)
+            return
+        
+        if not confirm:
+            await interaction.response.send_message(
+                "This is a destructive operation that overwrites the live database. "
+                "Re-run the command with `confirm: true` to proceed.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        db = self.bot.db
+        source_path = getattr(db, "db_file", None)
+        if not source_path:
+            await interaction.followup.send("Database file path is not configured.", ephemeral=True)
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(source_path)) or "."
+        backup_dir = os.getenv("DKP_DB_BACKUP_DIR") or os.path.join(base_dir, "backups")
+
+        try:
+            if not os.path.isdir(backup_dir):
+                await interaction.followup.send("No backups directory exists.", ephemeral=True)
+                return
+
+            prefix = f"dkp_bot_backup_guild_{guild.id}_"
+            if not backup_filename.startswith(prefix):
+                await interaction.followup.send("Backup file does not belong to this server.", ephemeral=True)
+                return
+
+            backup_path = os.path.join(backup_dir, backup_filename)
+            if not os.path.isfile(backup_path):
+                await interaction.followup.send("Specified backup file was not found.", ephemeral=True)
+                return
+
+            try:
+                if getattr(db, "pool", None) is not None:
+                    await db.pool.close()
+                    db.pool = None
+            except Exception as close_err:
+                logging.warning(f"Error closing database connection before restore: {close_err}")
+
+            shutil.copy2(backup_path, source_path)
+
+            try:
+                await db.connect()
+            except Exception as reconnect_err:
+                logging.error(f"Error reconnecting to database after restore: {reconnect_err}", exc_info=True)
+                await interaction.followup.send(
+                    "Copied backup file, but failed to reconnect to the database. Please restart the bot.",
+                    ephemeral=True,
+                )
+                return
+
+            logging.info(f"Restored database for guild {guild.id} from backup {backup_path}")
+
+            # After restoring the DB, attempt to (re)run DKP setup to recreate any missing
+            # channels or categories according to the restored configuration.
+            setup_cog = self.bot.get_cog("SetupCog")
+            if setup_cog is not None and hasattr(setup_cog, "run_setup"):
+                try:
+                    await setup_cog.run_setup(guild, interaction=None)
+                except Exception as setup_err:
+                    logging.error(f"Error running SetupCog.run_setup after restore: {setup_err}", exc_info=True)
+
+            await interaction.followup.send(
+                "Database restored from backup successfully. If channels or roles were missing, "
+                "they have been checked and recreated where possible.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logging.error(f"Error restoring backup for guild {guild.id}: {e}", exc_info=True)
+            await interaction.followup.send("Failed to restore backup. Please check the logs.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     """Standard setup function to load the cog."""

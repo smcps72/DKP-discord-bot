@@ -19,18 +19,18 @@ class SetupCog(commands.Cog):
         # Check if setup has already been run
         config = await self.bot.db.get_guild_config(guild.id)
         if config and config['dkp_category_id']:
-            # We have a config row and a DKP category, but older installs may be missing
-            # the raid channel ID or the channel may have been deleted. In that case,
-            # attempt a lightweight repair instead of bailing out.
-            raid_channel_id = config['raid_channel_id'] if 'raid_channel_id' in config.keys() else None
-            raid_channel = guild.get_channel(raid_channel_id) if raid_channel_id else None
+            category = guild.get_channel(config['dkp_category_id'])
+            if isinstance(category, discord.CategoryChannel):
+                # We have a config row and a DKP category, but older installs may be missing
+                # the raid channel ID or the channel may have been deleted. In that case,
+                # attempt a lightweight repair instead of bailing out.
+                raid_channel_id = config['raid_channel_id'] if 'raid_channel_id' in config.keys() else None
+                raid_channel = guild.get_channel(raid_channel_id) if raid_channel_id else None
 
-            if not raid_channel:
-                # Try to locate an existing "active-raids" channel under the DKP category,
-                # or create it if it does not exist.
-                category = guild.get_channel(config['dkp_category_id'])
-                raid_channel = None
-                if isinstance(category, discord.CategoryChannel):
+                if not raid_channel:
+                    # Try to locate an existing "active-raids" channel under the DKP category,
+                    # or create it if it does not exist.
+                    raid_channel = None
                     for channel in category.text_channels:
                         if channel.name == "active-raids":
                             raid_channel = channel
@@ -39,27 +39,23 @@ class SetupCog(commands.Cog):
                     if not raid_channel:
                         raid_channel = await category.create_text_channel("active-raids")
 
-                # As a fallback, create the channel at guild root if the category vanished.
-                if not raid_channel:
-                    raid_channel = await guild.create_text_channel("active-raids")
+                    await self.bot.db.execute(
+                        "UPDATE guilds SET raid_channel_id = ? WHERE guild_id = ?",
+                        (raid_channel.id, guild.id),
+                    )
+                    msg = f"Setup repaired for {guild.name}: raid channel linked."
+                    logging.info(msg)
+                else:
+                    msg = f"Setup already exists for {guild.name}."
+                    logging.warning(f"Bot re-joined {guild.name}, setup already exists.")
 
-                await self.bot.db.execute(
-                    "UPDATE guilds SET raid_channel_id = ? WHERE guild_id = ?",
-                    (raid_channel.id, guild.id),
-                )
-                msg = f"Setup repaired for {guild.name}: raid channel linked."
-                logging.info(msg)
-            else:
-                msg = f"Setup already exists for {guild.name}."
-                logging.warning(f"Bot re-joined {guild.name}, setup already exists.")
-
-            if interaction:
-                # followup.send is used because we deferred the response
-                try:
-                    await interaction.followup.send(msg, ephemeral=True)
-                except (discord.NotFound, discord.HTTPException):
-                    logging.warning("Setup finished but interaction is no longer valid.")
-            return
+                if interaction:
+                    # followup.send is used because we deferred the response
+                    try:
+                        await interaction.followup.send(msg, ephemeral=True)
+                    except (discord.NotFound, discord.HTTPException):
+                        logging.warning("Setup finished but interaction is no longer valid.")
+                return
         # Create a DKP category
         try:
             overwrites = {
