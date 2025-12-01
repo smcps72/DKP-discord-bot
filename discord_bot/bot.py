@@ -41,6 +41,15 @@ LICENSE_KEY = os.getenv("GUILD_LICENSE_KEY")
 LICENSE_SERVER_URL = os.getenv("LICENSE_SERVER_URL", "https://dkp-discord-bot-production.up.railway.app")
 LICENSE_CHECK_ENABLED = os.getenv("LICENSE_CHECK_ENABLED", "false").lower() == "true"
 
+# Optional: limit slash-command sync to a single test guild so changes appear immediately.
+TEST_GUILD_ID_ENV = os.getenv("TEST_GUILD_ID")
+TEST_GUILD_ID: int | None = None
+if TEST_GUILD_ID_ENV:
+    try:
+        TEST_GUILD_ID = int(TEST_GUILD_ID_ENV)
+    except ValueError:
+        logging.warning("TEST_GUILD_ID is set but is not a valid integer; falling back to global command sync.")
+
 if not TOKEN:
     raise ValueError("DISCORD_BOT_TOKEN is missing. Please check your .env file.")
 if LICENSE_CHECK_ENABLED and not all([LICENSE_KEY, LICENSE_SERVER_URL]):
@@ -90,8 +99,18 @@ class DkpBot(commands.Bot):
         logging.info(f'Logged in as {self.user} (ID: {self.user.id})')
         logging.info('------')
         # Sync slash commands after ready, ensures guild objects are cached.
-        synced = await self.tree.sync()
-        logging.info(f"Synced {len(synced)} slash commands.")
+        try:
+            if TEST_GUILD_ID is not None:
+                guild = discord.Object(id=TEST_GUILD_ID)
+                # Copy all global commands into this guild so they can be updated instantly
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                logging.info(f"Synced {len(synced)} slash commands to test guild {TEST_GUILD_ID}.")
+            else:
+                synced = await self.tree.sync()
+                logging.info(f"Synced {len(synced)} global slash commands.")
+        except Exception as e:
+            logging.error(f"Error syncing application commands: {e}")
 
     async def close(self):
         await super().close()
