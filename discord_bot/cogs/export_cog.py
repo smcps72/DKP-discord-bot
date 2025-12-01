@@ -120,6 +120,31 @@ class ExportCog(commands.Cog):
             await self._download_attachments_into_zip(zf, messages)
         bio.seek(0)
         filename = f"thread_export_{target.id}.zip"
+
+        # Save a local copy into the backups directory so that thread exports
+        # can be grouped with database backups.
+        try:
+            db = getattr(self.bot, "db", None)
+            db_file = getattr(db, "db_file", None) if db is not None else None
+            if db_file:
+                base_dir = os.path.dirname(os.path.abspath(db_file)) or "."
+            else:
+                base_dir = "."
+            backup_root = os.getenv("DKP_DB_BACKUP_DIR") or os.path.join(base_dir, "backups")
+            os.makedirs(backup_root, exist_ok=True)
+
+            ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            ts_folder = os.path.join(backup_root, ts)
+            os.makedirs(ts_folder, exist_ok=True)
+
+            local_name = f"thread_export_guild_{interaction.guild.id}_thread_{target.id}_{ts}.zip"
+            local_path = os.path.join(ts_folder, local_name)
+            with open(local_path, "wb") as f:
+                f.write(bio.getvalue())
+        except Exception:
+            # Local backup failure should not prevent delivering the export to the user.
+            pass
+
         file = discord.File(bio, filename=filename)
         await interaction.followup.send(content="Thread export ready.", file=file, ephemeral=True)
 
