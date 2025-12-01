@@ -46,12 +46,62 @@ class ExportCog(commands.Cog):
             })
         return messages
 
+    async def _gather_channel(self, channel: discord.TextChannel):
+        """Gather full message history from a text channel.
+
+        Structure matches _gather_thread so that downstream exporters can reuse
+        the same markdown/CSV builders.
+        """
+        messages = []
+        async for msg in channel.history(limit=None, oldest_first=True):
+            attachments = []
+            for a in msg.attachments:
+                attachments.append({
+                    "id": a.id,
+                    "filename": a.filename,
+                    "url": a.url,
+                    "is_image": self._is_image(a),
+                    "size": a.size,
+                    "content_type": a.content_type or ""
+                })
+            messages.append({
+                "id": msg.id,
+                "author_id": msg.author.id if msg.author else None,
+                "author_name": getattr(msg.author, "display_name", str(msg.author)) if msg.author else "Unknown",
+                "timestamp": msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
+                "content": msg.clean_content or "",
+                "attachments": attachments,
+            })
+        return messages
+
     def _build_markdown(self, thread: discord.Thread, messages: list) -> str:
         lines = []
         header = f"# Thread Export: {thread.name}\n\n"
         lines.append(header)
         lines.append(f"Thread ID: {thread.id}\n")
         lines.append(f"Channel: #{getattr(thread.parent, 'name', 'unknown')}\n")
+        lines.append("\n---\n\n")
+        for m in messages:
+            ts = m["timestamp"]
+            author = m["author_name"]
+            content = m["content"].replace("\r\n", "\n").replace("\r", "\n")
+            lines.append(f"[{ts}] {author}:\n")
+            if content:
+                lines.append(content + "\n")
+            for a in m["attachments"]:
+                fn = f"attachments/{a['id']}_{a['filename']}"
+                if a["is_image"]:
+                    lines.append(f"![]({fn})\n")
+                else:
+                    lines.append(f"Attachment: {fn}\n")
+            lines.append("\n")
+        return "".join(lines)
+
+    def _build_channel_markdown(self, channel: discord.TextChannel, messages: list) -> str:
+        lines = []
+        header = f"# Channel Export: #{channel.name}\n\n"
+        lines.append(header)
+        lines.append(f"Channel ID: {channel.id}\n")
         lines.append("\n---\n\n")
         for m in messages:
             ts = m["timestamp"]
@@ -147,6 +197,63 @@ class ExportCog(commands.Cog):
 
         file = discord.File(bio, filename=filename)
         await interaction.followup.send(content="Thread export ready.", file=file, ephemeral=True)
+
+    @app_commands.command(name="export_channel", description="Export a text channel to a ZIP (Markdown + CSV + attachments).")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def export_channel_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        target = channel if channel else interaction.channel
+        if not isinstance(target, discord.TextChannel):
+            return await interaction.followup.send("Use this in a text channel or provide a text channel option.", ephemeral=True)
+
+        messages = await self._gather_channel(target)
+        md_text = self._build_channel_markdown(target, messages)
+        csv_bytes = self._build_csv(messages)
+
+        bio = io.BytesIO()
+        with zipfile.ZipFile(bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("channel.md", md_text.encode())
+            zf.writestr("channel.csv", csv_bytes)
+            zf.writestr(
+                "meta.txt",
+                (
+                    f"channel_id={target.id}\n"
+                    f"channel_name={target.name}\n"
+                    f"exported_at={datetime.now(timezone.utc).isoformat()}\n"
+                ),
+            )
+            await self._download_attachments_into_zip(zf, messages)
+        bio.seek(0)
+        filename = f"channel_export_{target.id}.zip"
+
+        # Save a local copy into the backups directory so that channel exports
+        # can be grouped with database backups.
+        try:
+            db = getattr(self.bot, "db", None)
+            db_file = getattr(db, "db_file", None) if db is not None else None
+            if db_file:
+                base_dir = os.path.dirname(os.path.abspath(db_file)) or "."
+            else:
+                base_dir = "."
+            backup_root = os.getenv("DKP_DB_BACKUP_DIR") or os.path.join(base_dir, "backups")
+            os.makedirs(backup_root, exist_ok=True)
+
+            ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            ts_folder = os.path.join(backup_root, ts)
+            os.makedirs(ts_folder, exist_ok=True)
+
+            local_name = f"channel_export_guild_{interaction.guild.id}_channel_{target.id}_{ts}.zip"
+            local_path = os.path.join(ts_folder, local_name)
+            with open(local_path, "wb") as f:
+                f.write(bio.getvalue())
+        except Exception:
+            # Local backup failure should not prevent delivering the export to the user.
+            pass
+
+        file = discord.File(bio, filename=filename)
+        await interaction.followup.send(content="Channel export ready.", file=file, ephemeral=True)
 
     async def _read_zip_bytes(self, attachment: discord.Attachment) -> zipfile.ZipFile:
         data = await attachment.read()
