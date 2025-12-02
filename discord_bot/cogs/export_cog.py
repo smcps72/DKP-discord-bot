@@ -198,6 +198,128 @@ class ExportCog(commands.Cog):
         file = discord.File(bio, filename=filename)
         await interaction.followup.send(content="Thread export ready.", file=file, ephemeral=True)
 
+    @app_commands.command(name="export_all_threads", description="Export all threads under a text channel to ZIPs in the backups folder.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def export_all_threads_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None):
+        """Bulk-export all threads under the given text channel.
+
+        For each thread, writes a ZIP with the same structure as /export_thread into
+        backups/<TIMESTAMP>/thread_export_guild_<guild>_thread_<id>_<TIMESTAMP>.zip.
+        """
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        target = channel if channel else interaction.channel
+        if not isinstance(target, discord.TextChannel):
+            return await interaction.followup.send("Use this in a text channel or provide a text channel option.", ephemeral=True)
+
+        guild = interaction.guild
+        if guild is None:
+            return await interaction.followup.send("This command can only be used inside a server.", ephemeral=True)
+
+        # Determine backup root and timestamped folder as in /export_thread
+        db = getattr(self.bot, "db", None)
+        db_file = getattr(db, "db_file", None) if db is not None else None
+        if db_file:
+            base_dir = os.path.dirname(os.path.abspath(db_file)) or "."
+        else:
+            base_dir = "."
+        backup_root = os.getenv("DKP_DB_BACKUP_DIR") or os.path.join(base_dir, "backups")
+        os.makedirs(backup_root, exist_ok=True)
+
+        ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        ts_folder = os.path.join(backup_root, ts)
+        os.makedirs(ts_folder, exist_ok=True)
+
+        # Collect all relevant threads: active + archived
+        seen_ids = set()
+        threads: list[discord.Thread] = []
+
+        for th in target.threads:
+            if isinstance(th, discord.Thread) and th.id not in seen_ids:
+                seen_ids.add(th.id)
+                threads.append(th)
+
+        try:
+            async for th in target.archived_threads(limit=None):
+                if isinstance(th, discord.Thread) and th.id not in seen_ids:
+                    seen_ids.add(th.id)
+                    threads.append(th)
+        except Exception:
+            # Older discord.py or missing permissions may not support archived_threads;
+            # in that case we proceed with whatever we have.
+            pass
+
+        if not threads:
+            return await interaction.followup.send("No threads found under this channel to export.", ephemeral=True)
+
+        exported = 0
+        skipped = 0
+        exported_files: list[tuple[str, str]] = []  # (filename, full_path)
+
+        for th in threads:
+            try:
+                messages = await self._gather_thread(th)
+                md_text = self._build_markdown(th, messages)
+                csv_bytes = self._build_csv(messages)
+
+                bio = io.BytesIO()
+                with zipfile.ZipFile(bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr("thread.md", md_text.encode())
+                    zf.writestr("thread.csv", csv_bytes)
+                    zf.writestr(
+                        "meta.txt",
+                        (
+                            f"thread_id={th.id}\n"
+                            f"thread_name={th.name}\n"
+                            f"exported_at={datetime.now(timezone.utc).isoformat()}\n"
+                        ),
+                    )
+                    await self._download_attachments_into_zip(zf, messages)
+
+                bio.seek(0)
+                local_name = f"thread_export_guild_{guild.id}_thread_{th.id}_{ts}.zip"
+                local_path = os.path.join(ts_folder, local_name)
+                with open(local_path, "wb") as f:
+                    f.write(bio.getvalue())
+                exported += 1
+                exported_files.append((local_name, local_path))
+            except Exception as e:
+                skipped += 1
+                logging = __import__("logging")
+                logging.getLogger(__name__).error(
+                    f"Failed to export thread {th.id} in guild {guild.id}: {e}",
+                    exc_info=True,
+                )
+
+        summary = (
+            f"Exported {exported} thread(s) under {target.mention} into backups/{ts}. "
+            f"Skipped {skipped} due to errors."
+        )
+
+        file = None
+        if exported_files:
+            try:
+                all_bio = io.BytesIO()
+                with zipfile.ZipFile(all_bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for name, path in exported_files:
+                        try:
+                            # Store each per-thread ZIP under its own name inside the aggregate ZIP
+                            zf.write(path, arcname=name)
+                        except Exception:
+                            # If one file fails, skip it but continue building the archive
+                            continue
+                all_bio.seek(0)
+                agg_name = f"all_threads_export_guild_{guild.id}_channel_{target.id}_{ts}.zip"
+                file = discord.File(all_bio, filename=agg_name)
+            except Exception:
+                file = None
+
+        if file is not None:
+            await interaction.followup.send(summary, file=file, ephemeral=True)
+        else:
+            await interaction.followup.send(summary, ephemeral=True)
+
     @app_commands.command(name="export_channel", description="Export a text channel to a ZIP (Markdown + CSV + attachments).")
     @app_commands.checks.has_permissions(administrator=True)
     async def export_channel_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None):
