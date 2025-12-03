@@ -23,6 +23,31 @@ class ExportCog(commands.Cog):
             return True
         return ext in IMAGE_EXTS
 
+    def _extract_message_content(self, msg: discord.Message) -> str:
+        """Return a text representation of a message.
+
+        Prefers clean_content, but for embed-only messages (such as the
+        raid control and DKP award panels), fall back to a simple textual
+        rendering of the embeds so that exports are human-readable.
+        """
+        base = msg.clean_content or ""
+        if base.strip():
+            return base
+
+        parts: list[str] = []
+        for emb in msg.embeds:
+            if emb.title:
+                parts.append(str(emb.title))
+            if emb.description:
+                parts.append(str(emb.description))
+            for field in getattr(emb, "fields", []) or []:
+                # Format as "Field Name: Field Value"
+                name = str(field.name) if field.name is not None else ""
+                value = str(field.value) if field.value is not None else ""
+                if name or value:
+                    parts.append(f"{name}: {value}".strip())
+        return "\n".join(p for p in parts if p)
+
     async def _gather_thread(self, thread: discord.Thread):
         messages = []
         async for msg in thread.history(limit=None, oldest_first=True):
@@ -41,7 +66,7 @@ class ExportCog(commands.Cog):
                 "author_id": msg.author.id if msg.author else None,
                 "author_name": getattr(msg.author, "display_name", str(msg.author)) if msg.author else "Unknown",
                 "timestamp": msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
-                "content": msg.clean_content or "",
+                "content": self._extract_message_content(msg),
                 "attachments": attachments
             })
         return messages
@@ -69,7 +94,7 @@ class ExportCog(commands.Cog):
                 "author_id": msg.author.id if msg.author else None,
                 "author_name": getattr(msg.author, "display_name", str(msg.author)) if msg.author else "Unknown",
                 "timestamp": msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
-                "content": msg.clean_content or "",
+                "content": self._extract_message_content(msg),
                 "attachments": attachments,
             })
         return messages
