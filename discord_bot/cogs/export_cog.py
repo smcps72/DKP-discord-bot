@@ -154,7 +154,7 @@ class ExportCog(commands.Cog):
                 m["timestamp"],
                 m["author_id"],
                 m["author_name"],
-                m["content"].replace("\n", " ").strip(),
+                m["content"],
                 att_list,
             ])
         return buf.getvalue().encode()
