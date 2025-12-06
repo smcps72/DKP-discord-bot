@@ -10,6 +10,28 @@ class RaidCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _send_control_panel_ephemeral(self, interaction: discord.Interaction, thread: discord.Thread):
+        """Send the raid control panel as an ephemeral message to the raid leader.
+
+        The raid log thread itself remains clean history ("Raid started by...",
+        DKP changes, team updates). The control panel is only visible to the
+        leader and can be re-sent after actions to keep it near the bottom of
+        their view.
+        """
+        if not isinstance(interaction.user, discord.Member):
+            return
+        control_embed = create_info_embed(
+            f"Raid Control Panel for {interaction.user.display_name}",
+            "Use the buttons below to manage your raid. This panel is only visible to you.",
+        )
+        view = RaidControlView(self.bot)
+        await interaction.followup.send(
+            f"Manage the raid in {thread.mention}.",
+            embed=control_embed,
+            view=view,
+            ephemeral=True,
+        )
+
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
         # Defer the response if it hasn't been done yet. 
         # This makes the function safe to call from commands or views.
@@ -65,19 +87,13 @@ class RaidCog(commands.Cog):
                 (interaction.guild.id, interaction.user.id, new_vc.id, thread.id)
             )
 
-            # Send the raid control panel as an ephemeral message to the leader
-            # instead of posting it publicly in the raid log thread.
+            # First control panel is public in the raid log thread
             control_embed = create_info_embed(
                 f"Raid Control Panel for {interaction.user.display_name}",
-                "Use the buttons below to manage your raid. This panel is only visible to you."
+                "Use the buttons below to manage your raid.",
             )
             view = RaidControlView(self.bot)
-            await interaction.followup.send(
-                f"Raid created! Join {new_vc.mention} and manage it in {thread.mention}",
-                embed=control_embed,
-                view=view,
-                ephemeral=True,
-            )
+            await thread.send(embed=control_embed, view=view)
         except Exception as e:
             logging.error(f"Failed to create raid: {e}")
             await interaction.followup.send(embed=create_error_embed("Error", "Could not create the raid. Check my permissions."))
@@ -152,6 +168,11 @@ class RaidCog(commands.Cog):
         )
         await interaction.followup.send(embed=embed)
 
+        # Refresh the ephemeral control panel for the raid leader
+        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+        if isinstance(thread, discord.Thread):
+            await self._send_control_panel_ephemeral(interaction, thread)
+
     async def process_dkp_adjustment(
         self,
         interaction: discord.Interaction,
@@ -210,6 +231,11 @@ class RaidCog(commands.Cog):
             description,
         )
         await interaction.followup.send(embed=embed)
+
+        # After a DKP adjustment, reshow the control panel ephemerally
+        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+        if isinstance(thread, discord.Thread):
+            await self._send_control_panel_ephemeral(interaction, thread)
     async def close_raid(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
