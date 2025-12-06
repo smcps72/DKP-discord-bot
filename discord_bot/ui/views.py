@@ -275,8 +275,12 @@ class RaidControlView(discord.ui.View):
             # Only defer if the interaction hasn't already been acknowledged
             # by another handler (e.g., a command or previous callback).
             if not interaction.response.is_done():
+                # "Update Team" should be a public message so raiders can see
+                # the current team list. Defer non-ephemerally for that button
+                # while keeping other raid controls ephemeral.
+                ephemeral = custom_id != "raid_update_team"
                 try:
-                    await interaction.response.defer(ephemeral=True, thinking=True)
+                    await interaction.response.defer(ephemeral=ephemeral, thinking=True)
                 except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                     # Already responded to, expired, or otherwise invalid; safe to ignore.
                     pass
