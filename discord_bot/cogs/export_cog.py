@@ -543,6 +543,7 @@ class ExportCog(commands.Cog):
 
         # Iterate CSV rows: [timestamp, author_id, author_name, content, attachments]
         sent = 0
+        original_leader: str | None = None
         messages_meta = self._load_messages_json(zf) or []
         async def build_files(att_field: str) -> list[discord.File]:
             files: list[discord.File] = []
@@ -569,6 +570,16 @@ class ExportCog(commands.Cog):
                     continue
                 _, _, _, content, att_field = row
                 files = await build_files(att_field)
+
+                # Capture original raid leader from the very first "Raid started by" line
+                if index == 0 and not original_leader:
+                    prefix = "Raid started by "
+                    if (content or "").startswith(prefix):
+                        # Expect format: "Raid started by X on ..."; fall back to the
+                        # entire tail if we can't find the separator.
+                        tail = content[len(prefix):]
+                        sep = tail.find(" on ")
+                        original_leader = tail[:sep] if sep != -1 else tail
 
                 # Optional embed reconstruction from messages.json; index aligned
                 embeds: list[discord.Embed] = []
@@ -608,19 +619,6 @@ class ExportCog(commands.Cog):
                 await asyncio.sleep(0.5)
         except Exception:
             return await interaction.followup.send("Import failed while sending messages. Check the ZIP contents.", ephemeral=True)
-
-        # Add a clear closing line to the imported raid log so the last
-        # message mirrors live threads that are explicitly closed.
-        try:
-            ts = int(datetime.now(timezone.utc).timestamp())
-            await target_thread.send(
-                f"Raid closed (imported) by {interaction.user.mention} at <t:{ts}:F>. This is a restored log."
-            )
-            sent += 1
-        except Exception:
-            # If we cannot post the closing message, still report the import
-            # as successful for the messages we did replay.
-            pass
 
         await interaction.followup.send(f"Import complete. Replayed {sent} messages into {target_thread.mention}.", ephemeral=True)
 
