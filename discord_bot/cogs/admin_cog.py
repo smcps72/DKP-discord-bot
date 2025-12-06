@@ -48,6 +48,36 @@ class AdminCog(commands.Cog):
         file = discord.File(io.BytesIO(output.read().encode()), filename="dkp_history.csv")
         await interaction.followup.send("Here is the DKP transaction history for the last 30 days:", file=file, ephemeral=True)
 
+    @app_commands.command(name="raid_points", description="Show DKP for all members in the current raid.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def raid_points_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This channel is not associated with an active raid.", ephemeral=True)
+
+        vc = interaction.guild.get_channel(raid["vc_id"])
+        if not vc or not isinstance(vc, discord.VoiceChannel):
+            return await interaction.followup.send("Raid voice channel not found.", ephemeral=True)
+
+        members = [m for m in vc.members if not m.bot]
+        if not members:
+            return await interaction.followup.send("There are no non-bot members in the raid voice channel.", ephemeral=True)
+
+        dkp_entries = []
+        for member in members:
+            dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id)
+            dkp_entries.append((member, dkp))
+
+        dkp_entries.sort(key=lambda x: x[1], reverse=True)
+
+        lines = [f"{member.mention} — **{dkp} DKP**" for member, dkp in dkp_entries]
+        description = "\n".join(lines)
+
+        embed = create_info_embed("Raid DKP", description)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     @app_commands.command(name="list_members", description="List all members in this server (debug, forced sync)")
     @app_commands.checks.has_permissions(administrator=True)
     async def list_members(self, interaction: discord.Interaction):
