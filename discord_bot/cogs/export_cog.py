@@ -7,6 +7,7 @@ import zipfile
 from datetime import datetime, timezone
 import os
 import asyncio
+import json
 
 from ..utils import is_officer
 
@@ -61,13 +62,17 @@ class ExportCog(commands.Cog):
                     "size": a.size,
                     "content_type": a.content_type or ""
                 })
+            has_plain = bool(msg.clean_content and msg.clean_content.strip())
             messages.append({
                 "id": msg.id,
                 "author_id": msg.author.id if msg.author else None,
                 "author_name": getattr(msg.author, "display_name", str(msg.author)) if msg.author else "Unknown",
                 "timestamp": msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
                 "content": self._extract_message_content(msg),
-                "attachments": attachments
+                "attachments": attachments,
+                "has_plain_content": has_plain,
+                # Store raw embed JSON so future imports can recreate UI
+                "embeds": [e.to_dict() for e in msg.embeds],
             })
         return messages
 
@@ -89,6 +94,7 @@ class ExportCog(commands.Cog):
                     "size": a.size,
                     "content_type": a.content_type or ""
                 })
+            has_plain = bool(msg.clean_content and msg.clean_content.strip())
             messages.append({
                 "id": msg.id,
                 "author_id": msg.author.id if msg.author else None,
@@ -96,6 +102,8 @@ class ExportCog(commands.Cog):
                 "timestamp": msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
                 "content": self._extract_message_content(msg),
                 "attachments": attachments,
+                "has_plain_content": has_plain,
+                "embeds": [e.to_dict() for e in msg.embeds],
             })
         return messages
 
@@ -191,7 +199,12 @@ class ExportCog(commands.Cog):
         with zipfile.ZipFile(bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("thread.md", md_text.encode())
             zf.writestr("thread.csv", csv_bytes)
-            zf.writestr("meta.txt", f"thread_id={target.id}\nthread_name={target.name}\nexported_at={datetime.now(timezone.utc).isoformat()}\n")
+            zf.writestr(
+                "meta.txt",
+                f"thread_id={target.id}\nthread_name={target.name}\nexported_at={datetime.now(timezone.utc).isoformat()}\n",
+            )
+            # New: structured JSON export for future rich imports (embeds, etc.)
+            zf.writestr("messages.json", json.dumps(messages, ensure_ascii=False).encode("utf-8"))
             await self._download_attachments_into_zip(zf, messages)
         bio.seek(0)
         filename = f"thread_export_{target.id}.zip"
@@ -300,6 +313,7 @@ class ExportCog(commands.Cog):
                             f"exported_at={datetime.now(timezone.utc).isoformat()}\n"
                         ),
                     )
+                    zf.writestr("messages.json", json.dumps(messages, ensure_ascii=False).encode("utf-8"))
                     await self._download_attachments_into_zip(zf, messages)
 
                 bio.seek(0)
@@ -371,6 +385,7 @@ class ExportCog(commands.Cog):
                     f"exported_at={datetime.now(timezone.utc).isoformat()}\n"
                 ),
             )
+            zf.writestr("messages.json", json.dumps(messages, ensure_ascii=False).encode("utf-8"))
             await self._download_attachments_into_zip(zf, messages)
         bio.seek(0)
         filename = f"channel_export_{target.id}.zip"
@@ -440,6 +455,25 @@ class ExportCog(commands.Cog):
         """Backward-compatible helper for thread exports (thread.csv)."""
         return self._iter_csv_rows_generic(zf, "thread.csv")
 
+    def _load_messages_json(self, zf: zipfile.ZipFile) -> list[dict] | None:
+        """Load structured messages.json if present.
+
+        Returns a list of message dicts matching the order used when building
+        thread.csv/channel.csv. If the file is missing or invalid, returns None
+        so imports can fall back to CSV-only behavior.
+        """
+        try:
+            with zf.open("messages.json") as f:
+                data = f.read().decode("utf-8", errors="ignore")
+            obj = json.loads(data)
+            if isinstance(obj, list):
+                return obj
+        except KeyError:
+            return None
+        except Exception:
+            return None
+        return None
+
     def _load_attachment_bytes(self, zf: zipfile.ZipFile, relpath: str) -> bytes | None:
         try:
             with zf.open(f"attachments/{relpath}") as f:
@@ -459,22 +493,34 @@ class ExportCog(commands.Cog):
         thread = await seed.create_thread(name=name)
         return thread
 
-    async def _send_message_with_attachments(self, thread: discord.Thread, content: str, files: list[discord.File]):
+    async def _send_message_with_attachments(
+        self,
+        target: discord.abc.Messageable,
+        content: str,
+        files: list[discord.File],
+        embeds: list[discord.Embed] | None = None,
+    ):
+        """Send a message with attachments (and optional embeds) in batches.
+
+        "target" may be a Thread or TextChannel. Embeds are optional so that
+        existing callers without embed metadata continue to work.
+        """
         # Discord allows up to 10 attachments per message
+        embeds = embeds or []
         if not files:
-            await thread.send(content if content else "")
+            await target.send(content if content else "", embeds=embeds or None)
             return
         batch = []
         first = True
         for f in files:
             batch.append(f)
             if len(batch) == 10:
-                await thread.send(content if first else "", files=batch)
+                await target.send(content if first else "", files=batch, embeds=embeds or None)
                 first = False
                 batch = []
                 await asyncio.sleep(0.5)
         if batch:
-            await thread.send(content if first else "", files=batch)
+            await target.send(content if first else "", files=batch, embeds=embeds or None)
 
     @app_commands.command(name="import_thread", description="Import a thread from an exported ZIP (replay messages and attachments).")
     @app_commands.checks.has_permissions(administrator=True)
@@ -497,6 +543,7 @@ class ExportCog(commands.Cog):
 
         # Iterate CSV rows: [timestamp, author_id, author_name, content, attachments]
         sent = 0
+        messages_meta = self._load_messages_json(zf) or []
         async def build_files(att_field: str) -> list[discord.File]:
             files: list[discord.File] = []
             att_field = (att_field or "").strip()
@@ -516,18 +563,47 @@ class ExportCog(commands.Cog):
             return files
 
         try:
+            index = 0
             for row in self._iter_csv_rows(zf):
                 if len(row) < 5:
                     continue
                 _, _, _, content, att_field = row
                 files = await build_files(att_field)
 
-                # Skip completely empty rows so we never send empty messages
-                if (not (content or "").strip()) and not files:
+                # Optional embed reconstruction from messages.json; index aligned
+                embeds: list[discord.Embed] = []
+                if 0 <= index < len(messages_meta):
+                    raw = messages_meta[index] or {}
+                    raw_embeds = raw.get("embeds", []) or []
+
+                    # Special handling for the first raid control panel message:
+                    # replace it with a simple 'Raid leader is {name}' line
+                    # instead of replaying the control panel embed.
+                    if index == 0 and raw_embeds:
+                        title = str(raw_embeds[0].get("title", ""))
+                        if title.startswith("Raid Control Panel for "):
+                            leader = raw.get("author_name") or title.removeprefix("Raid Control Panel for ")
+                            content = f"Raid leader is {leader}"
+                            embeds = []
+                    else:
+                        for e in raw_embeds:
+                            try:
+                                embeds.append(discord.Embed.from_dict(e))
+                            except Exception:
+                                continue
+
+                        # When embeds are present, prefer the embed UI only to avoid
+                        # duplicating the flattened text representation.
+                        if embeds:
+                            content = ""
+
+                # Skip rows that would be completely empty: no text, no files, no embeds
+                if (not (content or "").strip()) and not files and not embeds:
                     continue
 
-                await self._send_message_with_attachments(target_thread, content, files)
+                await self._send_message_with_attachments(target_thread, content, files, embeds)
                 sent += 1
+                index += 1
                 # small delay to be gentle with rate limits
                 await asyncio.sleep(0.5)
         except Exception:
@@ -556,6 +632,7 @@ class ExportCog(commands.Cog):
             return await interaction.followup.send("Use this in a text channel where you want messages replayed.", ephemeral=True)
 
         sent = 0
+        messages_meta = self._load_messages_json(zf) or []
 
         async def build_files(att_field: str) -> list[discord.File]:
             files: list[discord.File] = []
@@ -575,18 +652,34 @@ class ExportCog(commands.Cog):
             return files
 
         try:
+            index = 0
             for row in self._iter_csv_rows_generic(zf, "channel.csv"):
                 if len(row) < 5:
                     continue
                 _, _, _, content, att_field = row
                 files = await build_files(att_field)
 
+                embeds: list[discord.Embed] = []
+                if 0 <= index < len(messages_meta):
+                    raw = messages_meta[index] or {}
+                    for e in raw.get("embeds", []) or []:
+                        try:
+                            embeds.append(discord.Embed.from_dict(e))
+                        except Exception:
+                            continue
+
+                    # When embeds are present, prefer the embed UI only to avoid
+                    # duplicating the flattened text representation.
+                    if embeds:
+                        content = ""
+
                 # Skip completely empty rows
-                if (not (content or "").strip()) and not files:
+                if (not (content or "").strip()) and not files and not embeds:
                     continue
 
-                await self._send_message_with_attachments(target_channel, content, files)
+                await self._send_message_with_attachments(target_channel, content, files, embeds)
                 sent += 1
+                index += 1
                 await asyncio.sleep(0.5)
         except Exception:
             return await interaction.followup.send("Import failed while sending messages. Check the ZIP contents.", ephemeral=True)
@@ -634,6 +727,7 @@ class ExportCog(commands.Cog):
             thread = await seed.create_thread(name=desired_name)
 
             sent = 0
+            messages_meta = self._load_messages_json(zf) or []
 
             async def build_files(att_field: str) -> list[discord.File]:
                 files: list[discord.File] = []
@@ -652,18 +746,44 @@ class ExportCog(commands.Cog):
                     files.append(discord.File(io.BytesIO(data), filename=original))
                 return files
 
+            index = 0
             for row in self._iter_csv_rows(zf):
                 if len(row) < 5:
                     continue
                 _, _, _, content, att_field = row
                 files = await build_files(att_field)
 
+                embeds: list[discord.Embed] = []
+                if 0 <= index < len(messages_meta):
+                    raw = messages_meta[index] or {}
+                    raw_embeds = raw.get("embeds", []) or []
+
+                    # Special handling for the first raid control panel message
+                    if index == 0 and raw_embeds:
+                        title = str(raw_embeds[0].get("title", ""))
+                        if title.startswith("Raid Control Panel for "):
+                            leader = raw.get("author_name") or title.removeprefix("Raid Control Panel for ")
+                            content = f"Raid leader is {leader}"
+                            embeds = []
+                    else:
+                        for e in raw_embeds:
+                            try:
+                                embeds.append(discord.Embed.from_dict(e))
+                            except Exception:
+                                continue
+
+                        # When embeds are present, prefer the embed UI only to avoid
+                        # duplicating the flattened text representation.
+                        if embeds:
+                            content = ""
+
                 # Skip completely empty rows so we never send empty messages
-                if (not (content or "").strip()) and not files:
+                if (not (content or "").strip()) and not files and not embeds:
                     continue
 
-                await self._send_message_with_attachments(thread, content, files)
+                await self._send_message_with_attachments(thread, content, files, embeds)
                 sent += 1
+                index += 1
                 await asyncio.sleep(0.5)
 
             return sent

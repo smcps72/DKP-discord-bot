@@ -64,13 +64,20 @@ class RaidCog(commands.Cog):
                 "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id) VALUES (?, ?, ?, ?)",
                 (interaction.guild.id, interaction.user.id, new_vc.id, thread.id)
             )
+
+            # Send the raid control panel as an ephemeral message to the leader
+            # instead of posting it publicly in the raid log thread.
             control_embed = create_info_embed(
                 f"Raid Control Panel for {interaction.user.display_name}",
                 "Use the buttons below to manage your raid. This panel is only visible to you."
             )
             view = RaidControlView(self.bot)
-            await thread.send(embed=control_embed, view=view)
-            await interaction.followup.send(f"Raid created! Join {new_vc.mention} and manage it in {thread.mention}", ephemeral=True)
+            await interaction.followup.send(
+                f"Raid created! Join {new_vc.mention} and manage it in {thread.mention}",
+                embed=control_embed,
+                view=view,
+                ephemeral=True,
+            )
         except Exception as e:
             logging.error(f"Failed to create raid: {e}")
             await interaction.followup.send(embed=create_error_embed("Error", "Could not create the raid. Check my permissions."))
