@@ -609,6 +609,19 @@ class ExportCog(commands.Cog):
         except Exception:
             return await interaction.followup.send("Import failed while sending messages. Check the ZIP contents.", ephemeral=True)
 
+        # Add a clear closing line to the imported raid log so the last
+        # message mirrors live threads that are explicitly closed.
+        try:
+            ts = int(datetime.now(timezone.utc).timestamp())
+            await target_thread.send(
+                f"Raid closed (imported) by {interaction.user.mention} at <t:{ts}:F>. This is a restored log."
+            )
+            sent += 1
+        except Exception:
+            # If we cannot post the closing message, still report the import
+            # as successful for the messages we did replay.
+            pass
+
         await interaction.followup.send(f"Import complete. Replayed {sent} messages into {target_thread.mention}.", ephemeral=True)
 
     @app_commands.command(name="import_channel", description="Import a text channel from an exported ZIP (replay messages and attachments).")

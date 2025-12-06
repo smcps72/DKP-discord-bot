@@ -128,7 +128,8 @@ class AuctionCog(commands.Cog):
             f"Auction Concluded: {auction['item_name']}",
             f"Congratulations to {winner_name} for winning with a bid of **{auction['highest_bid']} DKP**!"
         )
-        await interaction.followup.send(embed=embed)
+        # Post winner publicly in the raid thread so everyone can see the result.
+        await interaction.channel.send(embed=embed)
 
 
 async def setup(bot):
