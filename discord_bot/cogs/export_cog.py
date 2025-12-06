@@ -521,6 +521,11 @@ class ExportCog(commands.Cog):
                     continue
                 _, _, _, content, att_field = row
                 files = await build_files(att_field)
+
+                # Skip completely empty rows so we never send empty messages
+                if (not (content or "").strip()) and not files:
+                    continue
+
                 await self._send_message_with_attachments(target_thread, content, files)
                 sent += 1
                 # small delay to be gentle with rate limits
