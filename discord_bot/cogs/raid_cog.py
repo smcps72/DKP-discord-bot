@@ -5,6 +5,8 @@ from datetime import datetime
 import logging
 from ..utils import create_info_embed, create_error_embed, create_success_embed, is_officer
 from ..ui.views import RaidControlView
+from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
+
 
 class RaidCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -90,62 +92,128 @@ class RaidCog(commands.Cog):
             return
 
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
-        # Defer the response if it hasn't been done yet. 
-        # This makes the function safe to call from commands or views.
+        """Entry point from commands/buttons: checks, then opens the raid-name modal."""
+        if not await is_officer(interaction):
+            return await interaction.response.send_message(
+                "You must be an officer to create a raid.",
+                ephemeral=True,
+            )
+
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        if not config or not config["raid_channel_id"]:
+            return await interaction.response.send_message(
+                embed=create_error_embed(
+                    "Setup Incomplete",
+                    "The bot is not fully set up. Please ask an admin to re-invite the bot.",
+                ),
+                ephemeral=True,
+            )
+
+        active_raids_channel = interaction.guild.get_channel(config["raid_channel_id"])
+        if not active_raids_channel:
+            return await interaction.response.send_message(
+                embed=create_error_embed(
+                    "Setup Error",
+                    "Required channels are missing. Please re-invite the bot.",
+                ),
+                ephemeral=True,
+            )
+
+        modal = RaidCreateModal(self)
+        await interaction.response.send_modal(modal)
+
+    async def create_raid_with_name(self, interaction: discord.Interaction, raid_name: str):
+        """Actually create the raid using a provided raid name from the modal."""
+        if not interaction.guild:
+            return
+
+        # Defer so we can safely do followup messages from modal submission
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
-        if not await is_officer(interaction):
-            return await interaction.followup.send("You must be an officer to create a raid.", ephemeral=True)
         config = await self.bot.db.get_guild_config(interaction.guild.id)
-        if not config or not config['raid_channel_id']:
-            return await interaction.followup.send(embed=create_error_embed("Setup Incomplete", "The bot is not fully set up. Please ask an admin to re-invite the bot."))
+        if not config or not config["raid_channel_id"]:
+            return await interaction.followup.send(
+                embed=create_error_embed(
+                    "Setup Incomplete",
+                    "The bot is not fully set up. Please ask an admin to re-invite the bot.",
+                ),
+                ephemeral=True,
+            )
 
         template_vc = None
-        if 'raid_vc_template_id' in config.keys() and config['raid_vc_template_id']:
-            template_vc = interaction.guild.get_channel(config['raid_vc_template_id'])
+        if "raid_vc_template_id" in config.keys() and config["raid_vc_template_id"]:
+            template_vc = interaction.guild.get_channel(config["raid_vc_template_id"])
 
-        active_raids_channel = interaction.guild.get_channel(config['raid_channel_id'])
+        active_raids_channel = interaction.guild.get_channel(config["raid_channel_id"])
         if not active_raids_channel:
-            return await interaction.followup.send(embed=create_error_embed("Setup Error", "Required channels are missing. Please re-invite the bot."))
+            return await interaction.followup.send(
+                embed=create_error_embed(
+                    "Setup Error",
+                    "Required channels are missing. Please re-invite the bot.",
+                ),
+                ephemeral=True,
+            )
+
+        # Basic sanitisation/trim to keep within Discord limits
+        raid_name = raid_name.strip()
+        if not raid_name:
+            raid_name = "Raid"
 
         try:
             raid_date = datetime.now().strftime("%Y-%m-%d")
+            vc_name = f"{raid_name}"
             if template_vc and isinstance(template_vc, discord.VoiceChannel):
-                new_vc = await template_vc.clone(name=f"Raid-{raid_date}")
+                new_vc = await template_vc.clone(name=vc_name)
             else:
                 # Create a new raid voice channel under the DKP category
-                category = interaction.guild.get_channel(config['dkp_category_id']) if 'dkp_category_id' in config.keys() else None
+                category = (
+                    interaction.guild.get_channel(config["dkp_category_id"])
+                    if "dkp_category_id" in config.keys()
+                    else None
+                )
                 overwrite = discord.PermissionOverwrite(view_channel=True)
                 if isinstance(category, discord.CategoryChannel):
-                    new_vc = await category.create_voice_channel(f"Raid-{raid_date}", overwrites={interaction.guild.default_role: overwrite})
+                    new_vc = await category.create_voice_channel(
+                        vc_name, overwrites={interaction.guild.default_role: overwrite}
+                    )
                 else:
-                    new_vc = await interaction.guild.create_voice_channel(f"Raid-{raid_date}", overwrites={interaction.guild.default_role: overwrite})
+                    new_vc = await interaction.guild.create_voice_channel(
+                        vc_name, overwrites={interaction.guild.default_role: overwrite}
+                    )
+
             # Assign raid leader role and permissions
-            raid_leader_role_id = config['raid_leader_role_id'] if 'raid_leader_role_id' in config else None
+            raid_leader_role_id = config["raid_leader_role_id"] if "raid_leader_role_id" in config else None
             if raid_leader_role_id:
                 raid_leader_role = interaction.guild.get_role(raid_leader_role_id)
                 if raid_leader_role:
                     await interaction.user.add_roles(raid_leader_role, reason="Started a raid.")
-                    overwrite = discord.PermissionOverwrite(manage_channels=True, move_members=True, view_channel=True)
+                    overwrite = discord.PermissionOverwrite(
+                        manage_channels=True, move_members=True, view_channel=True
+                    )
                     await new_vc.set_permissions(raid_leader_role, overwrite=overwrite)
                 else:
-                    await interaction.followup.send("The configured Raid-Leader role was not found. Please have an admin set a new one.", ephemeral=True)
+                    await interaction.followup.send(
+                        "The configured Raid-Leader role was not found. Please have an admin set a new one.",
+                        ephemeral=True,
+                    )
             else:
                 # If no role is set, just give the user perms
-                overwrite = discord.PermissionOverwrite(manage_channels=True, move_members=True, view_channel=True)
+                overwrite = discord.PermissionOverwrite(
+                    manage_channels=True, move_members=True, view_channel=True
+                )
                 await new_vc.set_permissions(interaction.user, overwrite=overwrite)
 
             await new_vc.set_permissions(interaction.guild.default_role, view_channel=True)
 
             # Create the main raid announcement message and thread.
             start_timestamp = int(datetime.now().timestamp())
-            base_content = f"Raid started by {interaction.user.mention} on <t:{start_timestamp}:F>"
+            base_content = f"Raid '{raid_name}' started by {interaction.user.mention} on <t:{start_timestamp}:F>"
             raid_message = await active_raids_channel.send(base_content)
-            thread = await raid_message.create_thread(name=f"Raid Log - {raid_date}")
+            thread = await raid_message.create_thread(name=f"{raid_name} - Raid Log")
             await self.bot.db.execute(
                 "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id) VALUES (?, ?, ?, ?)",
-                (interaction.guild.id, interaction.user.id, new_vc.id, thread.id)
+                (interaction.guild.id, interaction.user.id, new_vc.id, thread.id),
             )
 
             # Bring members from the General voice channel into the raid log thread.

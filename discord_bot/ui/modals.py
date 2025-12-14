@@ -2,6 +2,7 @@ import discord
 from discord.ui import Modal, TextInput
 from discord.ext import commands
 
+
 class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
     def __init__(self, action: str, raid_cog, member: discord.Member | None = None):
         super().__init__()
@@ -64,6 +65,24 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                     )
         
         await self.raid_cog.process_dkp_adjustment(interaction, self.action, self.amount.value, self.reason.value, member)
+
+
+class RaidCreateModal(Modal, title="Create New Raid"):
+    def __init__(self, raid_cog):
+        super().__init__()
+        self.raid_cog = raid_cog
+
+        self.raid_name = TextInput(
+            label="Raid Name",
+            placeholder="e.g., MC Progression, Weekly PUG",
+            style=discord.TextStyle.short,
+            required=True,
+        )
+        self.add_item(self.raid_name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.raid_cog.create_raid_with_name(interaction, self.raid_name.value)
+
 
 class AuctionStartModal(Modal, title="Start New Auction"):
     def __init__(self, auction_cog):
