@@ -253,9 +253,26 @@ class AdminPanelView(discord.ui.View):
         await interaction.response.send_message(help_text, ephemeral=True)
 
 class RaidControlView(discord.ui.View):
-    def __init__(self, bot):
+    def __init__(self, bot, show_leader_buttons: bool = True):
         super().__init__(timeout=None)
         self.bot = bot
+
+        # Optionally hide leader-only controls for raiders in ephemeral panels.
+        # The public thread panel can still show all buttons while access is
+        # enforced via interaction_check.
+        self.show_leader_buttons = show_leader_buttons
+        if not self.show_leader_buttons:
+            leader_only_ids = {
+                "raid_update_team",
+                "raid_award_dkp",
+                "raid_deduct_dkp",
+                "raid_start_auction",
+                "raid_end_auction",
+                "raid_close_raid",
+            }
+            for child in self.children:
+                if isinstance(child, discord.ui.Button) and child.custom_id in leader_only_ids:
+                    child.disabled = True
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # On bot startup, interaction_check can be called with a mock interaction
@@ -359,18 +376,30 @@ class RaidControlView(discord.ui.View):
         auction_cog = self.bot.get_cog("AuctionCog")
         await auction_cog.end_auction_from_button(interaction)
 
-    @discord.ui.button(label="Close Raid ❌", style=discord.ButtonStyle.danger, custom_id="raid_close_raid", row=1)
+    @discord.ui.button(label="Close Raid ", style=discord.ButtonStyle.danger, custom_id="raid_close_raid", row=1)
     async def close_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
         await raid_cog.close_raid(interaction)
 
-    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="raid_my_dkp", row=0)
+    @discord.ui.button(label="My DKP ", style=discord.ButtonStyle.secondary, custom_id="raid_my_dkp", row=0)
     async def raid_my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_cog = self.bot.get_cog("UserCog")
         if user_cog:
             await user_cog.show_my_dkp(interaction)
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
+
+        # After showing DKP, refresh an ephemeral raid panel tailored to the
+        # current user (leader vs raider). Leaders receive full controls,
+        # raiders see only the buttons they can use.
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog:
+            try:
+                await raid_cog.send_ephemeral_raid_panel(interaction)
+            except Exception:
+                # If anything goes wrong (e.g. not a raid thread), we silently
+                # ignore so the DKP check still works.
+                pass
 
     # The View Rules button is temporarily disabled. To re-enable in the future,
     # uncomment the decorator and method below.

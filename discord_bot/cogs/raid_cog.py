@@ -24,13 +24,65 @@ class RaidCog(commands.Cog):
             f"Raid Control Panel for {interaction.user.display_name}",
             "Use the buttons below to manage your raid. This panel is only visible to you.",
         )
-        view = RaidControlView(self.bot)
+        view = RaidControlView(self.bot, show_leader_buttons=True)
         await interaction.followup.send(
             f"Manage the raid in {thread.mention}.",
             embed=control_embed,
             view=view,
             ephemeral=True,
         )
+
+    async def send_ephemeral_raid_panel(self, interaction: discord.Interaction):
+        """Send an ephemeral raid panel adjusted for the current user.
+
+        - If the user is the raid leader, they see the full control panel.
+        - If they are a raider/non-leader, they see only the buttons they can use
+          (e.g., My DKP, any other non-leader actions in the future).
+
+        This is used after certain interactions (like checking "My DKP") so that
+        the raid panel keeps reappearing near the bottom of their chat.
+        """
+        if not isinstance(interaction.user, discord.Member) or not interaction.guild:
+            return
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return
+
+        is_leader = interaction.user.id == raid["leader_id"]
+
+        title = (
+            f"Raid Control Panel for {interaction.user.display_name}"
+            if is_leader
+            else "Raid Panel"
+        )
+        description = (
+            "Use the buttons below to manage your raid. This panel is only visible to you."
+            if is_leader
+            else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you."
+        )
+
+        embed = create_info_embed(title, description)
+        view = RaidControlView(self.bot, show_leader_buttons=is_leader)
+
+        # If the original interaction has not been responded to yet, send via
+        # the initial response; otherwise use a followup.
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    embed=embed,
+                    view=view,
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    embed=embed,
+                    view=view,
+                    ephemeral=True,
+                )
+        except discord.HTTPException:
+            # Interaction may have expired or otherwise failed; safe to ignore.
+            return
 
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
         # Defer the response if it hasn't been done yet. 
