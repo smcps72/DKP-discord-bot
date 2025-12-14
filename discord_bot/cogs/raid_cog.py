@@ -132,12 +132,37 @@ class RaidCog(commands.Cog):
                 await new_vc.set_permissions(interaction.user, overwrite=overwrite)
 
             await new_vc.set_permissions(interaction.guild.default_role, view_channel=True)
-            raid_message = await active_raids_channel.send(f"Raid started by {interaction.user.mention} on <t:{int(datetime.now().timestamp())}:F>")
+
+            # Create the main raid announcement message and thread.
+            start_timestamp = int(datetime.now().timestamp())
+            base_content = f"Raid started by {interaction.user.mention} on <t:{start_timestamp}:F>"
+            raid_message = await active_raids_channel.send(base_content)
             thread = await raid_message.create_thread(name=f"Raid Log - {raid_date}")
             await self.bot.db.execute(
                 "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id) VALUES (?, ?, ?, ?)",
                 (interaction.guild.id, interaction.user.id, new_vc.id, thread.id)
             )
+
+            # After the thread exists, edit the original raid message to ping
+            # raiders (if configured) and include a direct jump link to the
+            # raid log thread so everyone can easily navigate there.
+            raider_mention_prefix = ""
+            raider_role_id = config["raider_role_id"] if "raider_role_id" in config else None
+            if raider_role_id:
+                raider_role = interaction.guild.get_role(raider_role_id)
+                if raider_role:
+                    raider_mention_prefix = f"{raider_role.mention} "
+
+            updated_content = (
+                f"{raider_mention_prefix}{base_content}\n\n"
+                f"Jump to the current raid log thread: {thread.mention}"
+            )
+            try:
+                await raid_message.edit(content=updated_content)
+            except discord.HTTPException:
+                # If we cannot edit the message, we still continue with raid
+                # creation; users can reach the thread via the channel UI.
+                pass
 
             # First control panel is public in the raid log thread
             control_embed = create_info_embed(
