@@ -87,128 +87,74 @@ class WelcomeView(discord.ui.View):
 
 # -- ADMIN VIEWS --
 
-class RoleManagementView(discord.ui.View):
-    def __init__(self, bot, role_type: str, original_view: discord.ui.View):
+class OfficerRoleSelect(discord.ui.Select):
+    def __init__(self, bot: discord.Client):
+        self.bot = bot
+
+        options: list[discord.SelectOption] = []
+        # The guild will be available on the interaction, not here, so we
+        # build a placeholder; options are filled dynamically in callback
+        # using interaction.guild.roles. Discord requires at least 1 option,
+        # so we start with a dummy that will be replaced.
+        options.append(discord.SelectOption(label="Loading roles...", value="dummy"))
+
+        super().__init__(
+            placeholder="Select an existing role to use as Officers",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        # If this is still the dummy option, rebuild options from guild roles
+        if self.values[0] == "dummy":
+            roles = [
+                r for r in interaction.guild.roles
+                if not r.is_default() and not r.managed
+            ]
+            options = [
+                discord.SelectOption(label=role.name[:100], value=str(role.id))
+                for role in roles[:25]
+            ]
+            if not options:
+                return await interaction.response.edit_message(
+                    content="No configurable roles found. Please create a role in Server Settings first.",
+                    view=None,
+                )
+
+            self.options = options
+            # Ask the user to pick again now that real options are loaded.
+            return await interaction.response.edit_message(
+                content="Select an existing role to use as the Officers role:",
+                view=self.view,
+            )
+
+        role_id = int(self.values[0])
+        role = interaction.guild.get_role(role_id)
+        if not role:
+            return await interaction.response.edit_message(
+                content="The selected role could not be found. Please try again.",
+                view=self.view,
+            )
+
+        admin_cog = self.view.bot.get_cog("AdminCog") if hasattr(self.view, "bot") else None
+        if not admin_cog:
+            return await interaction.response.edit_message(
+                content="Admin module is currently offline. Please try again later.",
+                view=None,
+            )
+
+        # Delegate persistence to the existing AdminCog.set_role helper.
+        await admin_cog.set_role(interaction, "Officer", role)
+
+
+class OfficerRoleAssignView(discord.ui.View):
+    def __init__(self, bot):
         super().__init__(timeout=180)
         self.bot = bot
-        self.role_type = role_type
-        self.original_view = original_view
-        self.add_item(self.AssignUserSelect(bot=self.bot, role_type=self.role_type))
-        self.add_item(self.UnassignUserSelect(bot=self.bot, role_type=self.role_type))
+        self.add_item(OfficerRoleSelect(bot))
 
-        if self.role_type == "Raider":
-            self.add_item(self.AssignVCButton(bot=self.bot, role_type=self.role_type))
-
-    class AssignUserSelect(UserSelect):
-        def __init__(self, bot, role_type):
-            self.bot = bot
-            self.role_type = role_type
-            super().__init__(placeholder=f"Assign {role_type} role to...", min_values=1, max_values=25, row=0)
-
-        async def callback(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True, thinking=True)
-            config = await self.bot.db.get_guild_config(interaction.guild.id)
-            key = f'{self.role_type.lower().replace("-", "_")}_role_id'
-            role_id = config[key] if key in config.keys() else None
-            if not role_id:
-                return await interaction.followup.send(f"The {self.role_type} role has not been set.", ephemeral=True)
-            
-            role = interaction.guild.get_role(role_id)
-            if not role:
-                return await interaction.followup.send(f"The configured {self.role_type} role could not be found.", ephemeral=True)
-
-            successful, failed = [], []
-            for member in self.values:
-                if role not in member.roles:
-                    try:
-                        await member.add_roles(role, reason=f"Assigned by {interaction.user}")
-                        successful.append(member.display_name)
-                    except discord.Forbidden:
-                        failed.append(member.display_name)
-                
-            msg = f"Assigned {self.role_type} role to: {', '.join(successful)}." if successful else ""
-            if failed:
-                msg += f"\nFailed to assign role to: {', '.join(failed)}. (Check bot permissions and role hierarchy)"
-            
-            await interaction.followup.send(msg or "No changes made.", ephemeral=True)
-
-    class UnassignUserSelect(UserSelect):
-        def __init__(self, bot, role_type):
-            self.bot = bot
-            self.role_type = role_type
-            super().__init__(placeholder=f"Unassign {role_type} role from...", min_values=1, max_values=25, row=1)
-
-        async def callback(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True, thinking=True)
-            config = await self.bot.db.get_guild_config(interaction.guild.id)
-            key = f'{self.role_type.lower().replace("-", "_")}_role_id'
-            role_id = config[key] if key in config.keys() else None
-            if not role_id:
-                return await interaction.followup.send(f"The {self.role_type} role has not been set.", ephemeral=True)
-            
-            role = interaction.guild.get_role(role_id)
-            if not role:
-                return await interaction.followup.send(f"The configured {self.role_type} role could not be found.", ephemeral=True)
-
-            successful, failed = [], []
-            for member in self.values:
-                if role in member.roles:
-                    try:
-                        await member.remove_roles(role, reason=f"Unassigned by {interaction.user}")
-                        successful.append(member.display_name)
-                    except discord.Forbidden:
-                        failed.append(member.display_name)
-            
-            msg = f"Unassigned {self.role_type} role from: {', '.join(successful)}." if successful else ""
-            if failed:
-                msg += f"\nFailed to unassign role from: {', '.join(failed)}. (Check bot permissions and role hierarchy)"
-
-            await interaction.followup.send(msg or "No changes made.", ephemeral=True)
-
-    class AssignVCButton(discord.ui.Button):
-        def __init__(self, bot, role_type):
-            self.bot = bot
-            self.role_type = role_type
-            super().__init__(label="Assign to all in your VC", style=discord.ButtonStyle.success, row=2)
-
-        async def callback(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True, thinking=True)
-
-            admin_member = interaction.user
-            if not isinstance(admin_member, discord.Member) or not admin_member.voice or not admin_member.voice.channel:
-                return await interaction.followup.send("You must be in a voice channel to use this button.", ephemeral=True)
-
-            voice_channel = admin_member.voice.channel
-            members_in_vc = voice_channel.members
-
-            config = await self.bot.db.get_guild_config(interaction.guild.id)
-            key = f'{self.role_type.lower().replace("-", "_")}_role_id'
-            role_id = config[key] if key in config.keys() else None
-            if not role_id:
-                return await interaction.followup.send(f"The {self.role_type} role has not been set.", ephemeral=True)
-            
-            role = interaction.guild.get_role(role_id)
-            if not role:
-                return await interaction.followup.send(f"The configured {self.role_type} role could not be found.", ephemeral=True)
-
-            successful, failed = [], []
-            for member in members_in_vc:
-                if role not in member.roles:
-                    try:
-                        await member.add_roles(role, reason=f"Assigned by {interaction.user} via VC assignment")
-                        successful.append(member.display_name)
-                    except discord.Forbidden:
-                        failed.append(member.display_name)
-            
-            msg = f"Assigned {self.role_type} role to: {', '.join(successful)}." if successful else ""
-            if failed:
-                msg += f"\nFailed to assign role to: {', '.join(failed)}. (Check bot permissions and role hierarchy)"
-
-            await interaction.followup.send(msg or "All members in the voice channel already have the Raider role.", ephemeral=True)
-
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.grey, row=3)
-    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(view=self.original_view)
 
 class AdminPanelView(discord.ui.View):
     def __init__(self, bot):
@@ -221,36 +167,39 @@ class AdminPanelView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Manage Officers", style=discord.ButtonStyle.primary, row=0)
-    async def manage_officers(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = RoleManagementView(self.bot, "Officer", self)
-        await interaction.response.edit_message(content="Manage Officer assignments:", view=view)
+    @discord.ui.button(label="Assign Officers Role Name", style=discord.ButtonStyle.primary, row=0)
+    async def assign_officers_role_name(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = OfficerRoleAssignView(self.bot)
 
-    @discord.ui.button(label="Manage Raid Leaders", style=discord.ButtonStyle.primary, row=0)
-    async def manage_raid_leaders(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = RoleManagementView(self.bot, "Raid-Leader", self)
-        await interaction.response.edit_message(content="Manage Raid Leader assignments:", view=view)
+        # Build initial options list from existing guild roles.
+        roles = [
+            r for r in interaction.guild.roles
+            if not r.is_default() and not r.managed
+        ]
+        select: OfficerRoleSelect | None = None
+        for child in view.children:
+            if isinstance(child, OfficerRoleSelect):
+                select = child
+                break
 
-    @discord.ui.button(label="Manage Raiders", style=discord.ButtonStyle.primary, row=0)
-    async def manage_raiders(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = RoleManagementView(self.bot, "Raider", self)
-        await interaction.response.edit_message(content="Manage Raider assignments:", view=view)
+        if select:
+            options = [
+                discord.SelectOption(label=role.name[:100], value=str(role.id))
+                for role in roles[:25]
+            ]
+            if options:
+                select.options = options
+            else:
+                # No roles available; send a simple message instead.
+                return await interaction.response.send_message(
+                    "No configurable roles found. Please create a role in Server Settings first.",
+                    ephemeral=True,
+                )
 
-    @discord.ui.button(label="Admin Help", style=discord.ButtonStyle.secondary, row=1)
-    async def admin_help(self, interaction: discord.Interaction, button: discord.ui.Button):
-        help_text = (
-            "### What is the difference between Officers and Raid Leaders?\n\n"
-            "**Officer Role**\n"
-            "- **Purpose**: Bot Administration. Officers are trusted users who can configure the bot and access protected admin commands.\n"
-            "- **Permissions**: Grants access to the `/admin_panel`. It does not grant any special Discord server permissions.\n"
-            "- **Assignment**: Manually assigned via this panel. It is a permanent role until manually removed.\n\n"
-            "**Raid-Leader Role**\n"
-            "- **Purpose**: Raid Management. Raid Leaders are responsible for managing a single, active raid instance.\n"
-            "- **Permissions**: When a raid starts, a temporary role is created with permissions to manage the new raid channel. This role is removed when the raid ends.\n"
-            "- **Assignment**: Automatically assigned to the user who starts a raid. It is a temporary role that is automatically removed when the raid ends.\n\n"
-            "**In short: Officers manage the bot, Raid Leaders manage the raid.**"
+        await interaction.response.edit_message(
+            content="Select an existing role to use as the Officers role:",
+            view=view,
         )
-        await interaction.response.send_message(help_text, ephemeral=True)
 
 class RaidControlView(discord.ui.View):
     def __init__(self, bot, show_leader_buttons: bool = True):

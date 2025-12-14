@@ -80,27 +80,6 @@ class AuctionStartModal(Modal, title="Start New Auction"):
     async def on_submit(self, interaction: discord.Interaction):
         await self.auction_cog.process_auction_start(interaction, self.item_name.value)
 
-class RoleSetupModal(discord.ui.Modal, title='Set Role'):
-    def __init__(self, bot, role_type: str):
-        super().__init__()
-        self.bot = bot
-        self.role_type = role_type
-        self.role_input = discord.ui.TextInput(
-            label=f"New {role_type} Role",
-            placeholder=f"Enter the name of the role for {role_type}s",
-            style=discord.TextStyle.short
-        )
-        self.add_item(self.role_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        role_name = self.role_input.value
-        role = discord.utils.find(lambda r: r.name.lower() == role_name.lower(), interaction.guild.roles)
-        if not role:
-            return await interaction.response.send_message(f"Role '{role_name}' not found.", ephemeral=True)
-        
-        admin_cog = self.bot.get_cog("AdminCog")
-        await admin_cog.set_role(interaction, self.role_type, role)
-
 class BidModal(Modal, title="Place Your Bid"):
     def __init__(self, auction_cog, auction_id: int):
         super().__init__()
