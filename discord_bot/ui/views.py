@@ -87,6 +87,27 @@ class WelcomeView(discord.ui.View):
 
 # -- ADMIN VIEWS --
 
+
+async def send_admin_confirmation(
+    interaction: discord.Interaction,
+    panel_text: str,
+    ephemeral_text: str,
+):
+    """Small helper to keep admin confirmations consistent.
+
+    Edits the original admin panel message with a tiny confirmation line
+    and sends a separate ephemeral confirmation to the acting user.
+    """
+    await interaction.response.edit_message(
+        content=panel_text,
+        view=None,
+    )
+    await interaction.followup.send(
+        ephemeral_text,
+        ephemeral=True,
+    )
+
+
 class OfficerRoleSelect(discord.ui.Select):
     def __init__(self, bot: discord.Client):
         self.bot = bot
@@ -147,6 +168,14 @@ class OfficerRoleSelect(discord.ui.Select):
 
         # Delegate persistence to the existing AdminCog.set_role helper.
         await admin_cog.set_role(interaction, "Officer", role)
+
+        # Use shared helper so all admin confirmations look and behave
+        # the same across the panel.
+        await send_admin_confirmation(
+            interaction,
+            panel_text=f"Officers role set to {role.mention}.",
+            ephemeral_text=f"Officer role has been updated to {role.mention}.",
+        )
 
 
 class OfficerRoleAssignView(discord.ui.View):
