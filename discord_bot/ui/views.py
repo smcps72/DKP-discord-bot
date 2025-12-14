@@ -367,18 +367,6 @@ class RaidControlView(discord.ui.View):
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
-        # After showing DKP, refresh an ephemeral raid panel tailored to the
-        # current user (leader vs raider). Leaders receive full controls,
-        # raiders see only the buttons they can use.
-        raid_cog = self.bot.get_cog("RaidCog")
-        if raid_cog:
-            try:
-                await raid_cog.send_ephemeral_raid_panel(interaction)
-            except Exception:
-                # If anything goes wrong (e.g. not a raid thread), we silently
-                # ignore so the DKP check still works.
-                pass
-
     # The View Rules button is temporarily disabled. To re-enable in the future,
     # uncomment the decorator and method below.
     # @discord.ui.button(label="View Rules \ud83d\udcdd", style=discord.ButtonStyle.secondary, custom_id="raid_view_rules", row=2)

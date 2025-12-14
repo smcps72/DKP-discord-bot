@@ -9,6 +9,11 @@ from ..ui.views import RaidControlView
 class RaidCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Tracks how many DKP adjustments have been made per raid thread
+        # so we can re-show the control panel only after every 4th change
+        # instead of after every single award/deduct.
+        # Key: (guild_id, thread_id, leader_id) -> int count
+        self._dkp_adjust_counts: dict[tuple[int, int, int], int] = {}
 
     async def _send_control_panel_ephemeral(self, interaction: discord.Interaction, thread: discord.Thread):
         """Send the raid control panel as an ephemeral message to the raid leader.
@@ -309,10 +314,17 @@ class RaidCog(commands.Cog):
         )
         await interaction.followup.send(embed=embed)
 
-        # After a DKP adjustment, reshow the control panel ephemerally
+        # After a DKP adjustment, optionally re-show the control panel
+        # ephemerally. To avoid spamming, we only show it again after
+        # every 4th adjustment for this raid/leader combination.
         thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
-        if isinstance(thread, discord.Thread):
-            await self._send_control_panel_ephemeral(interaction, thread)
+        if isinstance(thread, discord.Thread) and raid:
+            key = (interaction.guild.id, thread.id, raid["leader_id"])
+            current = self._dkp_adjust_counts.get(key, 0) + 1
+            self._dkp_adjust_counts[key] = current
+
+            if current % 4 == 0:
+                await self._send_control_panel_ephemeral(interaction, thread)
     async def close_raid(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
