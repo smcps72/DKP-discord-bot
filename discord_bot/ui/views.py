@@ -1,5 +1,5 @@
 import discord
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RoleSetupModal, RaidRulesModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
 from discord.ui import UserSelect, Select
 from ..utils import is_officer
 
