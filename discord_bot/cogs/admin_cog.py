@@ -49,8 +49,8 @@ class AdminCog(commands.Cog):
         await interaction.followup.send("Here is the DKP transaction history for the last 30 days:", file=file, ephemeral=True)
 
     @app_commands.command(name="raid_points", description="Show DKP for all members in the current raid.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def raid_points_cmd(self, interaction: discord.Interaction):
+    @app_commands.describe(member="(Optional) Show DKP for a single member in this raid.")
+    async def raid_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
         await interaction.response.defer(ephemeral=True)
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -61,22 +61,67 @@ class AdminCog(commands.Cog):
         if not vc or not isinstance(vc, discord.VoiceChannel):
             return await interaction.followup.send("Raid voice channel not found.", ephemeral=True)
 
-        members = [m for m in vc.members if not m.bot]
-        if not members:
+        # Filter to non-bot members in the raid voice channel
+        raid_members = [m for m in vc.members if not m.bot]
+        if not raid_members:
             return await interaction.followup.send("There are no non-bot members in the raid voice channel.", ephemeral=True)
 
-        dkp_entries = []
-        for member in members:
+        # If a specific member was requested, ensure they are in the raid VC
+        if member is not None:
+            if member.bot or member not in raid_members:
+                return await interaction.followup.send("That member is not currently in the raid voice channel.", ephemeral=True)
+
             dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id)
-            dkp_entries.append((member, dkp))
+            description = f"{member.mention}  **{dkp} DKP**"
+            embed = create_info_embed("Raid DKP (Member)", description)
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        # Otherwise, list DKP for everyone in the raid VC
+        dkp_entries = []
+        for m in raid_members:
+            dkp = await self.bot.db.get_user_dkp(m.id, interaction.guild.id)
+            dkp_entries.append((m, dkp))
 
         dkp_entries.sort(key=lambda x: x[1], reverse=True)
 
-        lines = [f"{member.mention} — **{dkp} DKP**" for member, dkp in dkp_entries]
+        lines = [f"{m.mention}  **{dkp} DKP**" for m, dkp in dkp_entries]
         description = "\n".join(lines)
 
         embed = create_info_embed("Raid DKP", description)
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="server_points", description="Show DKP for all members in this server.")
+    @app_commands.describe(member="(Optional) Show DKP for a single member in this server.")
+    async def server_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
+        await interaction.response.defer()
+
+        # If a specific member is requested, just show their DKP
+        if member is not None:
+            if member.bot:
+                return await interaction.followup.send("Bots do not have DKP.")
+
+            dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id)
+            description = f"{member.mention}  **{dkp} DKP**"
+            embed = create_info_embed("Server DKP (Member)", description)
+            return await interaction.followup.send(embed=embed)
+
+        # Otherwise, show DKP for all users with entries in this guild
+        rows = await self.bot.db.fetchall(
+            "SELECT user_id, dkp FROM users WHERE guild_id = ? ORDER BY dkp DESC",
+            (interaction.guild.id,)
+        )
+
+        if not rows:
+            return await interaction.followup.send("No DKP data found for this server.")
+
+        lines = []
+        for row in rows:
+            user = interaction.guild.get_member(row["user_id"]) or f"Unknown User ({row['user_id']})"
+            lines.append(f"{getattr(user, 'mention', user)}  **{row['dkp']} DKP**")
+
+        description = "\n".join(lines)
+        embed = create_info_embed("Server DKP", description)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="list_members", description="List all members in this server (debug, forced sync)")
     @app_commands.checks.has_permissions(administrator=True)
