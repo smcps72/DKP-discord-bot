@@ -293,11 +293,18 @@ class RaidControlView(discord.ui.View):
         if raid and interaction.user.id == raid['leader_id']:
             return True
 
-        # If we deferred, we need to use a followup.
+        # User is not the raid leader. If we haven't responded yet, send an
+        # ephemeral error via the initial interaction response; otherwise use
+        # a followup. This avoids generic interaction failures on buttons
+        # like "Start Auction" that haven't been deferred yet.
         try:
-            await interaction.followup.send("You are not the leader of this raid.", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message("You are not the leader of this raid.", ephemeral=True)
+            else:
+                await interaction.followup.send("You are not the leader of this raid.", ephemeral=True)
         except discord.HTTPException:
-            pass # Interaction may have expired in the meantime.
+            # Interaction may have expired or otherwise failed; ignore.
+            pass
 
         return False
 
