@@ -148,6 +148,34 @@ class RaidCog(commands.Cog):
                 (interaction.guild.id, interaction.user.id, new_vc.id, thread.id)
             )
 
+            # Bring members from the General voice channel into the raid log thread.
+            general_vc = None
+
+            # Prefer a channel actually named "General" (case-insensitive).
+            for channel in interaction.guild.voice_channels:
+                if channel.name.lower() == "general":
+                    general_vc = channel
+                    break
+
+            if isinstance(general_vc, discord.VoiceChannel):
+                general_members = [m for m in general_vc.members if not m.bot]
+                if general_members:
+                    # Move everyone from General into the new raid voice channel.
+                    for member in list(general_members):
+                        if not member.voice or member.voice.channel == new_vc:
+                            continue
+                        try:
+                            await member.move_to(new_vc, reason="Raid started - moving from General to raid VC.")
+                        except discord.HTTPException:
+                            # Ignore move failures (e.g., missing perms or user disconnects).
+                            pass
+
+                    # Then mention them in the raid log thread so they can easily jump to it.
+                    mentions = " ".join(m.mention for m in general_members)
+                    await thread.send(
+                        f"{mentions}\nYou were in General when this raid started. This is the active raid log thread."
+                    )
+
             # After the thread exists, edit the original raid message to ping
             # raiders (if configured) and include a direct jump link to the
             # raid log thread so everyone can easily navigate there.
@@ -339,22 +367,15 @@ class RaidCog(commands.Cog):
             # Find a suitable voice channel to move members into.
             target_vc = None
 
-            # 1) Prefer the configured General voice channel by ID, if it exists and is not the raid VC.
-            general_vc_id = 1388467074346516625
-            general_vc = interaction.guild.get_channel(general_vc_id)
-            if isinstance(general_vc, discord.VoiceChannel) and general_vc.id != vc.id:
-                target_vc = general_vc
+            # 1) Prefer a channel actually named "General" (case-insensitive) that is not the raid VC.
+            for channel in interaction.guild.voice_channels:
+                if channel.id == vc.id:
+                    continue
+                if channel.name.lower() == "general":
+                    target_vc = channel
+                    break
 
-            # 2) If that didn't work, prefer a channel actually named "General" (case-insensitive).
-            if target_vc is None:
-                for channel in interaction.guild.voice_channels:
-                    if channel.id == vc.id:
-                        continue
-                    if channel.name.lower() == "general":
-                        target_vc = channel
-                        break
-
-            # 3) If no explicit General channel is available, fall back to the first other voice channel.
+            # 2) If no explicit General channel is available, fall back to the first other voice channel.
             if target_vc is None:
                 for channel in interaction.guild.voice_channels:
                     if channel.id != vc.id:
