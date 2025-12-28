@@ -35,28 +35,21 @@ def mock_interaction():
     user = MockUser(id=456)
     return MockInteraction(guild=guild, user=user)
 
-@patch('discord_bot.utils.is_officer', new_callable=AsyncMock)
 @pytest.mark.asyncio
-async def test_welcome_view_create_raid_button(mock_is_officer, mock_bot, mock_interaction):
-    """Tests that the 'Create Raid' button defers and calls the correct cog method."""
+async def test_welcome_view_create_raid_button(mock_bot, mock_interaction):
+    """Tests that the 'Create Raid' button delegates to the RaidCog entrypoint."""
     # Arrange
-    mock_is_officer.return_value = True
     mock_raid_cog = MagicMock()
     mock_raid_cog.create_raid_from_interaction = AsyncMock()
     mock_bot.get_cog.return_value = mock_raid_cog
-    mock_bot.db.get_guild_config.return_value = {
-        'raid_vc_template_id': 1,
-        'raid_channel_id': 2,
-        'raid_leader_role_id': 3
-    }
     view = WelcomeView(bot=mock_bot)
 
     # Act
     await view.create_raid.callback(mock_interaction)
 
     # Assert
-    mock_interaction.response.defer.assert_called_once_with(ephemeral=True, thinking=True)
     mock_raid_cog.create_raid_from_interaction.assert_called_once_with(mock_interaction)
+    mock_interaction.response.defer.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_welcome_view_my_dkp_button(mock_bot, mock_interaction):
@@ -126,7 +119,7 @@ async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_officer, m
 
 
 # Tests for RaidControlView
-from discord_bot.ui.views import RaidControlView
+from discord_bot.ui.views import RaidControlView, DKPAdjustmentView
 from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal
 
 @pytest.fixture
@@ -140,46 +133,67 @@ def mock_raid_control_interaction(mock_interaction): # Use the existing mock_int
 @pytest.mark.asyncio
 class TestRaidControlView:
     async def test_award_dkp_button(self, mock_bot, mock_raid_control_interaction):
-        """Tests that the 'Award DKP' button calls send_modal with DKPAdjustmentModal."""
+        """Tests that the 'Award DKP' button shows the DKPAdjustmentView for raid members."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
-        mock_raid_cog = AsyncMock()
-        mock_bot.get_cog.return_value = mock_raid_cog
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"vc_id": 12345})
+
+        mock_vc = MagicMock()
+        member1 = MagicMock()
+        member1.bot = False
+        member2 = MagicMock()
+        member2.bot = False
+        mock_vc.members = [member1, member2]
+        mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
 
         # Act
         await view.award_dkp.callback(mock_raid_control_interaction)
 
         # Assert
-        mock_raid_control_interaction.response.send_modal.assert_called_once()
-        modal_sent = mock_raid_control_interaction.response.send_modal.call_args[0][0]
-        assert isinstance(modal_sent, DKPAdjustmentModal)
-        assert modal_sent.title == "DKP Adjustment"
-        assert modal_sent.action == "Award"
-        assert modal_sent.raid_cog == mock_raid_cog
-        assert hasattr(modal_sent, "target_member")
+        mock_raid_control_interaction.followup.send.assert_called_once()
+        args, kwargs = mock_raid_control_interaction.followup.send.call_args
+        assert "Who do you want to award DKP?" in args[0]
+        assert isinstance(kwargs["view"], DKPAdjustmentView)
+        assert kwargs["ephemeral"] is True
 
     async def test_deduct_dkp_button(self, mock_bot, mock_raid_control_interaction):
-        """Tests that the 'Deduct DKP' button calls send_modal with DKPAdjustmentModal."""
+        """Tests that the 'Deduct DKP' button shows the DKPAdjustmentView for raid members."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
-        mock_raid_cog = AsyncMock()
-        mock_bot.get_cog.return_value = mock_raid_cog
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"vc_id": 12345})
+
+        mock_vc = MagicMock()
+        member = MagicMock()
+        member.bot = False
+        mock_vc.members = [member]
+        mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
 
         # Act
         await view.deduct_dkp.callback(mock_raid_control_interaction)
 
         # Assert
-        mock_raid_control_interaction.response.send_modal.assert_called_once()
-        modal_sent = mock_raid_control_interaction.response.send_modal.call_args[0][0]
-        assert isinstance(modal_sent, DKPAdjustmentModal)
-        assert modal_sent.title == "DKP Adjustment"
-        assert modal_sent.action == "Deduct"
-        assert modal_sent.raid_cog == mock_raid_cog
+        mock_raid_control_interaction.followup.send.assert_called_once()
+        args, kwargs = mock_raid_control_interaction.followup.send.call_args
+        assert "Who do you want to deduct DKP?" in args[0]
+        assert isinstance(kwargs["view"], DKPAdjustmentView)
+        assert kwargs["ephemeral"] is True
 
     async def test_start_auction_button(self, mock_bot, mock_raid_control_interaction):
-        """Tests that the 'Start Auction' button calls send_modal with AuctionStartModal."""
+        """Tests that the 'Start Auction' button opens the item-name modal when preconditions are met."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
+        mock_bot.db.get_active_auction = AsyncMock(return_value=None)
+
+        mock_vc = MagicMock()
+        member = MagicMock()
+        member.bot = False
+        mock_vc.members = [member]
+        mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
+
         mock_auction_cog = AsyncMock()
         mock_bot.get_cog.return_value = mock_auction_cog
 
