@@ -2,19 +2,39 @@ import discord
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
 from discord.ui import UserSelect, Select
 from ..utils import is_officer
-
-
-class MemberSelect(Select):
+class MemberSelect(UserSelect):
     def __init__(self, bot, action: str, members: list[discord.Member]):
         self.bot = bot
         self.action = action
-        options = [discord.SelectOption(label=member.display_name, value=str(member.id)) for member in members]
-        super().__init__(placeholder=f"Select a member to {action.lower()} DKP...", options=options[:25])
+        # Track which members are currently in the raid voice channel so we can
+        # enforce that only active raiders are selected, while still allowing
+        # Discord's built-in type-to-search user picker.
+        self._allowed_member_ids = {m.id for m in members}
+
+        super().__init__(
+            placeholder=f"Select a member to {action.lower()} DKP...",
+            min_values=1,
+            max_values=1,
+        )
 
     async def callback(self, interaction: discord.Interaction):
         raid_cog = self.bot.get_cog("RaidCog")
-        member_id = int(self.values[0])
-        member = interaction.guild.get_member(member_id)
+
+        # UserSelect returns Member/User objects directly.
+        selected = self.values[0]
+        member: discord.Member | None
+        if isinstance(selected, discord.Member):
+            member = selected
+        else:
+            member = interaction.guild.get_member(getattr(selected, "id", None)) if interaction.guild else None
+
+        if not member or member.id not in self._allowed_member_ids:
+            await interaction.response.send_message(
+                "That member is not currently in the raid voice channel.",
+                ephemeral=True,
+            )
+            return
+
         modal = DKPAdjustmentModal(action=self.action, raid_cog=raid_cog, member=member)
         await interaction.response.send_modal(modal)
 
@@ -76,7 +96,7 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Admin Panel ⚙️", style=discord.ButtonStyle.danger, custom_id="welcome_admin_panel")
     async def admin_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer(ephemeral=True)
         if not await is_officer(interaction):
             return await interaction.followup.send("You must be an officer to use this.", ephemeral=True)
 
@@ -274,7 +294,7 @@ class RaidControlView(discord.ui.View):
                 # while keeping other raid controls ephemeral.
                 ephemeral = custom_id != "raid_update_team"
                 try:
-                    await interaction.response.defer(ephemeral=ephemeral, thinking=True)
+                    await interaction.response.defer(ephemeral=ephemeral)
                 except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                     # Already responded to, expired, or otherwise invalid; safe to ignore.
                     pass
@@ -335,16 +355,45 @@ class RaidControlView(discord.ui.View):
 
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Before opening the auction modal, ensure this is an active raid
+        # thread and that the raid voice channel has at least one member.
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message(
+                "This is not an active raid thread.",
+                ephemeral=True,
+            )
+
+        vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
+        if not vc or not getattr(vc, "members", None):
+            return await interaction.response.send_message(
+                "Raid voice channel is empty. Cannot start auction.",
+                ephemeral=True,
+            )
+
+        # Also block if an auction is already active for this raid so the
+        # leader sees the error immediately instead of only after submitting
+        # the modal.
+        active_auction = await self.bot.db.get_active_auction(raid["id"])
+        if active_auction:
+            return await interaction.response.send_message(
+                "An auction is already in progress for this raid.",
+                ephemeral=True,
+            )
+
         auction_cog = self.bot.get_cog("AuctionCog")
         modal = AuctionStartModal(auction_cog=auction_cog)
         try:
             await interaction.response.send_modal(modal)
         except (discord.InteractionResponded, discord.NotFound):
             try:
-                await interaction.followup.send("This interaction has expired or already received a response. Please try again.", ephemeral=True)
+                await interaction.followup.send(
+                    "This interaction has expired or already received a response. Please try again.",
+                    ephemeral=True,
+                )
             except Exception:
                 pass  # Fully expired, ignore
-        except discord.HTTPException as e:
+        except discord.HTTPException:
             # Optionally log or handle other HTTP errors
             pass
 
