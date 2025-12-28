@@ -199,3 +199,32 @@ async def test_history_cmd_no_records(admin_cog: AdminCog, mock_interaction: Asy
 
     # 4. Ensure get_member was not called if no records
     mock_guild.get_member.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_members_uses_fetch_members(admin_cog: AdminCog, mock_interaction: AsyncMock, mock_guild: MagicMock):
+    """Ensure /list_members uses fetch_members and returns all fetched members."""
+    # --- Arrange ---
+    mock_interaction.guild = mock_guild
+
+    member1 = MagicMock(spec=discord.Member)
+    member1.name = "User1"
+    member2 = MagicMock(spec=discord.Member)
+    member2.name = "User2"
+
+    async def fake_fetch_members(limit=None):
+        for m in [member1, member2]:
+            yield m
+
+    # Force cache to be empty to ensure the command does not rely on guild.members
+    mock_guild.members = []
+    mock_guild.fetch_members = fake_fetch_members
+
+    # --- Act ---
+    await admin_cog.list_members.callback(admin_cog, mock_interaction)
+
+    # --- Assert ---
+    mock_interaction.response.send_message.assert_called_once()
+    args, kwargs = mock_interaction.response.send_message.call_args
+    assert args[0] == "Members (2): User1, User2"
+    assert kwargs["ephemeral"] is True
