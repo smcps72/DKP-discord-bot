@@ -272,6 +272,20 @@ class RaidCog(commands.Cog):
             )
             view = RaidControlView(self.bot)
             await thread.send(embed=control_embed, view=view)
+
+            # Also send a short ephemeral confirmation back to the raid leader
+            # so that any temporary "bot is thinking" indicator from the
+            # deferred modal submission is replaced with a clear success
+            # message.
+            try:
+                await interaction.followup.send(
+                    f"Raid '{raid_name}' has been created. Use the control panel in {thread.mention} to manage it.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                # Interaction may have expired; the public thread/log still exists
+                # so we can safely ignore this.
+                pass
         except Exception as e:
             logging.error(f"Failed to create raid: {e}")
             await interaction.followup.send(embed=create_error_embed("Error", "Could not create the raid. Check my permissions."))
@@ -481,6 +495,19 @@ class RaidCog(commands.Cog):
 
         await thread.send(f"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.")
         await thread.edit(archived=True, locked=True)
+
+        # Send an explicit ephemeral confirmation to the user who closed the
+        # raid so that any temporary "bot is thinking" message from the
+        # deferred button interaction is replaced.
+        try:
+            await interaction.followup.send(
+                "Raid has been closed and the raid voice channel cleaned up.",
+                ephemeral=True,
+            )
+        except discord.HTTPException:
+            # If the interaction has expired or the followup webhook is gone,
+            # the public log message above is still sufficient feedback.
+            pass
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(RaidCog(bot))

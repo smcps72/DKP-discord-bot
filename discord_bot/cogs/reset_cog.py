@@ -200,14 +200,19 @@ class ResetCog(commands.Cog):
                         await item.delete(reason="DKP Bot Reset")
                         logging.info(f"Deleted {item_type} {item.name} ({item_id})")
 
-            # Remove all roles except admin roles and @everyone. Skip managed roles.
-            # Requires the bot's top role to be above roles it tries to delete.
+            # Remove all roles except admin roles, @everyone, and the configured
+            # Officer role. Skip managed roles. Requires the bot's top role to be
+            # above roles it tries to delete.
             deleted_roles = []
             skipped_roles = []  # tuples of (name, reason)
-            # Known DKP role names to force-delete (case-insensitive)
-            # These will be deleted even if they have administrator permissions,
-            # as long as the bot's top role is high enough.
-            dkp_role_names = {"officer", "raider", "raid-leader", "raid leader"}
+            # Known DKP role names to force-delete (case-insensitive). Officer
+            # is intentionally *not* included here so that the configured
+            # officer_role_id is preserved during reset.
+            dkp_role_names = {"raider", "raid-leader", "raid leader"}
+
+            officer_role_id = None
+            if config and "officer_role_id" in config.keys():
+                officer_role_id = config["officer_role_id"]
 
             # Determine the bot member and top role position for diagnostics
             bot_member = guild.get_member(self.bot.user.id) if self.bot.user else None
@@ -215,6 +220,12 @@ class ResetCog(commands.Cog):
 
             for role in list(guild.roles):
                 try:
+                    # Always preserve the configured Officer role so guilds can
+                    # manage it themselves without it being destroyed on reset.
+                    if officer_role_id is not None and role.id == officer_role_id:
+                        skipped_roles.append((role.name, "configured officer role (preserved)"))
+                        continue
+
                     if role.is_default():
                         skipped_roles.append((role.name, "default role"))
                         continue
