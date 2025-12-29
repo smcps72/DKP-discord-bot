@@ -126,7 +126,7 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="list_members", description="List all members in this server (debug, forced sync)")
     @app_commands.checks.has_permissions(administrator=True)
     async def list_members(self, interaction: discord.Interaction):
-        members = interaction.guild.members
+        members = [member async for member in interaction.guild.fetch_members(limit=None)]
         await interaction.response.send_message(
             f"Members ({len(members)}): {', '.join([m.name for m in members])}",
             ephemeral=True
