@@ -1,0 +1,14 @@
+{
+  "name": "dkp-discord-bot-js-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "@zerostep/playwright": "latest",
+    "dotenv": "^16.4.0"
+  }
+}
