@@ -12,8 +12,8 @@ async def test_create_tables():
             row = await db.fetchone(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'")
             assert row is not None, f"Table '{table}' was not created."
     finally:
-        if db.conn:
-            await db.conn.close()
+        if db.pool:
+            await db.pool.close()
 
 @pytest.mark.asyncio
 async def test_get_raid_by_thread():
@@ -53,8 +53,8 @@ async def test_get_raid_by_thread():
         assert raid is None # Should not return inactive raids
 
     finally:
-        if db.conn:
-            await db.conn.close()
+        if db.pool:
+            await db.pool.close()
 
 @pytest.mark.asyncio
 async def test_get_raid_by_vc():
@@ -94,8 +94,8 @@ async def test_get_raid_by_vc():
         assert raid is None # Should not return inactive raids
 
     finally:
-        if db.conn:
-            await db.conn.close()
+        if db.pool:
+            await db.pool.close()
 
 @pytest.mark.asyncio
 async def test_add_and_get_guild_config():
@@ -115,8 +115,8 @@ async def test_add_and_get_guild_config():
         assert config['dkp_category_id'] == 1
         assert config['officer_role_id'] == 4
     finally:
-        if db.conn:
-            await db.conn.close()
+        if db.pool:
+            await db.pool.close()
 
 @pytest.mark.asyncio
 async def test_get_active_auction():
@@ -174,8 +174,8 @@ async def test_get_active_auction():
 
 
     finally:
-        if db.conn:
-            await db.conn.close()
+        if db.pool:
+            await db.pool.close()
 
 @pytest.mark.asyncio
 async def test_get_and_modify_dkp():
@@ -211,5 +211,5 @@ async def test_get_and_modify_dkp():
         dkp = await db.get_user_dkp(user_id, guild_id)
         assert dkp == 5
     finally:
-        if db.conn:
-            await db.conn.close()
+        if db.pool:
+            await db.pool.close()

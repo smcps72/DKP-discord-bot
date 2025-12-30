@@ -40,11 +40,13 @@ class TestDKPAdjustmentModal:
         modal.amount.value = "10"
         modal.reason = MagicMock()
         modal.reason.value = "Test Reason"
-        modal.target_member = MagicMock()
-        modal.target_member.value = "123"
+        # The current implementation uses target_member_input when no member
+        # is pre-selected, resolving via guild.get_member_named first.
+        modal.target_member_input = MagicMock()
+        modal.target_member_input.value = "TargetUser"
         mock_member = MagicMock()
         mock_interaction.guild = MagicMock()
-        mock_interaction.guild.get_member.return_value = mock_member
+        mock_interaction.guild.get_member_named.return_value = mock_member
 
         # Act
         await modal.on_submit(mock_interaction)

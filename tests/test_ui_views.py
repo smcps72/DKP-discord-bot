@@ -5,12 +5,12 @@ from discord_bot.ui.views import WelcomeView
 
 # Mock objects for testing
 class MockGuild(MagicMock):
-    def __init__(self, id, *args, **kwargs):
+    def __init__(self, id=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.id = id
 
 class MockUser(MagicMock):
-    def __init__(self, id, *args, **kwargs):
+    def __init__(self, id=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.id = id
 
@@ -147,8 +147,11 @@ class TestRaidControlView:
         mock_vc.members = [member1, member2]
         mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
 
-        # Act
-        await view.award_dkp.callback(mock_raid_control_interaction)
+        # Patch discord.VoiceChannel in the views module so our MagicMock
+        # instance passes the isinstance check inside _show_dkp_adjustment_view.
+        with patch("discord_bot.ui.views.discord.VoiceChannel", new=MagicMock):
+            # Act
+            await view.award_dkp.callback(mock_raid_control_interaction)
 
         # Assert
         mock_raid_control_interaction.followup.send.assert_called_once()
@@ -170,8 +173,11 @@ class TestRaidControlView:
         mock_vc.members = [member]
         mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
 
-        # Act
-        await view.deduct_dkp.callback(mock_raid_control_interaction)
+        # Patch discord.VoiceChannel so our mocked VC passes the isinstance
+        # guard inside _show_dkp_adjustment_view.
+        with patch("discord_bot.ui.views.discord.VoiceChannel", new=MagicMock):
+            # Act
+            await view.deduct_dkp.callback(mock_raid_control_interaction)
 
         # Assert
         mock_raid_control_interaction.followup.send.assert_called_once()
@@ -206,6 +212,28 @@ class TestRaidControlView:
         assert isinstance(modal_sent, AuctionStartModal)
         assert modal_sent.title == "Start New Auction"
         assert modal_sent.auction_cog == mock_auction_cog
+
+    async def test_start_auction_button_blocks_when_vc_empty(self, mock_bot, mock_raid_control_interaction):
+        """Tests that 'Start Auction' shows an error when the raid VC has no members."""
+        # Arrange
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
+        mock_bot.db.get_active_auction = AsyncMock(return_value=None)
+
+        mock_vc = MagicMock()
+        mock_vc.members = []  # Empty voice channel
+        mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
+
+        # Act
+        await view.start_auction.callback(mock_raid_control_interaction)
+
+        # Assert: error message is sent and modal is not opened
+        mock_raid_control_interaction.response.send_message.assert_called_once_with(
+            "Raid voice channel is empty. Cannot start auction.",
+            ephemeral=True,
+        )
+        mock_raid_control_interaction.response.send_modal.assert_not_called()
 
 # Tests for AuctionBidView
 from discord_bot.ui.views import AuctionBidView

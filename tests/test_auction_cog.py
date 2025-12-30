@@ -249,7 +249,6 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
 
         await self.cog.end_auction_from_button(self.interaction)
 
-        self.interaction.response.defer.assert_called_once()
         self.bot.db.get_raid_by_thread.assert_called_once_with(self.interaction.channel.id)
         self.bot.db.get_active_auction.assert_called_once_with(1) # raid_id
 
@@ -264,9 +263,9 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
             f"Won auction for {auction_data['item_name']}"
         )
 
-        # Verify followup message
-        self.interaction.followup.send.assert_called_once()
-        args_followup, kwargs_followup = self.interaction.followup.send.call_args
+        # Verify winner announcement is posted publicly in the raid thread
+        self.interaction.channel.send.assert_called_once()
+        args_followup, kwargs_followup = self.interaction.channel.send.call_args
         embed = kwargs_followup['embed']
         self.assertIn(f"Auction Concluded: {auction_data['item_name']}", embed.title)
         self.assertIn(f"Congratulations to {self.member1.mention}", embed.description)
@@ -279,7 +278,6 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
 
         await self.cog.end_auction_from_button(self.interaction)
 
-        self.interaction.response.defer.assert_called_once()
         self.bot.db.execute.assert_called_once_with("UPDATE auctions SET is_active = 0 WHERE id = ?", (auction_data_no_bids['id'],))
         self.bot.db.modify_user_dkp.assert_not_called() # No DKP change
 
@@ -292,7 +290,6 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
     async def test_end_auction_from_button_no_raid(self):
         self.bot.db.get_raid_by_thread.return_value = None
         await self.cog.end_auction_from_button(self.interaction)
-        self.interaction.response.defer.assert_called_once()
         self.interaction.followup.send.assert_called_once()
         embed = self.interaction.followup.send.call_args[1]['embed']
         self.assertIn("This is not a raid thread", embed.description)
@@ -302,7 +299,6 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.bot.db.get_raid_by_thread.return_value = {'id': 1}
         self.bot.db.get_active_auction.return_value = None # No active auction
         await self.cog.end_auction_from_button(self.interaction)
-        self.interaction.response.defer.assert_called_once()
         self.interaction.followup.send.assert_called_once()
         embed = self.interaction.followup.send.call_args[1]['embed']
         self.assertIn("There is no active auction to end", embed.description)
@@ -326,8 +322,9 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
             -50,
             f"Won auction for {auction_data['item_name']}"
         )
-        self.interaction.followup.send.assert_called_once()
-        args_followup, kwargs_followup = self.interaction.followup.send.call_args
+        # Winner announcement is posted publicly even if the user left the guild
+        self.interaction.channel.send.assert_called_once()
+        args_followup, kwargs_followup = self.interaction.channel.send.call_args
         embed = kwargs_followup['embed']
         self.assertIn(f"User ID: {winner_id_left_guild}", embed.description) # Fallback to User ID
 

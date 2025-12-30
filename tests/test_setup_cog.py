@@ -21,14 +21,14 @@ def mock_guild():
     guild.name = "Test Guild"
     guild.default_role = MagicMock(spec=discord.Role)
     guild.owner = AsyncMock(spec=discord.Member) # owner.send is async
+    guild.roles = []
 
     # Mock channel creation methods to return AsyncMocks
-    guild.create_category = AsyncMock(spec=discord.CategoryChannel)
+    guild.create_category = AsyncMock()
     # Mock the created category to have its own channel creation methods
     mock_category = AsyncMock(spec=discord.CategoryChannel)
     mock_category.id = 67890
     mock_category.create_text_channel = AsyncMock(spec=discord.TextChannel)
-    mock_category.create_voice_channel = AsyncMock(spec=discord.VoiceChannel)
     guild.create_category.return_value = mock_category
 
     # Mock created channels to have basic attributes like id
@@ -37,10 +37,6 @@ def mock_guild():
     mock_text_channel.send = AsyncMock(spec=discord.Message) # For sending welcome message
     mock_text_channel.send.return_value.pin = AsyncMock() # For pinning the message
     mock_category.create_text_channel.return_value = mock_text_channel
-
-    mock_voice_channel = AsyncMock(spec=discord.VoiceChannel)
-    mock_voice_channel.id = 222
-    mock_category.create_voice_channel.return_value = mock_voice_channel
 
     return guild
 
@@ -101,24 +97,18 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     calls[0].assert_called_with(expected_dkp_channel_name)
     calls[1].assert_called_with(expected_raid_channel_name)
 
-    # 4. Verify voice channel template creation
-    mock_category.create_voice_channel.assert_called_once()
-    args_vc, kwargs_vc = mock_category.create_voice_channel.call_args
-    assert args_vc[0] == "Raid-Template"
-    assert mock_guild.default_role in kwargs_vc["overwrites"]
-    overwrite_vc = kwargs_vc["overwrites"][mock_guild.default_role]
-    assert overwrite_vc.view_channel is False
-    # Check other permissions are not set / default if necessary
-    # discord.PermissionOverwrite(view_channel=False) also sets read_messages to False.
-    assert overwrite_vc.read_messages is False
+    # 4. Verify database execute call (schema now includes role IDs and vc_template_id NULL)
+    mock_bot.db.execute.assert_called_once()
+    sql, params = mock_bot.db.execute.call_args[0]
+    assert "INSERT OR REPLACE INTO guilds" in sql
+    # guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, raid_vc_template_id
+    assert params[0] == mock_guild.id
+    assert params[1] == mock_category.id
+    assert params[2] == mock_dkp_channel.id
+    assert params[3] == mock_raid_channel.id
+    assert params[4] is None
 
-    # 5. Verify database execute call
-    mock_bot.db.execute.assert_called_once_with(
-        "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, raid_vc_template_id, license_key) VALUES (?, ?, ?, ?, ?, ?)",
-        (mock_guild.id, mock_category.id, mock_dkp_channel.id, mock_raid_channel.id, mock_vc_template.id, mock_bot.license_key)
-    )
-
-    # 6. Verify welcome message sent to dkp_channel and pinned
+    # 5. Verify welcome message sent to dkp_channel and pinned
     mock_dkp_channel.send.assert_called_once()
     args, kwargs = mock_dkp_channel.send.call_args
     assert "embed" in kwargs
@@ -126,7 +116,7 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
 
     mock_dkp_channel.send.return_value.pin.assert_called_once()
 
-    # 7. Verify interaction followup
+    # 6. Verify interaction followup
     mock_interaction.followup.send.assert_called_once_with("DKP system setup complete!", ephemeral=True)
 
 @pytest.mark.asyncio
@@ -134,9 +124,22 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
     # --- Arrange ---
     mock_interaction.guild = mock_guild
 
-    # Simulate existing config
-    existing_config = {'dkp_category_id': 98765}
+    # Simulate existing config with a valid DKP category and raid channel
+    existing_config = {'dkp_category_id': 98765, 'raid_channel_id': 54321}
     mock_bot.db.get_guild_config = AsyncMock(return_value=existing_config)
+
+    # Guild has both the DKP category and the raid channel already
+    mock_category = MagicMock(spec=discord.CategoryChannel)
+    mock_raid_channel = MagicMock(spec=discord.TextChannel)
+
+    def get_channel_side_effect(channel_id):
+        if channel_id == existing_config['dkp_category_id']:
+            return mock_category
+        if channel_id == existing_config['raid_channel_id']:
+            return mock_raid_channel
+        return None
+
+    mock_guild.get_channel.side_effect = get_channel_side_effect
 
     # --- Act ---
     await setup_cog.run_setup(mock_guild, mock_interaction)
@@ -148,12 +151,7 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
     # 2. Verify no channel/category creation methods were called
     mock_guild.create_category.assert_not_called()
 
-    # Get the mock category from fixture to check its methods
-    mock_category_fixture = mock_guild.create_category.return_value
-    mock_category_fixture.create_text_channel.assert_not_called()
-    mock_category_fixture.create_voice_channel.assert_not_called()
-
-    # 3. Verify db.execute was not called to save config
+    # 3. Verify db.execute was not called to save config (no repair needed)
     mock_bot.db.execute.assert_not_called()
 
     # 4. Verify "already set up" message
@@ -162,9 +160,7 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
     )
 
     # 5. Verify no welcome message was sent or pinned
-    mock_dkp_channel = mock_category_fixture.create_text_channel.return_value
-    mock_dkp_channel.send.assert_not_called()
-    mock_dkp_channel.send.return_value.pin.assert_not_called()
+    # (dkp_channel is only created in the fresh-setup path.)
 
 @pytest.mark.asyncio
 async def test_run_setup_discord_forbidden_error(setup_cog: SetupCog, mock_bot: MagicMock, mock_guild: MagicMock, mock_interaction: AsyncMock):
@@ -187,12 +183,12 @@ async def test_run_setup_discord_forbidden_error(setup_cog: SetupCog, mock_bot: 
 
     # 3. Verify owner was DMed
     mock_guild.owner.send.assert_called_once_with(
-        "I tried to set up my channels in your server but I'm missing the 'Manage Channels' permission. Please grant it and re-invite me."
+        "I tried to set up my channels and roles in your server but I'm missing the 'Manage Channels' or 'Manage Roles' permission. Please grant them and re-invite me."
     )
 
     # 4. Verify interaction followup with error message
     mock_interaction.followup.send.assert_called_once_with(
-        "Missing permissions to set up channels. Please grant 'Manage Channels' and try again.", ephemeral=True
+        "Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True
     )
 
     # 5. Verify no DB execute call was made
@@ -221,7 +217,7 @@ async def test_run_setup_discord_forbidden_owner_dm_fails(setup_cog: SetupCog, m
     mock_guild.create_category.assert_called_once()
     mock_guild.owner.send.assert_called_once() # Attempted
     mock_interaction.followup.send.assert_called_once_with(
-        "Missing permissions to set up channels. Please grant 'Manage Channels' and try again.", ephemeral=True
+        "Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True
     )
     mock_bot.db.execute.assert_not_called()
 

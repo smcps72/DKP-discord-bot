@@ -22,14 +22,14 @@ class MockChannel(MagicMock):
         self.delete = AsyncMock()
 
 class MockGuild(MagicMock):
-    def __init__(self, id, *args, **kwargs):
+    def __init__(self, id=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.id = id
         self.get_role = MagicMock()
         self.get_channel = MagicMock()
 
 class MockInteraction(MagicMock):
-    def __init__(self, guild, *args, **kwargs):
+    def __init__(self, guild=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.guild = guild
         self.response = MagicMock()
@@ -70,11 +70,19 @@ async def test_reset_command():
 
     mock_guild.get_channel.side_effect = get_channel_side_effect
     mock_guild.get_role.side_effect = get_role_side_effect
+    # Roles list used by ResetCog when iterating guild.roles; keep empty here so
+    # we focus on the explicit safe_delete logic for raider/officer roles.
+    mock_guild.roles = []
 
     # -- Create mock bot and cog --
     mock_bot = MagicMock()
     mock_bot.db = db
     cog = ResetCog(mock_bot)
+
+    # Avoid touching the real filesystem during tests by patching backup/export
+    # helpers to no-op versions.
+    cog._backup_database = AsyncMock(return_value="dummy-backup.db")
+    cog._export_raid_threads_for_guild = AsyncMock()
 
     # -- Populate database with fake config --
     await db.execute(
@@ -88,11 +96,12 @@ async def test_reset_command():
     await cog.reset.callback(cog, mock_interaction)
 
     # 3. Assert Results
-    # -- Check that discord objects were deleted --
+    # -- Check that discord objects were deleted / preserved as expected --
     mock_category.delete.assert_called_once()
     mock_dkp_channel.delete.assert_called_once()
     mock_raid_channel.delete.assert_called_once()
-    mock_officer_role.delete.assert_called_once()
+    # Officer role should be preserved by reset; raider role should be deleted.
+    mock_officer_role.delete.assert_not_called()
     mock_raider_role.delete.assert_called_once()
 
     # -- Check that database was cleaned --
@@ -102,10 +111,12 @@ async def test_reset_command():
     user_row = await db.fetchone("SELECT * FROM users WHERE guild_id = ?", (guild_id,))
     assert user_row is None, "User data for the guild should have been deleted"
 
-    # -- Check that user was notified --
-    mock_interaction.followup.send.assert_called_once_with(
-        "Bot configuration has been completely reset. You can now run `/setup` again.", ephemeral=True
-    )
+    # -- Check that user was notified with the new summary message --
+    mock_interaction.followup.send.assert_called_once()
+    args, kwargs = mock_interaction.followup.send.call_args
+    assert "Reset complete." in args[0]
+    assert "You can run `/setup_dkp` again when ready." in args[0]
+    assert kwargs["ephemeral"] is True
 
     # 4. Teardown
-    await db.conn.close()
+    await db.pool.close()

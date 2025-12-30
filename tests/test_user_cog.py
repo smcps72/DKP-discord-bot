@@ -27,6 +27,10 @@ class MockInteraction:
     def __init__(self, user_id, guild_id):
         self.user = MockUser(user_id)
         self.guild = MockGuild(guild_id)
+        # UserCog now checks response.is_done() and may call defer.
+        self.response = AsyncMock()
+        self.response.is_done.return_value = True
+        self.response.defer = AsyncMock()
         self.followup = AsyncMock()
 
 # Tests will be added here
