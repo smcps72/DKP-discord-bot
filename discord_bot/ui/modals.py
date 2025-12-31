@@ -4,11 +4,18 @@ from discord.ext import commands
 
 
 class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
-    def __init__(self, action: str, raid_cog, member: discord.Member | None = None):
+    def __init__(
+        self,
+        action: str,
+        raid_cog,
+        member: discord.Member | None = None,
+        source: str | None = None,
+    ):
         super().__init__()
         self.action = action
         self.raid_cog = raid_cog
         self.target_member_obj = member  # The member passed from the command
+        self.source = source
 
         self.amount = TextInput(
             label="Amount of DKP",
@@ -64,7 +71,14 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                         ephemeral=True
                     )
         
-        await self.raid_cog.process_dkp_adjustment(interaction, self.action, self.amount.value, self.reason.value, member)
+        await self.raid_cog.process_dkp_adjustment(
+            interaction,
+            self.action,
+            self.amount.value,
+            self.reason.value,
+            member,
+            self.source,
+        )
 
 
 class RaidCreateModal(Modal, title="Create New Raid"):

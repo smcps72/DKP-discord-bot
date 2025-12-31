@@ -35,7 +35,12 @@ class MemberSelect(UserSelect):
             )
             return
 
-        modal = DKPAdjustmentModal(action=self.action, raid_cog=raid_cog, member=member)
+        modal = DKPAdjustmentModal(
+            action=self.action,
+            raid_cog=raid_cog,
+            member=member,
+            source="raid_panel",
+        )
         await interaction.response.send_modal(modal)
 
 
@@ -49,7 +54,12 @@ class DKPAdjustmentView(discord.ui.View):
     @discord.ui.button(label="All in VC", style=discord.ButtonStyle.primary)
     async def all_in_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
-        modal = DKPAdjustmentModal(action=self.action, raid_cog=raid_cog, member=None)
+        modal = DKPAdjustmentModal(
+            action=self.action,
+            raid_cog=raid_cog,
+            member=None,
+            source="raid_panel",
+        )
         await interaction.response.send_modal(modal)
 
 class WelcomeView(discord.ui.View):

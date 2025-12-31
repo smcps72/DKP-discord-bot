@@ -372,6 +372,7 @@ class RaidCog(commands.Cog):
         amount_str: str,
         reason: str,
         member: discord.Member | None = None,
+        source: str | None = None,
     ):
         # Defer if not already deferred
         if not interaction.response.is_done():
@@ -433,7 +434,9 @@ class RaidCog(commands.Cog):
             current = self._dkp_adjust_counts.get(key, 0) + 1
             self._dkp_adjust_counts[key] = current
 
-            if current % 4 == 0:
+            if source == "raid_panel":
+                await self._send_control_panel_ephemeral(interaction, thread)
+            elif current % 4 == 0:
                 await self._send_control_panel_ephemeral(interaction, thread)
     async def close_raid(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
