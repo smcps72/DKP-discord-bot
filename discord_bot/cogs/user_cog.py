@@ -8,10 +8,25 @@ class UserCog(commands.Cog):
         self.bot = bot
 
     async def show_my_dkp(self, interaction: discord.Interaction):
+        # Ensure this command is used in a guild context
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
         # Ensure we've acknowledged the interaction before using followups
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
-        dkp = await self.bot.db.get_user_dkp(interaction.user.id, interaction.guild.id)
+        dkp = await self.bot.db.get_user_dkp(interaction.user.id, guild.id)
         embed = create_info_embed(
             f"💰 Your DKP Balance",
             f"You currently have **{dkp}** DKP."
@@ -23,6 +38,21 @@ class UserCog(commands.Cog):
         await self.show_my_dkp(interaction)
 
     async def show_auction_help(self, interaction: discord.Interaction):
+        # Ensure this command is used in a guild context
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
         # Ensure we've acknowledged the interaction before using followups
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
