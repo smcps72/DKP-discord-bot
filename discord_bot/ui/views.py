@@ -314,7 +314,12 @@ class RaidControlView(discord.ui.View):
             return True
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        if raid and interaction.user.id == raid['leader_id']:
+
+        is_admin = (
+            isinstance(interaction.user, discord.Member)
+            and interaction.user.guild_permissions.administrator
+        )
+        if raid and (interaction.user.id == raid['leader_id'] or is_admin):
             return True
 
         # User is not the raid leader. If we haven't responded yet, send an
@@ -323,9 +328,15 @@ class RaidControlView(discord.ui.View):
         # like "Start Auction" that haven't been deferred yet.
         try:
             if not interaction.response.is_done():
-                await interaction.response.send_message("You are not the leader of this raid.", ephemeral=True)
+                await interaction.response.send_message(
+                    "You must be the raid leader or a server admin to use this control.",
+                    ephemeral=True,
+                )
             else:
-                await interaction.followup.send("You are not the leader of this raid.", ephemeral=True)
+                await interaction.followup.send(
+                    "You must be the raid leader or a server admin to use this control.",
+                    ephemeral=True,
+                )
         except discord.HTTPException:
             # Interaction may have expired or otherwise failed; ignore.
             pass

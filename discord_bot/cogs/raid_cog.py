@@ -57,20 +57,22 @@ class RaidCog(commands.Cog):
             return
 
         is_leader = interaction.user.id == raid["leader_id"]
+        is_admin = interaction.user.guild_permissions.administrator
+        can_manage = is_leader or is_admin
 
         title = (
             f"Raid Control Panel for {interaction.user.display_name}"
-            if is_leader
+            if can_manage
             else "Raid Panel"
         )
         description = (
             "Use the buttons below to manage your raid. This panel is only visible to you."
-            if is_leader
+            if can_manage
             else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you."
         )
 
         embed = create_info_embed(title, description)
-        view = RaidControlView(self.bot, show_leader_buttons=is_leader)
+        view = RaidControlView(self.bot, show_leader_buttons=can_manage)
 
         # If the original interaction has not been responded to yet, send via
         # the initial response; otherwise use a followup.
@@ -162,7 +164,12 @@ class RaidCog(commands.Cog):
 
         try:
             raid_date = datetime.now().strftime("%Y-%m-%d")
-            vc_name = f"{raid_name}"
+            user_display = (
+                interaction.user.display_name
+                if isinstance(interaction.user, discord.Member)
+                else str(interaction.user)
+            )
+            vc_name = f"{raid_name} - {user_display}"
             if template_vc and isinstance(template_vc, discord.VoiceChannel):
                 new_vc = await template_vc.clone(name=vc_name)
             else:
@@ -210,7 +217,8 @@ class RaidCog(commands.Cog):
             start_timestamp = int(datetime.now().timestamp())
             base_content = f"Raid '{raid_name}' started by {interaction.user.mention} on <t:{start_timestamp}:F>"
             raid_message = await active_raids_channel.send(base_content)
-            thread = await raid_message.create_thread(name=f"{raid_name} - Raid Log")
+            thread_name = f"{raid_name} - Raid Log - {user_display}"
+            thread = await raid_message.create_thread(name=thread_name)
             await self.bot.db.execute(
                 "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id) VALUES (?, ?, ?, ?)",
                 (interaction.guild.id, interaction.user.id, new_vc.id, thread.id),
