@@ -58,6 +58,7 @@ class TestDKPAdjustmentModal:
             "10",
             "Test Reason",
             mock_member,
+            None,
         )
 
 @pytest.mark.asyncio
