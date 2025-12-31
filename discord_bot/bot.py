@@ -112,6 +112,40 @@ class DkpBot(commands.Bot):
         except Exception as e:
             logging.error(f"Error syncing application commands: {e}")
 
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ):
+        """Track which users have ever joined a raid voice channel.
+
+        Whenever a member connects to or moves into a voice channel that is
+        associated with an active raid, we record them in the raid_members
+        table so that raid membership can later be reported even after the
+        raid is closed and the VC is deleted.
+        """
+
+        # Only care when the member is connected to a voice channel.
+        if after.channel is None:
+            return
+
+        try:
+            raid = await self.db.get_raid_by_vc(after.channel.id)
+        except Exception as e:
+            logging.error(f"Error fetching raid for voice channel {after.channel.id}: {e}")
+            return
+
+        if not raid:
+            return
+
+        try:
+            await self.db.add_raid_member(raid["id"], member.id)
+        except Exception as e:
+            logging.error(
+                f"Error recording raid member {member.id} for raid {raid.get('id')}: {e}"
+            )
+
     async def close(self):
         await super().close()
         if hasattr(self, 'http_session'):

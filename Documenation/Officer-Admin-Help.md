@@ -51,10 +51,7 @@
   - Same info as `/debug_config`, but with `!` prefix.
 
 - **`/list_members`** *(Admin)*  
-  - Debug: list all members from guild cache.
-
-- **`/list_members_full`** *(Admin)*  
-  - Debug: list all members using `fetch_members` (API).
+  - List members who participated in a specific raid log thread (active or closed).
 
 ---
 

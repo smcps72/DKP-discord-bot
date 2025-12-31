@@ -60,6 +60,14 @@ class Database:
                 )
             """)
             await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_members (
+                    raid_id INTEGER,
+                    user_id INTEGER,
+                    PRIMARY KEY (raid_id, user_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS auctions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     raid_id INTEGER,
@@ -126,6 +134,18 @@ class Database:
 
     async def get_raid_by_vc(self, vc_id):
         return await self.fetchone("SELECT * FROM raids WHERE vc_id = ? AND is_active = 1", (vc_id,))
+
+    async def add_raid_member(self, raid_id: int, user_id: int):
+        await self.execute(
+            "INSERT OR IGNORE INTO raid_members (raid_id, user_id) VALUES (?, ?)",
+            (raid_id, user_id),
+        )
+
+    async def get_raid_members(self, raid_id: int):
+        return await self.fetchall(
+            "SELECT user_id FROM raid_members WHERE raid_id = ?",
+            (raid_id,),
+        )
 
     async def get_active_auction(self, raid_id):
         return await self.fetchone("SELECT * FROM auctions WHERE raid_id = ? AND is_active = 1", (raid_id,))

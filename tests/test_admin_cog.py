@@ -202,23 +202,45 @@ async def test_history_cmd_no_records(admin_cog: AdminCog, mock_interaction: Asy
 
 
 @pytest.mark.asyncio
-async def test_list_members_uses_fetch_members(admin_cog: AdminCog, mock_interaction: AsyncMock, mock_guild: MagicMock):
-    """Ensure /list_members uses fetch_members and returns all fetched members."""
+async def test_list_members_uses_raid_members_from_db(admin_cog: AdminCog, mock_interaction: AsyncMock, mock_guild: MagicMock):
+    """Ensure /list_members reads raid VC membership from the database and returns an embed."""
+
     # --- Arrange ---
     mock_interaction.guild = mock_guild
 
+    # Simulate a thread channel
+    thread = MagicMock(spec=discord.Thread)
+    thread.id = 999
+    mock_interaction.channel = thread
+
+    # DB should report that this thread is associated with a raid (active or closed)
+    admin_cog.bot.db.fetchone = AsyncMock(return_value={"id": 1, "thread_id": thread.id})
+    admin_cog.bot.db.get_raid_members = AsyncMock(
+        return_value=[
+            {"user_id": 111},
+            {"user_id": 222},
+        ]
+    )
+
+    # Mock guild members corresponding to those user IDs
     member1 = MagicMock(spec=discord.Member)
-    member1.name = "User1"
+    member1.id = 111
+    member1.display_name = "Alpha"
+    member1.mention = "@Alpha"
+
     member2 = MagicMock(spec=discord.Member)
-    member2.name = "User2"
+    member2.id = 222
+    member2.display_name = "Bravo"
+    member2.mention = "@Bravo"
 
-    async def fake_fetch_members(limit=None):
-        for m in [member1, member2]:
-            yield m
+    def get_member_side_effect(user_id):
+        if user_id == 111:
+            return member1
+        if user_id == 222:
+            return member2
+        return None
 
-    # Force cache to be empty to ensure the command does not rely on guild.members
-    mock_guild.members = []
-    mock_guild.fetch_members = fake_fetch_members
+    mock_guild.get_member = MagicMock(side_effect=get_member_side_effect)
 
     # --- Act ---
     await admin_cog.list_members.callback(admin_cog, mock_interaction)
@@ -226,5 +248,9 @@ async def test_list_members_uses_fetch_members(admin_cog: AdminCog, mock_interac
     # --- Assert ---
     mock_interaction.response.send_message.assert_called_once()
     args, kwargs = mock_interaction.response.send_message.call_args
-    assert args[0] == "Members (2): User1, User2"
+    # Ensure it sends an embed ephemerally and that both members appear in the description
+    assert "embed" in kwargs
     assert kwargs["ephemeral"] is True
+    embed = kwargs["embed"]
+    assert "Alpha" in embed.description
+    assert "Bravo" in embed.description

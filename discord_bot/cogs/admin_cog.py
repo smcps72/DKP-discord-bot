@@ -123,23 +123,69 @@ class AdminCog(commands.Cog):
         embed = create_info_embed("Server DKP", description)
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="list_members", description="List all members in this server (debug, forced sync)")
+    @app_commands.command(name="list_members", description="List members who participated in this raid log thread.")
     @app_commands.checks.has_permissions(administrator=True)
     async def list_members(self, interaction: discord.Interaction):
-        members = [member async for member in interaction.guild.fetch_members(limit=None)]
-        await interaction.response.send_message(
-            f"Members ({len(members)}): {', '.join([m.name for m in members])}",
-            ephemeral=True
-        )
+        # This command is intended to be used inside a raid log thread under
+        # the Active Raids channel. It lists unique, non-bot users who have
+        # ever joined the raid's voice channel, for both active and closed raids.
 
-    @app_commands.command(name="list_members_full", description="List all members using fetch_members (debug, forced sync)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def list_members_full(self, interaction: discord.Interaction):
-        members = [member async for member in interaction.guild.fetch_members(limit=None)]
-        await interaction.response.send_message(
-            f"Members ({len(members)}): {', '.join([m.name for m in members])}",
-            ephemeral=True
+        # Ensure we are in a thread channel
+        thread = interaction.channel
+        if not isinstance(thread, discord.Thread):
+            return await interaction.response.send_message(
+                "This command can only be used inside a raid log thread.",
+                ephemeral=True,
+            )
+
+        # Verify this thread is associated with a raid (active or closed)
+        raid = await self.bot.db.fetchone(
+            "SELECT * FROM raids WHERE thread_id = ?",
+            (thread.id,),
         )
+        if not raid:
+            return await interaction.response.send_message(
+                "This thread is not associated with a raid log.",
+                ephemeral=True,
+            )
+
+        # Fetch all members who have ever joined the associated raid voice channel.
+        member_rows = await self.bot.db.get_raid_members(raid["id"])
+        if not member_rows:
+            return await interaction.response.send_message(
+                "No raid members were found for this raid voice channel.",
+                ephemeral=True,
+            )
+
+        # Build a sorted list of members by display name. If a user has left the
+        # guild, fall back to an "Unknown User" label so the historical record is
+        # still visible.
+        entries: list[tuple[str, str, str]] = []
+        for row in member_rows:
+            user_id = row["user_id"]
+            member = interaction.guild.get_member(user_id)
+
+            if member is not None:
+                display_name = getattr(member, "display_name", getattr(member, "name", str(user_id)))
+                mention = getattr(member, "mention", display_name)
+            else:
+                display_name = f"Unknown User ({user_id})"
+                mention = display_name
+
+            entries.append((display_name.lower(), mention, display_name))
+
+        if not entries:
+            return await interaction.response.send_message(
+                "No raid members were found for this raid voice channel.",
+                ephemeral=True,
+            )
+
+        entries.sort(key=lambda e: e[0])
+        lines = [f"- {mention} ({display_name})" for _, mention, display_name in entries]
+        description = "\n".join(lines)
+
+        embed = create_info_embed("Raid Members", description)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="debug_config", description="Show DKP configuration for this server.")
     @app_commands.checks.has_permissions(administrator=True)
