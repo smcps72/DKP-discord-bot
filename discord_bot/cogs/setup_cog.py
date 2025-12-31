@@ -120,7 +120,7 @@ class SetupCog(commands.Cog):
                 "🏰 **Create Raid:** Starts a new raid, creating a voice channel and thread.\n"
                 "💰 **My DKP:** Privately check your current DKP balance.\n"
                 "❓ **Auction Help:** Get information on how bidding works.\n"
-                "⚙️ **Admin:** (Officers Only) Configure the bot settings."
+                "⚙️ **Admin:** (Admins Only) Configure the bot settings."
             )
             view = WelcomeView(self.bot)
             message = await dkp_channel.send(embed=embed, view=view)

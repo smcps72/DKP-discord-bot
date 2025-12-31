@@ -19,6 +19,15 @@ async def is_officer(interaction: discord.Interaction) -> bool:
         return True
     return False
 
+async def is_admin(interaction: discord.Interaction) -> bool:
+    guild = getattr(interaction, "guild", None)
+    user = getattr(interaction, "user", None)
+
+    if not guild or not isinstance(user, discord.Member):
+        return False
+
+    return bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator)
+
 def create_info_embed(title: str, description: str) -> discord.Embed:
     """Creates a standard blue informational embed."""
     return discord.Embed(title=title, description=description, color=discord.Color.blue())

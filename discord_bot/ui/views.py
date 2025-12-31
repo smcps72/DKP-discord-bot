@@ -1,7 +1,7 @@
 import discord
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
 from discord.ui import UserSelect, Select
-from ..utils import is_officer
+from ..utils import is_admin
 class MemberSelect(UserSelect):
     def __init__(self, bot, action: str, members: list[discord.Member]):
         self.bot = bot
@@ -107,8 +107,8 @@ class WelcomeView(discord.ui.View):
     @discord.ui.button(label="Admin Panel ⚙️", style=discord.ButtonStyle.danger, custom_id="welcome_admin_panel")
     async def admin_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-        if not await is_officer(interaction):
-            return await interaction.followup.send("You must be an officer to use this.", ephemeral=True)
+        if not await is_admin(interaction):
+            return await interaction.followup.send("You must be a server admin to use this.", ephemeral=True)
 
         view = AdminPanelView(self.bot)
         await interaction.followup.send("Welcome to the Admin Panel.", view=view, ephemeral=True)
@@ -220,8 +220,8 @@ class AdminPanelView(discord.ui.View):
         self.bot = bot
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not await is_officer(interaction):
-            await interaction.response.send_message("You must be an officer to use this.", ephemeral=True)
+        if not await is_admin(interaction):
+            await interaction.response.send_message("You must be a server admin to use this.", ephemeral=True)
             return False
         return True
 

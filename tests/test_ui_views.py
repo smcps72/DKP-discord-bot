@@ -84,13 +84,13 @@ async def test_welcome_view_bot_status_button(mock_bot, mock_interaction):
     mock_admin_cog._create_status_embed.assert_called_once_with(mock_interaction.guild.id)
     mock_interaction.followup.send.assert_called_once_with(embed="embed_content", ephemeral=True)
 
-@patch('discord_bot.ui.views.is_officer', new_callable=AsyncMock)
+@patch('discord_bot.ui.views.is_admin', new_callable=AsyncMock)
 @patch('discord_bot.ui.views.AdminPanelView')
 @pytest.mark.asyncio
-async def test_welcome_view_admin_panel_button_as_officer(mock_AdminPanelView, mock_is_officer, mock_bot, mock_interaction):
+async def test_welcome_view_admin_panel_button_as_officer(mock_AdminPanelView, mock_is_admin, mock_bot, mock_interaction):
     """Tests the admin panel button for an authorized officer."""
     # Arrange
-    mock_is_officer.return_value = True
+    mock_is_admin.return_value = True
     view = WelcomeView(bot=mock_bot)
 
     # Act
@@ -98,15 +98,15 @@ async def test_welcome_view_admin_panel_button_as_officer(mock_AdminPanelView, m
 
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
-    mock_is_officer.assert_called_once_with(mock_interaction)
+    mock_is_admin.assert_called_once_with(mock_interaction)
     mock_interaction.followup.send.assert_called_once_with("Welcome to the Admin Panel.", view=mock_AdminPanelView.return_value, ephemeral=True)
 
-@patch('discord_bot.ui.views.is_officer', new_callable=AsyncMock)
+@patch('discord_bot.ui.views.is_admin', new_callable=AsyncMock)
 @pytest.mark.asyncio
-async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_officer, mock_bot, mock_interaction):
+async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_admin, mock_bot, mock_interaction):
     """Tests the admin panel button for a non-officer."""
     # Arrange
-    mock_is_officer.return_value = False
+    mock_is_admin.return_value = False
     view = WelcomeView(bot=mock_bot)
 
     # Act
@@ -114,8 +114,8 @@ async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_officer, m
 
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
-    mock_is_officer.assert_called_once_with(mock_interaction)
-    mock_interaction.followup.send.assert_called_once_with("You must be an officer to use this.", ephemeral=True)
+    mock_is_admin.assert_called_once_with(mock_interaction)
+    mock_interaction.followup.send.assert_called_once_with("You must be a server admin to use this.", ephemeral=True)
 
 
 # Tests for RaidControlView
