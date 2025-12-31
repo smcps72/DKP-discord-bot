@@ -81,6 +81,105 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         )
 
 
+class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
+    def __init__(self, admin_cog, member: discord.Member):
+        super().__init__()
+        self.admin_cog = admin_cog
+        self.member = member
+
+        self.amount_input = TextInput(
+            label="Amount of DKP (signed integer)",
+            placeholder="e.g., 50 or -25",
+            style=discord.TextStyle.short,
+            required=True,
+        )
+        self.reason_input = TextInput(
+            label="Reason for adjustment",
+            placeholder="Explain why you are changing DKP.",
+            style=discord.TextStyle.long,
+            required=True,
+        )
+        self.confirm_input = TextInput(
+            label="Type YES to confirm",
+            placeholder="Type YES exactly (all caps) to run this.",
+            style=discord.TextStyle.short,
+            required=True,
+        )
+
+        self.add_item(self.amount_input)
+        self.add_item(self.reason_input)
+        self.add_item(self.confirm_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            await interaction.response.send_message(
+                "This command can only be used inside a server.",
+                ephemeral=True,
+            )
+            return
+
+        # Basic confirmation to prevent accidental misuse
+        if self.confirm_input.value != "YES":
+            await interaction.response.send_message(
+                "This is a powerful admin-only DKP adjustment. "
+                "To proceed, reopen the modal and type `YES` exactly (all caps) in the confirm field.",
+                ephemeral=True,
+            )
+            return
+
+        # Parse amount
+        amount_raw = self.amount_input.value.strip()
+        try:
+            amount = int(amount_raw)
+        except ValueError:
+            await interaction.response.send_message(
+                "Amount must be a whole number (e.g., 50 or -25).",
+                ephemeral=True,
+            )
+            return
+
+        if amount == 0:
+            await interaction.response.send_message(
+                "Amount must be non-zero. Use a positive or negative integer to adjust DKP.",
+                ephemeral=True,
+            )
+            return
+
+        # Use the pre-selected member from the slash command
+        member = self.member
+
+        # Sanity check in case something changed between command and modal submit
+        if member is None or member.guild != guild:
+            await interaction.response.send_message(
+                "Could not resolve the selected member in this server. Please try again.",
+                ephemeral=True,
+            )
+            return
+
+        if member.bot:
+            await interaction.response.send_message(
+                "Bots do not have DKP.",
+                ephemeral=True,
+            )
+            return
+
+        reason = self.reason_input.value.strip() or "No reason provided"
+
+        await self.admin_cog.bot.db.modify_user_dkp(
+            member.id,
+            guild.id,
+            amount,
+            f"ADMIN MANUAL ADJUST: {reason}",
+        )
+
+        new_dkp = await self.admin_cog.bot.db.get_user_dkp(member.id, guild.id)
+        await interaction.response.send_message(
+            f"Adjusted {member.mention} by {amount} DKP for: {reason}\nNew DKP balance: {new_dkp}",
+            ephemeral=True,
+        )
+
+
 class RaidCreateModal(Modal, title="Create New Raid"):
     def __init__(self, raid_cog):
         super().__init__()
