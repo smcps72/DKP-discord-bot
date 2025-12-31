@@ -1,0 +1,29 @@
+notes from testing with wife
+
+if someone joins the server they weren't showing up in the member list. 
+
+the /list_members_full command is not needed. As all of those users can be seen in DOSCore's server settings, so let's remove that command and only keep the list members. The list members command should only show the members that are within a specific raid log under the active raidsIt should be, for raids that are also closed, the question is just what members were part of that raid.
+
+----------------
+when I clik award dkp and it shows the dropdown, it's not letting me start typing a name and then select a user using autocomplete.
+
+this is working now. 
+----------------------
+I only want to see another raid panel after cliking award dkp or deduct dkp. NOt "my dkp"
+
+So, the rate panel is not showing up after clicking my DKP, which is what I want, but I do want it to actually show another rate panel after clicking award DKP or deduct DKP.
+
+also when clicking a button in the raid panel it should scroll to the bottom of the thread so I can see the message. 
+
+----------------------
+when starting a raid there is a ephemeral message that wont go away saying that the bot is thinking. also when closing the raid it shows this same thiking message. 
+
+this is fixed now. 
+
+----------------------
+when clicking the start auction button it's showing the modal to name the auction even if no one is in the raid voice channel yet.   
+
+when resetting the bot it's removing the officer role. 
+
+
+admins should be able to close a raid even if not the raid leader. 

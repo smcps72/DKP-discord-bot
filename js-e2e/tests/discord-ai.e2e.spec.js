@@ -4,7 +4,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 
 // Load the same .env used by the Python bot/tests, from the project root.
-dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+// Use override: true so JS tests always respect the values in .env even if
+// the shell already has these variables set.
+dotenv.config({ path: path.resolve(process.cwd(), '../.env'), override: true });
 
 const EMAIL = process.env.DISCORD_TEST_EMAIL;
 const PASSWORD = process.env.DISCORD_TEST_PASSWORD;

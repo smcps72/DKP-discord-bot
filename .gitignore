@@ -10,10 +10,11 @@ __pycache__/
 bash.exe.stackdump
 .env.backup
 dkp_bot.db
-
+js-e2e/node_modules
 backups
 
 # Local notes / scratch files
 
 todo list.txt
 \#\# Scenario 5 – Alts and Mains
+
