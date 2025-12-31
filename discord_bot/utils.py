@@ -2,11 +2,20 @@ import discord
 
 async def is_officer(interaction: discord.Interaction) -> bool:
     """Checks if the user is an officer or has admin permissions."""
-    if interaction.user.guild_permissions.administrator:
+    guild = getattr(interaction, "guild", None)
+    user = getattr(interaction, "user", None)
+
+    # If this interaction is not in a guild or the user is not a guild member,
+    # treat them as a non-officer to avoid attribute errors in DMs.
+    if not guild or not isinstance(user, discord.Member):
+        return False
+
+    if user.guild_permissions.administrator:
         return True
-    config = await interaction.client.db.get_guild_config(interaction.guild.id)
+
+    config = await interaction.client.db.get_guild_config(guild.id)
     officer_role_id = config['officer_role_id'] if config else None
-    if officer_role_id and discord.utils.get(interaction.user.roles, id=officer_role_id):
+    if officer_role_id and discord.utils.get(user.roles, id=officer_role_id):
         return True
     return False
 
