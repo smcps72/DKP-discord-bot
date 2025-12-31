@@ -33,7 +33,7 @@ class ResetCog(commands.Cog):
         os.makedirs(backup_dir, exist_ok=True)
 
         if timestamp is None:
-            timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            timestamp = datetime.utcnow().strftime("%d-%m-%Y %H:%M:%S")
         backup_filename = f"dkp_bot_backup_guild_{guild_id}_{timestamp}.db"
         backup_path = os.path.join(backup_dir, backup_filename)
 
@@ -170,7 +170,7 @@ class ResetCog(commands.Cog):
 
             # Use a single shared timestamp for this reset operation so that the
             # DB snapshot and any raid thread exports are grouped together.
-            reset_timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            reset_timestamp = datetime.utcnow().strftime("%d-%m-%Y %H:%M:%S")
 
             # First, back up the current database before making any destructive changes.
             try:
@@ -362,7 +362,15 @@ class ResetCog(commands.Cog):
                 await interaction.response.send_message("No backups found for this server.", ephemeral=True)
                 return
 
-            entries = sorted(timestamps, reverse=True)
+            def _parse_ts(ts: str):
+                for fmt in ("%d-%m-%Y %H:%M:%S", "%Y%m%d-%H%M%S"):
+                    try:
+                        return datetime.strptime(ts, fmt)
+                    except ValueError:
+                        continue
+                return datetime.min
+
+            entries = sorted(timestamps, key=_parse_ts, reverse=True)
             preview = entries[:10]
             lines = [f"{i+1}. {ts}" for i, ts in enumerate(preview)]
             extra = ""
