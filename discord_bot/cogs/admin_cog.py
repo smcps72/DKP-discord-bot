@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from ..utils import is_officer, create_info_embed
+from ..ui.modals import AdminDKPAdjustModal
 import csv
 import io
 from datetime import datetime
@@ -51,6 +52,20 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="raid_points", description="Show DKP for all members in the current raid.")
     @app_commands.describe(member="(Optional) Show DKP for a single member in this raid.")
     async def raid_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
+        # Ensure this command is used in a guild context
+        if not interaction.guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
         await interaction.response.defer(ephemeral=True)
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -93,6 +108,20 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="server_points", description="Show DKP for all members in this server.")
     @app_commands.describe(member="(Optional) Show DKP for a single member in this server.")
     async def server_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
+        # Ensure this command is used in a guild context
+        if not interaction.guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
         await interaction.response.defer()
 
         # If a specific member is requested, just show their DKP
@@ -122,6 +151,27 @@ class AdminCog(commands.Cog):
         description = "\n".join(lines)
         embed = create_info_embed("Server DKP", description)
         await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="admin_adjust_dkp", description="Manually adjust a member's DKP (admin only).")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(member="The member whose DKP will be adjusted.")
+    async def admin_adjust_dkp_cmd(self, interaction: discord.Interaction, member: discord.Member):
+        # Ensure this command is used in a guild context
+        if not interaction.guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
+        modal = AdminDKPAdjustModal(self, member)
+        await interaction.response.send_modal(modal)
 
     @app_commands.command(name="list_members", description="List members who participated in this raid log thread.")
     @app_commands.checks.has_permissions(administrator=True)

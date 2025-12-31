@@ -7,6 +7,8 @@ from ..utils import create_info_embed, create_error_embed, create_success_embed,
 from ..ui.views import RaidControlView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
 
+MAX_DKP_ADJUSTMENT = 100000
+
 
 class RaidCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -355,6 +357,8 @@ class RaidCog(commands.Cog):
 
     async def update_team_list(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
         vc = interaction.guild.get_channel(raid['vc_id'])
         if not vc:
             return await interaction.followup.send("Raid voice channel not found.", ephemeral=True)
@@ -395,21 +399,66 @@ class RaidCog(commands.Cog):
                 ephemeral=True,
             )
 
+        is_admin = isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator
+
+        if amount > MAX_DKP_ADJUSTMENT and not is_admin:
+            return await interaction.followup.send(
+                embed=create_error_embed(
+                    "Invalid Amount",
+                    f"DKP amount must be a positive number up to {MAX_DKP_ADJUSTMENT}.",
+                ),
+                ephemeral=True,
+            )
+
         if action == "Deduct":
             amount = -amount
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        vc = interaction.guild.get_channel(raid["vc_id"]) if raid else None
+        if not raid:
+            return await interaction.followup.send(
+                embed=create_error_embed(
+                    "No Active Raid",
+                    "This channel is not associated with an active raid. DKP changes can only be made from a raid log thread.",
+                ),
+                ephemeral=True,
+            )
+
+        vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
+        if not vc or not isinstance(vc, discord.VoiceChannel):
+            return await interaction.followup.send(
+                embed=create_error_embed(
+                    "Raid Voice Channel Missing",
+                    "The raid voice channel for this raid could not be found. Please end the raid or recreate it before adjusting DKP.",
+                ),
+                ephemeral=True,
+            )
 
         if member is None:
-            if not vc or not vc.members:
+            if not vc.members:
                 return await interaction.followup.send(
                     "The raid voice channel is empty. No points awarded.",
                     ephemeral=True,
                 )
             targets = [m for m in vc.members if not m.bot]
         else:
-            targets = [] if member.bot else [member]
+            if member.bot or member not in vc.members:
+                return await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Invalid Target",
+                        "DKP can only be adjusted for non-bot members currently in the raid voice channel.",
+                    ),
+                    ephemeral=True,
+                )
+            targets = [member]
+
+        if not targets:
+            return await interaction.followup.send(
+                embed=create_error_embed(
+                    "No Eligible Targets",
+                    "No eligible raid members were found to adjust DKP for.",
+                ),
+                ephemeral=True,
+            )
 
         for m in targets:
             await self.bot.db.modify_user_dkp(
