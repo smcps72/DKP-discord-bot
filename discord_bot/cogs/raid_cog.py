@@ -19,6 +19,30 @@ class RaidCog(commands.Cog):
         # Key: (guild_id, thread_id, leader_id) -> int count
         self._dkp_adjust_counts: dict[tuple[int, int, int], int] = {}
 
+    async def maybe_send_control_panel_ephemeral(
+        self,
+        interaction: discord.Interaction,
+        raid: dict | None = None,
+    ):
+        if not interaction.guild:
+            return
+
+        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+        if not isinstance(thread, discord.Thread):
+            return
+
+        if raid is None:
+            raid = await self.bot.db.get_raid_by_thread(thread.id)
+        if not raid:
+            return
+
+        key = (interaction.guild.id, thread.id, interaction.user.id)
+        current = self._dkp_adjust_counts.get(key, 0) + 1
+        self._dkp_adjust_counts[key] = current
+
+        if current % 4 == 0:
+            await self._send_control_panel_ephemeral(interaction, thread)
+
     async def _send_control_panel_ephemeral(self, interaction: discord.Interaction, thread: discord.Thread):
         """Send the raid control panel as an ephemeral message to the raid leader.
 
@@ -375,7 +399,7 @@ class RaidCog(commands.Cog):
         # Refresh the ephemeral control panel for the raid leader
         thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
         if isinstance(thread, discord.Thread):
-            await self._send_control_panel_ephemeral(interaction, thread)
+            await self.maybe_send_control_panel_ephemeral(interaction, raid=raid)
 
     async def process_dkp_adjustment(
         self,
@@ -503,19 +527,7 @@ class RaidCog(commands.Cog):
         )
         await interaction.followup.send(embed=embed)
 
-        # After a DKP adjustment, optionally re-show the control panel
-        # ephemerally. To avoid spamming, we only show it again after
-        # every 4th adjustment for this raid/leader combination.
-        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
-        if isinstance(thread, discord.Thread) and raid:
-            key = (interaction.guild.id, thread.id, raid["leader_id"])
-            current = self._dkp_adjust_counts.get(key, 0) + 1
-            self._dkp_adjust_counts[key] = current
-
-            if source == "raid_panel":
-                await self._send_control_panel_ephemeral(interaction, thread)
-            elif current % 4 == 0:
-                await self._send_control_panel_ephemeral(interaction, thread)
+        await self.maybe_send_control_panel_ephemeral(interaction, raid=raid)
     async def close_raid(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:

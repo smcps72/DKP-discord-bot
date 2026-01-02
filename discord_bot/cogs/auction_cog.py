@@ -55,7 +55,7 @@ class AuctionCog(commands.Cog):
         raid_cog = self.bot.get_cog("RaidCog")
         if raid_cog:
             try:
-                await raid_cog.send_ephemeral_raid_panel(interaction)
+                await raid_cog.maybe_send_control_panel_ephemeral(interaction, raid=raid)
             except Exception:
                 pass
 
