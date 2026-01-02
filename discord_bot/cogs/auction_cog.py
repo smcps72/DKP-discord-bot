@@ -3,7 +3,7 @@ from discord.ext import commands
 import asyncio
 import logging
 from ..utils import create_info_embed, create_error_embed, create_success_embed
-from ..ui.views import AuctionBidView
+from ..ui.views import AuctionBidView, AuctionOpenPanelView
 
 class AuctionCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -21,30 +21,137 @@ class AuctionCog(commands.Cog):
         if not vc or not vc.members:
             return await interaction.followup.send("Raid voice channel is empty. Cannot start auction.", ephemeral=True)
         # Create auction in DB
-        await self.bot.db.execute(
+        auction_id = await self.bot.db.execute_insert(
             "INSERT INTO auctions (raid_id, item_name) VALUES (?, ?)",
-            (raid['id'], item_name)
+            (raid['id'], item_name),
         )
-        auction_row = await self.bot.db.fetchone("SELECT id FROM auctions WHERE raid_id = ? AND is_active = 1", (raid['id'],))
-        auction_id = auction_row['id']
+
         embed = create_info_embed(
             f"💎 Auction Started: {item_name}",
-            "Bidding is now open! Check your DMs or look for a private message from me to bid."
+            "Bidding is now open!\n\n"
+            "Click **Open Bid Panel** below to get a private (ephemeral) bidding panel."
         )
-        await interaction.followup.send(embed=embed)
-        # Send private bid invites
-        for member in vc.members:
-            if member.bot: continue
-            dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id)
-            bid_embed = create_info_embed(
-                f"Bid on: {item_name}",
-                f"Your current DKP: **{dkp}**\n\nUse the buttons below to place your bid."
+        panel_view = AuctionOpenPanelView(self.bot)
+        msg = await interaction.channel.send(embed=embed, view=panel_view)
+
+        # Always close out the deferred interaction with an ephemeral confirmation.
+        try:
+            await interaction.followup.send("Auction started.", ephemeral=True)
+        except Exception:
+            pass
+
+        # Store the message id so future enhancements (like updating the embed)
+        # can locate the canonical auction message.
+        try:
+            await self.bot.db.execute(
+                "UPDATE auctions SET message_id = ? WHERE id = ?",
+                (msg.id, auction_id),
             )
-            view = AuctionBidView(self.bot, auction_id)
+        except Exception:
+            pass
+
+        # Re-show raid control panel to the leader/admin so "End Auction" is
+        # easy to reach without scrolling.
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog:
             try:
-                await member.send(embed=bid_embed, view=view)
-            except discord.Forbidden:
-                await interaction.channel.send(f"{member.mention}, I can't DM you! Please enable DMs or use this private message to bid.", embed=bid_embed, view=view, ephemeral=True)
+                await raid_cog.send_ephemeral_raid_panel(interaction)
+            except Exception:
+                pass
+
+    async def send_bid_panel(self, interaction: discord.Interaction, auction_id: int):
+        """Send an ephemeral bid panel to the user."""
+        # Get auction details and the associated guild_id (bids may come from DMs)
+        auction_details_query = """
+            SELECT a.*, r.guild_id, r.thread_id
+            FROM auctions a
+            JOIN raids r ON a.raid_id = r.id
+            WHERE a.id = ? AND a.is_active = 1
+        """
+        auction = await self.bot.db.fetchone(auction_details_query, (auction_id,))
+        if not auction:
+            if not interaction.response.is_done():
+                return await interaction.response.send_message("This auction has ended.", ephemeral=True)
+            return await interaction.followup.send("This auction has ended.", ephemeral=True)
+
+        guild_id = auction["guild_id"]
+        user_dkp = await self.bot.db.get_user_dkp(interaction.user.id, guild_id)
+        try:
+            highest_bid = int(auction["highest_bid"] or 0)
+        except Exception:
+            highest_bid = 0
+
+        desc = (
+            f"Your DKP: **{user_dkp}**\n"
+            f"Current high bid: **{highest_bid}**\n\n"
+            "Use **Bid** to place/raise your bid, or **Withdraw Bid** to remove your current top bid."
+        )
+        embed = create_info_embed(f"Bid on: {auction['item_name']}", desc)
+        view = AuctionBidView(self.bot, auction_id)
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    async def withdraw_bid(self, interaction: discord.Interaction, auction_id: int):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        auction_details_query = """
+            SELECT a.*, r.guild_id, r.thread_id
+            FROM auctions a
+            JOIN raids r ON a.raid_id = r.id
+            WHERE a.id = ? AND a.is_active = 1
+        """
+        auction = await self.bot.db.fetchone(auction_details_query, (auction_id,))
+        if not auction:
+            return await interaction.followup.send("This auction has ended.", ephemeral=True)
+
+        try:
+            highest_bidder_id = auction["highest_bidder_id"]
+        except Exception:
+            highest_bidder_id = None
+        if not highest_bidder_id or int(highest_bidder_id) != interaction.user.id:
+            return await interaction.followup.send(
+                "You don't have the current top bid to withdraw.",
+                ephemeral=True,
+            )
+
+        await self.bot.db.execute(
+            "UPDATE auctions SET highest_bid = 0, highest_bidder_id = NULL WHERE id = ?",
+            (auction_id,),
+        )
+
+        # Note: We do not currently track full bid history, so withdrawing the
+        # top bid resets the auction back to 0.
+        try:
+            thread = None
+            try:
+                thread_id = auction["thread_id"]
+            except Exception:
+                thread_id = None
+            if thread_id:
+                thread = self.bot.get_channel(int(thread_id))
+                if thread is None:
+                    thread = await self.bot.fetch_channel(int(thread_id))
+            if thread:
+                await thread.send(
+                    embed=create_info_embed(
+                        "Bid Withdrawn",
+                        f"{interaction.user.mention} withdrew their top bid for **{auction['item_name']}**. Bidding is open again.",
+                    )
+                )
+        except Exception:
+            pass
+
+        await interaction.followup.send(
+            embed=create_success_embed(
+                "Bid Withdrawn",
+                "Your top bid has been removed. You may bid again at any time before the auction ends.",
+            ),
+            ephemeral=True,
+        )
 
     async def process_bid(self, interaction: discord.Interaction, auction_id: int, bid_amount_str: str):
         try:
@@ -57,7 +164,7 @@ class AuctionCog(commands.Cog):
 
         # Get auction details and the associated guild_id to handle bids from DMs
         auction_details_query = """
-            SELECT a.*, r.guild_id 
+            SELECT a.*, r.guild_id, r.thread_id
             FROM auctions a
             JOIN raids r ON a.raid_id = r.id
             WHERE a.id = ? AND a.is_active = 1
@@ -87,7 +194,26 @@ class AuctionCog(commands.Cog):
                 )
                 await previous_bidder.send(embed=outbid_embed)
             except (discord.NotFound, discord.Forbidden):
-                pass # User not found or DMs disabled, safe to ignore
+                # Fall back to a public ping in the raid thread if DMs are disabled.
+                try:
+                    thread = None
+                    try:
+                        thread_id = auction["thread_id"]
+                    except Exception:
+                        thread_id = None
+                    if thread_id:
+                        thread = self.bot.get_channel(int(thread_id))
+                        if thread is None:
+                            thread = await self.bot.fetch_channel(int(thread_id))
+                    if thread:
+                        await thread.send(
+                            embed=create_error_embed(
+                                "You've been outbid!",
+                                f"<@{previous_high_bidder_id}> your bid for **{auction['item_name']}** was surpassed. New high bid: **{bid_amount} DKP**.",
+                            )
+                        )
+                except Exception:
+                    pass
 
         # Update DB with new highest bid
         await self.bot.db.execute(
