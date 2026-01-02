@@ -125,23 +125,14 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         ]
         self.bot.db.get_user_dkp.return_value = 200 # member2 DKP
 
-        # Mock previous high bidder (member1)
-        previous_high_bidder_mock = AsyncMock()
-        previous_high_bidder_mock.id = 123
-        self.bot.fetch_user.return_value = previous_high_bidder_mock
-
         await self.cog.process_bid(self.interaction, auction_id, bid_amount_str)
 
         self.interaction.response.defer.assert_called_once_with(ephemeral=True)
         self.bot.db.fetchone.assert_called_once()
         self.bot.db.get_user_dkp.assert_called_once_with(self.interaction.user.id, 67890)
 
-        # Check notification to previous high bidder
-        self.bot.fetch_user.assert_called_once_with(123)
-        previous_high_bidder_mock.send.assert_called_once()
-        args_prev_bidder, kwargs_prev_bidder = previous_high_bidder_mock.send.call_args
-        self.assertIn("You've been outbid!", kwargs_prev_bidder['embed'].title)
-        self.assertIn("new high bid is **150 DKP**", kwargs_prev_bidder['embed'].description)
+        # Standard edition does not notify the previous high bidder.
+        self.bot.fetch_user.assert_not_called()
 
         # Check DB update
         self.bot.db.execute.assert_called_once_with(
@@ -195,32 +186,8 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.interaction.response.defer.assert_called_once_with(ephemeral=True)
         self.interaction.followup.send.assert_called_once()
         args_followup, kwargs_followup = self.interaction.followup.send.call_args
-        self.assertIn("must bid higher than the current top bid of **100 DKP**", args_followup[0])
+        self.assertIn("must bid higher than the current highest bid", args_followup[0])
         self.assertTrue(kwargs_followup['ephemeral'])
-
-    async def test_process_bid_previous_bidder_dm_fail(self):
-        auction_id = 1
-        bid_amount_str = "150"
-        self.interaction.user.id = 456
-
-        self.bot.db.fetchone.return_value = {'id': auction_id, 'item_name': 'Test Item', 'highest_bid': 100, 'highest_bidder_id': 123, 'is_active': 1, 'guild_id': 67890}
-        self.bot.db.get_user_dkp.return_value = 200
-
-        previous_high_bidder_mock = AsyncMock()
-        previous_high_bidder_mock.id = 123
-        previous_high_bidder_mock.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(), "Cannot send DMs")) # DM fails
-        self.bot.fetch_user.return_value = previous_high_bidder_mock
-
-        await self.cog.process_bid(self.interaction, auction_id, bid_amount_str)
-
-        self.bot.fetch_user.assert_called_once_with(123)
-        previous_high_bidder_mock.send.assert_called_once() # DM was attempted
-        # Verify bid still processes successfully
-        self.bot.db.execute.assert_called_once_with(
-            "UPDATE auctions SET highest_bid = ?, highest_bidder_id = ? WHERE id = ?",
-            (150, self.interaction.user.id, auction_id)
-        )
-        self.interaction.followup.send.assert_called_once() # Bid confirmation sent
 
     async def test_end_auction_from_button_success_with_winner(self):
         # Mock DB calls

@@ -494,13 +494,6 @@ class AuctionBidView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Withdraw Bid", style=discord.ButtonStyle.danger, custom_id="auction_withdraw")
-    async def withdraw(self, interaction: discord.Interaction, button: discord.ui.Button):
-        auction_cog = self.bot.get_cog("AuctionCog")
-        if not auction_cog:
-            return await interaction.response.send_message("Auction module is currently offline.", ephemeral=True)
-        await auction_cog.withdraw_bid(interaction, self.auction_id)
-
 
 class AuctionOpenPanelView(discord.ui.View):
     def __init__(self, bot):

@@ -76,15 +76,10 @@ class AuctionCog(commands.Cog):
 
         guild_id = auction["guild_id"]
         user_dkp = await self.bot.db.get_user_dkp(interaction.user.id, guild_id)
-        try:
-            highest_bid = int(auction["highest_bid"] or 0)
-        except Exception:
-            highest_bid = 0
 
         desc = (
-            f"Your DKP: **{user_dkp}**\n"
-            f"Current high bid: **{highest_bid}**\n\n"
-            "Use **Bid** to place/raise your bid, or **Withdraw Bid** to remove your current top bid."
+            f"Your DKP: **{user_dkp}**\n\n"
+            "Use **Bid** to place/raise your bid. Your bid must be higher than the current highest bid (not shown)."
         )
         embed = create_info_embed(f"Bid on: {auction['item_name']}", desc)
         view = AuctionBidView(self.bot, auction_id)
@@ -93,65 +88,6 @@ class AuctionCog(commands.Cog):
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-    async def withdraw_bid(self, interaction: discord.Interaction, auction_id: int):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        auction_details_query = """
-            SELECT a.*, r.guild_id, r.thread_id
-            FROM auctions a
-            JOIN raids r ON a.raid_id = r.id
-            WHERE a.id = ? AND a.is_active = 1
-        """
-        auction = await self.bot.db.fetchone(auction_details_query, (auction_id,))
-        if not auction:
-            return await interaction.followup.send("This auction has ended.", ephemeral=True)
-
-        try:
-            highest_bidder_id = auction["highest_bidder_id"]
-        except Exception:
-            highest_bidder_id = None
-        if not highest_bidder_id or int(highest_bidder_id) != interaction.user.id:
-            return await interaction.followup.send(
-                "You don't have the current top bid to withdraw.",
-                ephemeral=True,
-            )
-
-        await self.bot.db.execute(
-            "UPDATE auctions SET highest_bid = 0, highest_bidder_id = NULL WHERE id = ?",
-            (auction_id,),
-        )
-
-        # Note: We do not currently track full bid history, so withdrawing the
-        # top bid resets the auction back to 0.
-        try:
-            thread = None
-            try:
-                thread_id = auction["thread_id"]
-            except Exception:
-                thread_id = None
-            if thread_id:
-                thread = self.bot.get_channel(int(thread_id))
-                if thread is None:
-                    thread = await self.bot.fetch_channel(int(thread_id))
-            if thread:
-                await thread.send(
-                    embed=create_info_embed(
-                        "Bid Withdrawn",
-                        f"{interaction.user.mention} withdrew their top bid for **{auction['item_name']}**. Bidding is open again.",
-                    )
-                )
-        except Exception:
-            pass
-
-        await interaction.followup.send(
-            embed=create_success_embed(
-                "Bid Withdrawn",
-                "Your top bid has been removed. You may bid again at any time before the auction ends.",
-            ),
-            ephemeral=True,
-        )
 
     async def process_bid(self, interaction: discord.Interaction, auction_id: int, bid_amount_str: str):
         try:
@@ -176,44 +112,19 @@ class AuctionCog(commands.Cog):
 
         guild_id = auction['guild_id']
         user_dkp = await self.bot.db.get_user_dkp(interaction.user.id, guild_id)
+        try:
+            current_highest_bid = int(auction["highest_bid"] or 0)
+        except Exception:
+            current_highest_bid = 0
         
         if bid_amount > user_dkp:
             return await interaction.followup.send(f"Your bid of **{bid_amount}** exceeds your available DKP of **{user_dkp}**.", ephemeral=True)
         
-        if bid_amount <= auction['highest_bid']:
-            return await interaction.followup.send(f"You must bid higher than the current top bid of **{auction['highest_bid']} DKP**.", ephemeral=True)
-
-        # Notify previous high bidder
-        previous_high_bidder_id = auction['highest_bidder_id']
-        if previous_high_bidder_id and previous_high_bidder_id != interaction.user.id:
-            try:
-                previous_bidder = await self.bot.fetch_user(previous_high_bidder_id)
-                outbid_embed = create_error_embed(
-                    "You've been outbid!",
-                    f"Your bid for **{auction['item_name']}** has been surpassed. The new high bid is **{bid_amount} DKP**."
-                )
-                await previous_bidder.send(embed=outbid_embed)
-            except (discord.NotFound, discord.Forbidden):
-                # Fall back to a public ping in the raid thread if DMs are disabled.
-                try:
-                    thread = None
-                    try:
-                        thread_id = auction["thread_id"]
-                    except Exception:
-                        thread_id = None
-                    if thread_id:
-                        thread = self.bot.get_channel(int(thread_id))
-                        if thread is None:
-                            thread = await self.bot.fetch_channel(int(thread_id))
-                    if thread:
-                        await thread.send(
-                            embed=create_error_embed(
-                                "You've been outbid!",
-                                f"<@{previous_high_bidder_id}> your bid for **{auction['item_name']}** was surpassed. New high bid: **{bid_amount} DKP**.",
-                            )
-                        )
-                except Exception:
-                    pass
+        if bid_amount <= current_highest_bid:
+            return await interaction.followup.send(
+                "You must bid higher than the current highest bid.",
+                ephemeral=True,
+            )
 
         # Update DB with new highest bid
         await self.bot.db.execute(
@@ -224,7 +135,7 @@ class AuctionCog(commands.Cog):
         # Confirm successful bid
         await interaction.followup.send(embed=create_success_embed(
             "Bid Placed Successfully!", 
-            f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** is currently the highest."
+            f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been recorded."
         ), ephemeral=True)
 
     async def end_auction_from_button(self, interaction: discord.Interaction):
