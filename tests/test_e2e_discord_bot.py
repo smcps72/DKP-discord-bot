@@ -39,6 +39,7 @@ TEST_COMMAND = "!help"
 EXPECTED_REPLY_FRAGMENT = "DKP"  # Adjust to something your help text contains
 
 
+@pytest.mark.skip(reason="Disabled: avoid sending !help command via e2e test")
 @pytest.mark.e2e
 @pytest.mark.skipif(
     not (DISCORD_EMAIL and DISCORD_PASSWORD and DISCORD_SERVER_NAME and DISCORD_CHANNEL_NAME),
