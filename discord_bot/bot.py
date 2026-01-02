@@ -20,7 +20,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from discord_bot.database import Database, DB_FILE
-from discord_bot.ui.views import WelcomeView, RaidControlView
+from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelView
 
 # --- Environment Variable Loading ---
 # The bot will look for the .env file in the project root.
@@ -90,6 +90,7 @@ class DkpBot(commands.Bot):
         # Add persistent views
         self.add_view(WelcomeView(self))
         self.add_view(RaidControlView(self))
+        self.add_view(AuctionOpenPanelView(self))
         
         # Sync slash commands
         # In a production bot, you might want to sync only once or on command
@@ -150,8 +151,8 @@ class DkpBot(commands.Bot):
         await super().close()
         if hasattr(self, 'http_session'):
             await self.http_session.close()
-        if hasattr(self.db, 'conn') and self.db.conn:
-            await self.db.conn.close()
+        if hasattr(self, "db") and getattr(self.db, "pool", None):
+            await self.db.pool.close()
 
 # --- Run the Bot ---
 bot = DkpBot()

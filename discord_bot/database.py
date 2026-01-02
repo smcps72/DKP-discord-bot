@@ -128,6 +128,13 @@ class Database:
             (guild_id, user_id, amount, reason)
         )
         logging.info(f"Modified DKP for {user_id} by {amount} in {guild_id}. Reason: {reason}")
+
+    async def get_user_transactions(self, guild_id: int, user_id: int, limit: int = 20):
+        limit = max(1, min(int(limit), 100))
+        return await self.fetchall(
+            "SELECT change, reason, timestamp FROM transactions WHERE guild_id = ? AND user_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (guild_id, user_id, limit),
+        )
     
     async def get_raid_by_thread(self, thread_id):
         return await self.fetchone("SELECT * FROM raids WHERE thread_id = ? AND is_active = 1", (thread_id,))
