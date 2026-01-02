@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright, expect
+
+playwright_sync_api = pytest.importorskip("playwright.sync_api")
+sync_playwright = playwright_sync_api.sync_playwright
+expect = playwright_sync_api.expect
 
 # NOTE: There are AI-assisted Playwright tools (e.g. ZeroStep for JS/TS) that
 # expose an `ai()` helper to run natural-language instructions instead of

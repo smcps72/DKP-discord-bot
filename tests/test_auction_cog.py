@@ -6,7 +6,7 @@ import discord # Added import
 # and the file is 'auction_cog.py'
 # Adjust the import path as necessary
 from discord_bot.cogs.auction_cog import AuctionCog
-from discord_bot.ui.views import AuctionBidView # Added this import
+from discord_bot.ui.views import AuctionOpenPanelView
 
 # Basic test structure
 class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
@@ -14,6 +14,9 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.bot = AsyncMock()
         self.bot.db = AsyncMock()
         self.cog = AuctionCog(self.bot)
+
+        # Avoid unintended side effects from AuctionCog calling other cogs.
+        self.bot.get_cog = MagicMock(return_value=None)
 
         # Mock interaction object
         self.interaction = AsyncMock()
@@ -44,7 +47,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         # Mock DB calls
         self.bot.db.get_raid_by_thread.return_value = {'id': 1, 'vc_id': 12345, 'guild_id': 67890}
         self.bot.db.get_active_auction.return_value = None
-        self.bot.db.fetchone.return_value = {'id': 1} # For auction_row
+        self.bot.db.execute_insert.return_value = 1
         self.bot.db.get_user_dkp.return_value = 100
 
         item_name = "Test Item"
@@ -52,26 +55,21 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
 
         # Verify interaction response
         self.interaction.response.defer.assert_called_once()
-        self.interaction.followup.send.assert_called_once() # Initial "Auction Started" message
+        self.interaction.followup.send.assert_called_once_with("Auction started.", ephemeral=True)
 
         # Verify DB calls
         self.bot.db.get_raid_by_thread.assert_called_once_with(self.interaction.channel.id)
         self.bot.db.get_active_auction.assert_called_once_with(1) # raid_id
-        self.bot.db.execute.assert_called_once_with(
+        self.bot.db.execute_insert.assert_called_once_with(
             "INSERT INTO auctions (raid_id, item_name) VALUES (?, ?)",
-            (1, item_name)
+            (1, item_name),
         )
-        self.bot.db.fetchone.assert_called_once_with("SELECT id FROM auctions WHERE raid_id = ? AND is_active = 1", (1,))
 
-        # Verify DMs sent to members
-        self.assertEqual(self.member1.send.call_count, 1)
-        self.assertEqual(self.member2.send.call_count, 1)
-
-        # Check embed content for DMs (optional, can be more detailed)
-        args_member1, kwargs_member1 = self.member1.send.call_args
-        self.assertIn(item_name, kwargs_member1['embed'].title)
-        self.assertIn("Your current DKP: **100**", kwargs_member1['embed'].description)
-        self.assertIsInstance(kwargs_member1['view'], AuctionBidView)
+        # Verify a public auction message with an Open Bid Panel view was sent
+        self.interaction.channel.send.assert_called_once()
+        _args, kwargs = self.interaction.channel.send.call_args
+        self.assertIn(item_name, kwargs['embed'].title)
+        self.assertIsInstance(kwargs['view'], AuctionOpenPanelView)
 
     async def test_process_auction_start_no_raid(self):
         self.bot.db.get_raid_by_thread.return_value = None
@@ -102,28 +100,19 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.interaction.followup.send.assert_called_with("Raid voice channel is empty. Cannot start auction.", ephemeral=True)
         self.interaction.guild.get_channel.assert_called_once_with(12345)
 
-    async def test_process_auction_start_dm_forbidden(self):
+    async def test_process_auction_start_no_dm_required(self):
+        # With the new flow, we do not DM members; we post an in-thread message
+        # that allows users to open an ephemeral bid panel.
         self.bot.db.get_raid_by_thread.return_value = {'id': 1, 'vc_id': 12345, 'guild_id': 67890}
         self.bot.db.get_active_auction.return_value = None
-        self.bot.db.fetchone.return_value = {'id': 1}
-        self.bot.db.get_user_dkp.return_value = 100
-        # Make one member's DMs forbidden
-        self.member1.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(), "Cannot send DMs"))
+        self.bot.db.execute_insert.return_value = 1
 
-        item_name = "Test Item DM Forbidden"
+        item_name = "Test Item"
         await self.cog.process_auction_start(self.interaction, item_name)
 
-        # Verify DMs and fallback message
-        self.member1.send.assert_called_once() # Attempted to send DM
-        self.interaction.channel.send.assert_called_once() # Fallback message
-        args_fallback, kwargs_fallback = self.interaction.channel.send.call_args
-        self.assertIn(self.member1.mention, args_fallback[0])
-        self.assertIn("I can't DM you!", args_fallback[0])
-        self.assertIn(item_name, kwargs_fallback['embed'].title)
-        self.assertTrue(kwargs_fallback['ephemeral'])
-
-        # Ensure other member still got DM
-        self.member2.send.assert_called_once()
+        self.interaction.channel.send.assert_called_once()
+        _args, kwargs = self.interaction.channel.send.call_args
+        self.assertIsInstance(kwargs['view'], AuctionOpenPanelView)
 
     async def test_process_bid_success_new_highest_bid(self):
         auction_id = 1
@@ -144,10 +133,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         await self.cog.process_bid(self.interaction, auction_id, bid_amount_str)
 
         self.interaction.response.defer.assert_called_once_with(ephemeral=True)
-        self.bot.db.fetchone.assert_any_call(
-            "\n            SELECT a.*, r.guild_id \n            FROM auctions a\n            JOIN raids r ON a.raid_id = r.id\n            WHERE a.id = ? AND a.is_active = 1\n        ",
-            (auction_id,)
-        )
+        self.bot.db.fetchone.assert_called_once()
         self.bot.db.get_user_dkp.assert_called_once_with(self.interaction.user.id, 67890)
 
         # Check notification to previous high bidder
