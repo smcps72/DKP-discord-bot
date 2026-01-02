@@ -37,6 +37,51 @@ class UserCog(commands.Cog):
     async def my_dkp_cmd(self, interaction: discord.Interaction):
         await self.show_my_dkp(interaction)
 
+    @app_commands.command(name="my_history", description="View your recent DKP history.")
+    @app_commands.describe(limit="How many transactions to show (1-25)")
+    async def my_history_cmd(self, interaction: discord.Interaction, limit: int = 10):
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
+        limit = max(1, min(int(limit), 25))
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        rows = await self.bot.db.get_user_transactions(guild.id, interaction.user.id, limit=limit)
+        if not rows:
+            return await interaction.followup.send("No DKP history found yet.", ephemeral=True)
+
+        lines: list[str] = []
+        for r in rows:
+            change = r["change"]
+            reason = (r["reason"] or "").strip()
+            ts = r["timestamp"]
+
+            sign = "+" if isinstance(change, int) and change > 0 else ""
+            short_reason = reason
+            if len(short_reason) > 120:
+                short_reason = short_reason[:117] + "..."
+
+            lines.append(f"`{ts}`  **{sign}{change}**  {short_reason}")
+
+        embed = create_info_embed(
+            "Your DKP History",
+            "\n".join(lines),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     async def show_auction_help(self, interaction: discord.Interaction):
         # Ensure this command is used in a guild context
         guild = getattr(interaction, "guild", None)
