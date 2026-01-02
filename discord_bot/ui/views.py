@@ -51,7 +51,7 @@ class DKPAdjustmentView(discord.ui.View):
         self.action = action
         self.add_item(MemberSelect(bot, action, members))
 
-    @discord.ui.button(label="All in VC", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="All in Voice Channel", style=discord.ButtonStyle.primary)
     async def all_in_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
         modal = DKPAdjustmentModal(
@@ -277,9 +277,12 @@ class RaidControlView(discord.ui.View):
                 "raid_end_auction",
                 "raid_close_raid",
             }
+            to_remove: list[discord.ui.Item] = []
             for child in self.children:
                 if isinstance(child, discord.ui.Button) and child.custom_id in leader_only_ids:
-                    child.disabled = True
+                    to_remove.append(child)
+            for child in to_remove:
+                self.remove_item(child)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # On bot startup, interaction_check can be called with a mock interaction
@@ -474,7 +477,7 @@ class RaidControlView(discord.ui.View):
 
 class AuctionBidView(discord.ui.View):
     def __init__(self, bot, auction_id):
-        super().__init__(timeout=300) # 5 minute timeout for bidding
+        super().__init__(timeout=None)
         self.bot = bot
         self.auction_id = auction_id
 
@@ -486,5 +489,45 @@ class AuctionBidView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="auction_cancel")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("You have chosen not to bid.", ephemeral=True)
-        self.stop()
+        await interaction.response.send_message(
+            "No problem — you can still place a bid later using the **Bid** button (until the auction ends).",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Withdraw Bid", style=discord.ButtonStyle.danger, custom_id="auction_withdraw")
+    async def withdraw(self, interaction: discord.Interaction, button: discord.ui.Button):
+        auction_cog = self.bot.get_cog("AuctionCog")
+        if not auction_cog:
+            return await interaction.response.send_message("Auction module is currently offline.", ephemeral=True)
+        await auction_cog.withdraw_bid(interaction, self.auction_id)
+
+
+class AuctionOpenPanelView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    @discord.ui.button(label="Open Bid Panel", style=discord.ButtonStyle.primary, custom_id="auction_open_panel")
+    async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        auction_cog = self.bot.get_cog("AuctionCog")
+        if not auction_cog:
+            return await interaction.response.send_message("Auction module is currently offline.", ephemeral=True)
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+        msg = getattr(interaction, "message", None)
+        msg_id = getattr(msg, "id", None)
+        if not msg_id:
+            return await interaction.followup.send("Could not resolve this auction message.", ephemeral=True)
+
+        auction = await self.bot.db.fetchone(
+            "SELECT id FROM auctions WHERE message_id = ? AND is_active = 1",
+            (int(msg_id),),
+        )
+        if not auction:
+            return await interaction.followup.send("This auction has ended.", ephemeral=True)
+
+        await auction_cog.send_bid_panel(interaction, int(auction["id"]))

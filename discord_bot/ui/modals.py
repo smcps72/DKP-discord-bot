@@ -34,7 +34,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
 
         # Only add the text input if no member was pre-selected
         self.target_member_input = None
-        if member is None:
+        if member is None and source != "raid_panel":
             self.target_member_input = TextInput(
                 label="Target Member Name (optional)",
                 placeholder="Leave blank to adjust everyone in VC",
