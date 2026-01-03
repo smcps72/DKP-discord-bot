@@ -142,7 +142,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         # Check bid confirmation
         self.interaction.followup.send.assert_called_once()
         args_confirm, kwargs_confirm = self.interaction.followup.send.call_args
-        self.assertIn("Bid Placed Successfully!", kwargs_confirm['embed'].title)
+        self.assertIn("Bid Submitted", kwargs_confirm['embed'].title)
         self.assertIn("Your bid of **150 DKP**", kwargs_confirm['embed'].description)
         self.assertTrue(kwargs_confirm['ephemeral'])
 
@@ -186,7 +186,8 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.interaction.response.defer.assert_called_once_with(ephemeral=True)
         self.interaction.followup.send.assert_called_once()
         args_followup, kwargs_followup = self.interaction.followup.send.call_args
-        self.assertIn("must bid higher than the current highest bid", args_followup[0])
+        self.assertIn("Bid Submitted", kwargs_followup['embed'].title)
+        self.assertIn("Your bid of **100 DKP**", kwargs_followup['embed'].description)
         self.assertTrue(kwargs_followup['ephemeral'])
 
     async def test_end_auction_from_button_success_with_winner(self):

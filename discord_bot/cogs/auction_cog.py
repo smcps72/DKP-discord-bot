@@ -122,7 +122,10 @@ class AuctionCog(commands.Cog):
         
         if bid_amount <= current_highest_bid:
             return await interaction.followup.send(
-                "You must bid higher than the current highest bid.",
+                embed=create_success_embed(
+                    "Bid Submitted",
+                    f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been received.",
+                ),
                 ephemeral=True,
             )
 
@@ -134,8 +137,8 @@ class AuctionCog(commands.Cog):
 
         # Confirm successful bid
         await interaction.followup.send(embed=create_success_embed(
-            "Bid Placed Successfully!", 
-            f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been recorded."
+            "Bid Submitted",
+            f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been received."
         ), ephemeral=True)
 
     async def end_auction_from_button(self, interaction: discord.Interaction):
