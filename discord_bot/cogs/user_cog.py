@@ -33,6 +33,13 @@ class UserCog(commands.Cog):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog:
+            try:
+                await raid_cog.maybe_send_control_panel_ephemeral(interaction)
+            except Exception:
+                pass
+
     @app_commands.command(name="my_dkp", description="Check your DKP balance.")
     async def my_dkp_cmd(self, interaction: discord.Interaction):
         await self.show_my_dkp(interaction)

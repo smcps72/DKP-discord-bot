@@ -89,6 +89,13 @@ class AuctionCog(commands.Cog):
         else:
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog:
+            try:
+                await raid_cog.maybe_send_control_panel_ephemeral(interaction)
+            except Exception:
+                pass
+
     async def process_bid(self, interaction: discord.Interaction, auction_id: int, bid_amount_str: str):
         try:
             bid_amount = int(bid_amount_str)
@@ -118,16 +125,35 @@ class AuctionCog(commands.Cog):
             current_highest_bid = 0
         
         if bid_amount > user_dkp:
-            return await interaction.followup.send(f"Your bid of **{bid_amount}** exceeds your available DKP of **{user_dkp}**.", ephemeral=True)
+            await interaction.followup.send(
+                f"Your bid of **{bid_amount}** exceeds your available DKP of **{user_dkp}**.",
+                ephemeral=True,
+            )
+
+            raid_cog = self.bot.get_cog("RaidCog")
+            if raid_cog:
+                try:
+                    await raid_cog.maybe_send_control_panel_ephemeral(interaction)
+                except Exception:
+                    pass
+            return
         
         if bid_amount <= current_highest_bid:
-            return await interaction.followup.send(
+            await interaction.followup.send(
                 embed=create_success_embed(
                     "Bid Submitted",
                     f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been received.",
                 ),
                 ephemeral=True,
             )
+
+            raid_cog = self.bot.get_cog("RaidCog")
+            if raid_cog:
+                try:
+                    await raid_cog.maybe_send_control_panel_ephemeral(interaction)
+                except Exception:
+                    pass
+            return
 
         # Update DB with new highest bid
         await self.bot.db.execute(
@@ -140,6 +166,13 @@ class AuctionCog(commands.Cog):
             "Bid Submitted",
             f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been received."
         ), ephemeral=True)
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog:
+            try:
+                await raid_cog.maybe_send_control_panel_ephemeral(interaction)
+            except Exception:
+                pass
 
     async def end_auction_from_button(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)

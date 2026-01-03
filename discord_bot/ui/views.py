@@ -367,6 +367,13 @@ class RaidControlView(discord.ui.View):
         view = DKPAdjustmentView(self.bot, action, members)
         await interaction.followup.send(f"Who do you want to {action.lower()} DKP?", view=view, ephemeral=True)
 
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog:
+            try:
+                await raid_cog.maybe_send_control_panel_ephemeral(interaction, raid=raid)
+            except Exception:
+                pass
+
     @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_award_dkp", row=0)
     async def award_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._show_dkp_adjustment_view(interaction, "Award")

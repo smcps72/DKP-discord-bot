@@ -27,13 +27,32 @@ class RaidCog(commands.Cog):
         if not interaction.guild:
             return
 
+        if not isinstance(interaction.user, discord.Member):
+            return
+
         thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+        if not isinstance(thread, discord.Thread):
+            channel_id = getattr(interaction, "channel_id", None)
+            if channel_id:
+                try:
+                    resolved = self.bot.get_channel(int(channel_id))
+                    if resolved is None:
+                        resolved = await self.bot.fetch_channel(int(channel_id))
+                    if isinstance(resolved, discord.Thread):
+                        thread = resolved
+                except Exception:
+                    return
+
         if not isinstance(thread, discord.Thread):
             return
 
         if raid is None:
             raid = await self.bot.db.get_raid_by_thread(thread.id)
         if not raid:
+            return
+
+        is_admin = interaction.user.guild_permissions.administrator
+        if interaction.user.id != raid["leader_id"] and not is_admin:
             return
 
         key = (interaction.guild.id, thread.id, interaction.user.id)
