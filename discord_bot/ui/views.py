@@ -494,13 +494,6 @@ class AuctionBidView(discord.ui.View):
         modal = BidModal(auction_cog=auction_cog, auction_id=self.auction_id)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="auction_cancel")
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "No problem — you can still place a bid later using the **Bid** button (until the auction ends).",
-            ephemeral=True,
-        )
-
 
 class AuctionOpenPanelView(discord.ui.View):
     def __init__(self, bot):
