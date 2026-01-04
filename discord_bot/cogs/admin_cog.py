@@ -105,6 +105,59 @@ class AdminCog(commands.Cog):
         embed = create_info_embed("Raid DKP", description)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    @app_commands.command(name="raid_status", description="Show status of the current raid and any active auction.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def raid_status_cmd(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send(
+                "This channel is not associated with an active raid.",
+                ephemeral=True,
+            )
+
+        auction = await self.bot.db.get_active_auction(raid["id"])
+        auction_summary = "No active auction for this raid."
+        if auction:
+            stats = await self.bot.db.fetchone(
+                "SELECT COUNT(*) AS bid_count, MAX(amount) AS max_bid FROM auction_bids WHERE auction_id = ?",
+                (auction["id"],),
+            )
+            bid_count = stats["bid_count"] if stats and "bid_count" in stats.keys() else 0
+            max_bid = stats["max_bid"] if stats and "max_bid" in stats.keys() and stats["max_bid"] is not None else 0
+            auction_summary = (
+                f"Auction ID: `{auction['id']}`\n"
+                f"Item: **{auction['item_name']}**\n"
+                f"Bids: `{bid_count}`\n"
+                f"Highest Bid: `{max_bid}`"
+            )
+
+        desc = (
+            f"**Raid ID:** `{raid['id']}`\n"
+            f"**Guild ID:** `{raid['guild_id']}`\n"
+            f"**Leader ID:** `{raid['leader_id']}`\n"
+            f"**Voice Channel ID:** `{raid['vc_id']}`\n"
+            f"**Thread ID:** `{raid['thread_id']}`\n"
+            f"**Created At:** `{raid['created_at']}`\n\n"
+            f"{auction_summary}"
+        )
+        embed = create_info_embed("Raid Status", desc)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     @app_commands.command(name="server_points", description="Show DKP for all members in this server.")
     @app_commands.describe(member="(Optional) Show DKP for a single member in this server.")
     async def server_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):

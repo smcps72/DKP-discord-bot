@@ -44,6 +44,59 @@ class UserCog(commands.Cog):
     async def my_dkp_cmd(self, interaction: discord.Interaction):
         await self.show_my_dkp(interaction)
 
+    @app_commands.command(name="my_bid", description="Check your bid in the active raid auction (if any).")
+    async def my_bid_cmd(self, interaction: discord.Interaction):
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "This command can only be used inside a server.",
+                    ephemeral=True,
+                )
+            return
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send(
+                "This channel is not associated with an active raid.",
+                ephemeral=True,
+            )
+
+        auction = await self.bot.db.get_active_auction(raid["id"])
+        if not auction:
+            return await interaction.followup.send(
+                "There is no active auction for this raid.",
+                ephemeral=True,
+            )
+
+        bid_row = await self.bot.db.get_user_auction_bid(auction["id"], interaction.user.id)
+        if not bid_row:
+            return await interaction.followup.send(
+                "You have not placed a bid for this auction yet.",
+                ephemeral=True,
+            )
+
+        try:
+            bid_amount = int(bid_row["amount"])
+        except (KeyError, TypeError, ValueError):
+            bid_amount = bid_row["amount"] if isinstance(bid_row, dict) and "amount" in bid_row else "Unknown"
+
+        desc = (
+            f"Raid ID: `{raid['id']}`\n"
+            f"Auction Item: **{auction['item_name']}**\n"
+            f"Your Bid: **{bid_amount} DKP**"
+        )
+        embed = create_info_embed("Your Current Auction Bid", desc)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     @app_commands.command(name="my_history", description="View your recent DKP history.")
     @app_commands.describe(limit="How many transactions to show (1-25)")
     async def my_history_cmd(self, interaction: discord.Interaction, limit: int = 10):

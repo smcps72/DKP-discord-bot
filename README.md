@@ -12,6 +12,7 @@ This project contains a fully functional Discord DKP Bot as specified.
 - Subscription-based activation checked against a simple licensing server.
 - Slash commands and buttons for all major actions.
 - Administrative commands for status checks and history export.
+ - Immutable raid log snapshots with hash-based tamper detection and verification.
 
 ## How to Run
 
@@ -83,6 +84,30 @@ cd discord_bot
 python bot.py
 ```
 
+### Live Auction Logging (Optional)
+
+While the bot is running, you can follow the new structured auction logs (tagged with `auction_flow`) to debug button and bidding issues in real time.
+
+If you are logging to a file (recommended in production), for example `logs/dkp-bot.log`:
+
+```bash
+tail -F logs/dkp-bot.log | grep --line-buffered "auction_flow"
+```
+
+To focus on a specific user (replace `123456789` with their Discord user ID):
+
+```bash
+tail -F logs/dkp-bot.log \
+  | grep --line-buffered "auction_flow" \
+  | grep --line-buffered "user_id=123456789"
+```
+
+If you run the bot directly in a terminal without a log file, you can pipe output through `grep`:
+
+```bash
+python bot.py 2>&1 | grep --line-buffered "auction_flow"
+```
+
 ### 4. Inviting the Bot
 - Go to your Bot's page in the Discord Developer Portal.
 - Go to OAuth2 -> URL Generator.
@@ -108,3 +133,26 @@ Once invited, the bot will automatically set up its channels. The Admin ⚙️ b
 
 - Use `/award_dkp <member> <points> [reason]` to grant DKP to a single user.
 - The "Award DKP" button in a raid thread now includes a field for an optional target member. Leave it blank to adjust everyone in the raid voice channel.
+
+### Immutable Raid Logs and Verification
+
+- When a raid is closed via the control panel, the bot records a **canonical JSON snapshot** of the raid into the database.
+- This snapshot includes raid metadata, participants, and their DKP at the time of closure.
+- A **SHA-256 hash** of this JSON is stored alongside the snapshot. This allows you to detect any tampering with the stored data.
+- Administrators can run `/raid_verify` inside a raid's log thread to recompute the hash and confirm that the stored JSON has not been altered.
+  - If the hashes match, the command returns an "OK" result.
+  - If they do not match, the command reports a **mismatch** along with both hashes.
+
+### Optional External Anchoring (Advanced)
+
+The bot can optionally call out to external services to anchor raid logs beyond the local database:
+
+- **IPFS / Storage Service**: The full JSON snapshot and hash can be POSTed to an HTTP endpoint that you control. That service can pin the data to IPFS or any other storage layer.
+- **EVM / Blockchain Service**: The hash can be POSTed to a separate HTTP endpoint that writes it on-chain (e.g., via a smart contract) and returns a transaction hash.
+
+These integrations are fully disabled by default. To enable them, configure the following environment variables (see `.env.example`):
+
+- `RAIDLOG_IPFS_ENABLED` / `RAIDLOG_IPFS_ENDPOINT` / `RAIDLOG_IPFS_AUTH_HEADER`
+- `RAIDLOG_EVM_ENABLED` / `RAIDLOG_EVM_ENDPOINT`
+
+If the endpoints are unreachable or return errors, raid closure and local logging will still succeed; the bot simply logs a warning.

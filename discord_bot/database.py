@@ -1,6 +1,7 @@
 import aiosqlite
 import logging
 import os
+import asyncio
 
 # Allow overriding the database file path via environment variable so that
 # production deployments (e.g., Railway) can store the SQLite file on a
@@ -103,22 +104,89 @@ class Database:
 
     # Generic execute/fetch methods
     async def execute(self, sql, params=()):
-        async with self.pool.execute(sql, params) as cursor:
-            await self.pool.commit()
+        attempts = 3
+        delay = 0.2
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(sql, params) as cursor:
+                    await self.pool.commit()
+                return
+            except (aiosqlite.OperationalError, OSError) as e:
+                if attempt == attempts - 1:
+                    logging.error("DB execute failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB execute error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
 
     async def execute_insert(self, sql, params=()):
         """Execute an insert statement and return the last row id."""
-        async with self.pool.execute(sql, params) as cursor:
-            await self.pool.commit()
-            return cursor.lastrowid
+        attempts = 3
+        delay = 0.2
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(sql, params) as cursor:
+                    await self.pool.commit()
+                    return cursor.lastrowid
+            except (aiosqlite.OperationalError, OSError) as e:
+                last_error = e
+                if attempt == attempts - 1:
+                    logging.error("DB insert failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB insert error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
 
     async def fetchone(self, sql, params=()):
-        async with self.pool.execute(sql, params) as cursor:
-            return await cursor.fetchone()
+        attempts = 3
+        delay = 0.2
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(sql, params) as cursor:
+                    return await cursor.fetchone()
+            except (aiosqlite.OperationalError, OSError) as e:
+                if attempt == attempts - 1:
+                    logging.error("DB fetchone failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB fetchone error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
 
     async def fetchall(self, sql, params=()):
-        async with self.pool.execute(sql, params) as cursor:
-            return await cursor.fetchall()
+        attempts = 3
+        delay = 0.2
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(sql, params) as cursor:
+                    return await cursor.fetchall()
+            except (aiosqlite.OperationalError, OSError) as e:
+                if attempt == attempts - 1:
+                    logging.error("DB fetchall failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB fetchall error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
 
     # ... add specific helper methods as needed below ...
     
