@@ -1,4 +1,4 @@
-
+.env
 .env.local
 .env.backup
 venv/
@@ -18,3 +18,8 @@ backups
 todo list.txt
 \#\# Scenario 5 – Alts and Mains
 
+getting first users.txt
+Early user acquisition strategy.txt
+loot modes.md
+Concrete next steps for your bot
+.env
