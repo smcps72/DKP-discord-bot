@@ -272,21 +272,29 @@ class RaidCog(commands.Cog):
             # Bring members from the General voice channel into the raid log thread.
             general_vc = None
 
-            # Prefer a channel actually named "General" (case-insensitive).
+            # Prefer a dedicated "Raid Lobby" style channel if one exists.
             for channel in interaction.guild.voice_channels:
-                if channel.name.lower() == "general":
+                name = channel.name.lower()
+                if "raid" in name and "lobby" in name:
                     general_vc = channel
                     break
+
+            # If no dedicated lobby was found, fall back to a channel named "General" (case-insensitive).
+            if general_vc is None:
+                for channel in interaction.guild.voice_channels:
+                    if channel.name.lower() == "general":
+                        general_vc = channel
+                        break
 
             if isinstance(general_vc, discord.VoiceChannel):
                 general_members = [m for m in general_vc.members if not m.bot]
                 if general_members:
-                    # Move everyone from General into the new raid voice channel.
+                    # Move everyone from the lobby/general into the new raid voice channel.
                     for member in list(general_members):
                         if not member.voice or member.voice.channel == new_vc:
                             continue
                         try:
-                            await member.move_to(new_vc, reason="Raid started - moving from General to raid VC.")
+                            await member.move_to(new_vc, reason="Raid started - moving from lobby to raid VC.")
                         except discord.HTTPException:
                             # Ignore move failures (e.g., missing perms or user disconnects).
                             pass
@@ -294,7 +302,7 @@ class RaidCog(commands.Cog):
                     # Then mention them in the raid log thread so they can easily jump to it.
                     mentions = " ".join(m.mention for m in general_members)
                     await thread.send(
-                        f"{mentions}\nYou were in General when this raid started. This is the active raid log thread."
+                        f"{mentions}\nYou were in the raid lobby when this raid started. This is the active raid log thread."
                     )
 
             # After the thread exists, edit the original raid message to ping

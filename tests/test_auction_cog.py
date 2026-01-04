@@ -114,31 +114,28 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         _args, kwargs = self.interaction.channel.send.call_args
         self.assertIsInstance(kwargs['view'], AuctionOpenPanelView)
 
-    async def test_process_bid_success_new_highest_bid(self):
+    async def test_process_bid_records_single_bid_and_confirms(self):
         auction_id = 1
         bid_amount_str = "150"
-        self.interaction.user.id = 456 # member2 is bidding
+        self.interaction.user.id = 456  # member2 is bidding
 
         # Mock DB calls
-        self.bot.db.fetchone.side_effect = [
-            {'id': auction_id, 'item_name': 'Test Item', 'highest_bid': 100, 'highest_bidder_id': 123, 'is_active': 1, 'guild_id': 67890}, # auction details
-        ]
-        self.bot.db.get_user_dkp.return_value = 200 # member2 DKP
+        self.bot.db.fetchone.return_value = {
+            'id': auction_id,
+            'item_name': 'Test Item',
+            'is_active': 1,
+            'guild_id': 67890,
+        }
+        self.bot.db.get_user_dkp.return_value = 200  # member2 DKP
+        self.bot.db.get_user_auction_bid.return_value = None
 
         await self.cog.process_bid(self.interaction, auction_id, bid_amount_str)
 
         self.interaction.response.defer.assert_called_once_with(ephemeral=True)
-        self.bot.db.fetchone.assert_called_once()
         self.bot.db.get_user_dkp.assert_called_once_with(self.interaction.user.id, 67890)
+        self.bot.db.get_user_auction_bid.assert_called_once_with(auction_id, self.interaction.user.id)
+        self.bot.db.record_auction_bid.assert_called_once_with(auction_id, self.interaction.user.id, int(bid_amount_str))
 
-        # Standard edition does not notify the previous high bidder.
-        self.bot.fetch_user.assert_not_called()
-
-        # Check DB update
-        self.bot.db.execute.assert_called_once_with(
-            "UPDATE auctions SET highest_bid = ?, highest_bidder_id = ? WHERE id = ?",
-            (150, self.interaction.user.id, auction_id)
-        )
         # Check bid confirmation
         self.interaction.followup.send.assert_called_once()
         args_confirm, kwargs_confirm = self.interaction.followup.send.call_args
@@ -175,19 +172,28 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs_followup['ephemeral'])
 
 
-    async def test_process_bid_too_low(self):
+    async def test_process_bid_second_bid_rejected(self):
         auction_id = 1
         self.interaction.user.id = 456
-        self.bot.db.fetchone.return_value = {'id': auction_id, 'item_name': 'Test Item', 'highest_bid': 100, 'highest_bidder_id': 123, 'is_active': 1, 'guild_id': 67890}
+        self.bot.db.fetchone.return_value = {
+            'id': auction_id,
+            'item_name': 'Test Item',
+            'is_active': 1,
+            'guild_id': 67890,
+        }
         self.bot.db.get_user_dkp.return_value = 200
+        # Simulate an existing bid already recorded for this user.
+        self.bot.db.get_user_auction_bid.return_value = {'amount': 150}
 
-        await self.cog.process_bid(self.interaction, auction_id, "100") # Bid is equal to current highest
+        await self.cog.process_bid(self.interaction, auction_id, "100")
 
         self.interaction.response.defer.assert_called_once_with(ephemeral=True)
+        self.bot.db.record_auction_bid.assert_not_called()
+
         self.interaction.followup.send.assert_called_once()
         args_followup, kwargs_followup = self.interaction.followup.send.call_args
-        self.assertIn("Bid Submitted", kwargs_followup['embed'].title)
-        self.assertIn("Your bid of **100 DKP**", kwargs_followup['embed'].description)
+        self.assertIn("Bid Already Placed", kwargs_followup['embed'].title)
+        self.assertIn("Only your first bid counts.", kwargs_followup['embed'].description)
         self.assertTrue(kwargs_followup['ephemeral'])
 
     async def test_end_auction_from_button_success_with_winner(self):
@@ -195,8 +201,13 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         guild_id_value = 67890
         self.interaction.guild.id = guild_id_value # Ensure guild.id is set
         self.bot.db.get_raid_by_thread.return_value = {'id': 1, 'guild_id': guild_id_value}
-        auction_data = {'id': 1, 'item_name': 'Shiny Sword', 'highest_bid': 200, 'highest_bidder_id': self.member1.id, 'is_active': 1}
+        auction_data = {'id': 1, 'item_name': 'Shiny Sword', 'is_active': 1}
         self.bot.db.get_active_auction.return_value = auction_data
+
+        # One winning bid recorded for member1
+        self.bot.db.fetchall.return_value = [
+            {'user_id': self.member1.id, 'amount': 200, 'created_at': '2025-01-01T00:00:00'},
+        ]
 
         # Mock guild.get_member to return the winner
         self.interaction.guild.get_member.return_value = self.member1
@@ -212,8 +223,8 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         # Verify DKP deduction
         self.bot.db.modify_user_dkp.assert_called_once_with(
             self.member1.id,
-            self.interaction.guild.id, # Should be interaction.guild.id
-            -auction_data['highest_bid'],
+            self.interaction.guild.id,  # Should be interaction.guild.id
+            -200,
             f"Won auction for {auction_data['item_name']}"
         )
 
@@ -223,17 +234,18 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         embed = kwargs_followup['embed']
         self.assertIn(f"Auction Concluded: {auction_data['item_name']}", embed.title)
         self.assertIn(f"Congratulations to {self.member1.mention}", embed.description)
-        self.assertIn(f"winning with a bid of **{auction_data['highest_bid']} DKP**", embed.description)
+        self.assertIn("winning with a bid of **200 DKP**", embed.description)
 
     async def test_end_auction_from_button_no_bids(self):
         self.bot.db.get_raid_by_thread.return_value = {'id': 1}
-        auction_data_no_bids = {'id': 1, 'item_name': 'Dusty Shield', 'highest_bid': 0, 'highest_bidder_id': None, 'is_active': 1}
+        auction_data_no_bids = {'id': 1, 'item_name': 'Dusty Shield', 'is_active': 1}
         self.bot.db.get_active_auction.return_value = auction_data_no_bids
+        self.bot.db.fetchall.return_value = []
 
         await self.cog.end_auction_from_button(self.interaction)
 
         self.bot.db.execute.assert_called_once_with("UPDATE auctions SET is_active = 0 WHERE id = ?", (auction_data_no_bids['id'],))
-        self.bot.db.modify_user_dkp.assert_not_called() # No DKP change
+        self.bot.db.modify_user_dkp.assert_not_called()  # No DKP change
 
         self.interaction.followup.send.assert_called_once()
         args_followup, kwargs_followup = self.interaction.followup.send.call_args
@@ -263,8 +275,13 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.interaction.guild.id = guild_id_value # Ensure guild.id is set
         self.bot.db.get_raid_by_thread.return_value = {'id': 1, 'guild_id': guild_id_value}
         winner_id_left_guild = 999
-        auction_data = {'id': 1, 'item_name': 'Vanished Relic', 'highest_bid': 50, 'highest_bidder_id': winner_id_left_guild, 'is_active': 1}
+        auction_data = {'id': 1, 'item_name': 'Vanished Relic', 'is_active': 1}
         self.bot.db.get_active_auction.return_value = auction_data
+
+        # Winner has the only bid but is no longer in the guild
+        self.bot.db.fetchall.return_value = [
+            {'user_id': winner_id_left_guild, 'amount': 50, 'created_at': '2025-01-01T00:00:00'},
+        ]
 
         self.interaction.guild.get_member.return_value = None # Winner not found in guild
 
@@ -272,7 +289,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
 
         self.bot.db.modify_user_dkp.assert_called_once_with(
             winner_id_left_guild,
-            self.interaction.guild.id, # Should be interaction.guild.id
+            self.interaction.guild.id,  # Should be interaction.guild.id
             -50,
             f"Won auction for {auction_data['item_name']}"
         )
@@ -280,7 +297,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.interaction.channel.send.assert_called_once()
         args_followup, kwargs_followup = self.interaction.channel.send.call_args
         embed = kwargs_followup['embed']
-        self.assertIn(f"User ID: {winner_id_left_guild}", embed.description) # Fallback to User ID
+        self.assertIn(f"User ID: {winner_id_left_guild}", embed.description)  # Fallback to User ID
 
 
 if __name__ == '__main__':

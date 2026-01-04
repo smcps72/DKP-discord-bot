@@ -79,7 +79,8 @@ class AuctionCog(commands.Cog):
 
         desc = (
             f"Your DKP: **{user_dkp}**\n\n"
-            "Use **Bid** to place/raise your bid. Your bid must be higher than the current highest bid (not shown)."
+            "Use **Bid** to place your single secret bid for this item. "
+            "You can bid any positive amount up to your available DKP; only your first bid counts."
         )
         embed = create_info_embed(f"Bid on: {auction['item_name']}", desc)
         view = AuctionBidView(self.bot, auction_id)
@@ -99,7 +100,8 @@ class AuctionCog(commands.Cog):
     async def process_bid(self, interaction: discord.Interaction, auction_id: int, bid_amount_str: str):
         try:
             bid_amount = int(bid_amount_str)
-            if bid_amount <= 0: raise ValueError
+            if bid_amount <= 0:
+                raise ValueError
         except ValueError:
             return await interaction.response.send_message("Bid must be a positive number.", ephemeral=True)
 
@@ -117,13 +119,9 @@ class AuctionCog(commands.Cog):
         if not auction:
             return await interaction.followup.send("This auction has ended.", ephemeral=True)
 
-        guild_id = auction['guild_id']
+        guild_id = auction["guild_id"]
         user_dkp = await self.bot.db.get_user_dkp(interaction.user.id, guild_id)
-        try:
-            current_highest_bid = int(auction["highest_bid"] or 0)
-        except Exception:
-            current_highest_bid = 0
-        
+
         if bid_amount > user_dkp:
             await interaction.followup.send(
                 f"Your bid of **{bid_amount}** exceeds your available DKP of **{user_dkp}**.",
@@ -137,12 +135,15 @@ class AuctionCog(commands.Cog):
                 except Exception:
                     pass
             return
-        
-        if bid_amount <= current_highest_bid:
+
+        # Enforce a single bid per user per auction.
+        existing_bid = await self.bot.db.get_user_auction_bid(auction_id, interaction.user.id)
+        if existing_bid is not None:
             await interaction.followup.send(
                 embed=create_success_embed(
-                    "Bid Submitted",
-                    f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been received.",
+                    "Bid Already Placed",
+                    "You have already placed a bid for this auction. "
+                    "Only your first bid counts.",
                 ),
                 ephemeral=True,
             )
@@ -155,17 +156,17 @@ class AuctionCog(commands.Cog):
                     pass
             return
 
-        # Update DB with new highest bid
-        await self.bot.db.execute(
-            "UPDATE auctions SET highest_bid = ?, highest_bidder_id = ? WHERE id = ?",
-            (bid_amount, interaction.user.id, auction_id)
-        )
+        # Record the user's single bid without revealing any information about
+        # other bidders or bid ordering.
+        await self.bot.db.record_auction_bid(auction_id, interaction.user.id, bid_amount)
 
-        # Confirm successful bid
-        await interaction.followup.send(embed=create_success_embed(
-            "Bid Submitted",
-            f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been received."
-        ), ephemeral=True)
+        await interaction.followup.send(
+            embed=create_success_embed(
+                "Bid Submitted",
+                f"Your bid of **{bid_amount} DKP** for **{auction['item_name']}** has been received.",
+            ),
+            ephemeral=True,
+        )
 
         raid_cog = self.bot.get_cog("RaidCog")
         if raid_cog:
@@ -185,21 +186,44 @@ class AuctionCog(commands.Cog):
 
         # Deactivate auction
         await self.bot.db.execute("UPDATE auctions SET is_active = 0 WHERE id = ?", (auction['id'],))
+        # Determine the winner based on recorded bids instead of a mutable
+        # highest_bid field on the auction itself.
+        bids = await self.bot.db.fetchall(
+            "SELECT user_id, amount, created_at FROM auction_bids WHERE auction_id = ?",
+            (auction["id"],),
+        )
 
-        if not auction['highest_bidder_id']:
-            embed = create_info_embed("Auction Ended", f"The auction for **{auction['item_name']}** has ended with no bids.")
+        if not bids:
+            embed = create_info_embed(
+                "Auction Ended",
+                f"The auction for **{auction['item_name']}** has ended with no bids.",
+            )
             return await interaction.followup.send(embed=embed)
 
-        winner = interaction.guild.get_member(auction['highest_bidder_id'])
-        winner_name = winner.mention if winner else f"User ID: {auction['highest_bidder_id']}"
+        # Pick the highest bid; if there is a tie on amount, the earliest
+        # created_at wins.
+        bids_sorted = sorted(
+            bids,
+            key=lambda row: (-int(row["amount"]), row["created_at"]),
+        )
+        winning_bid = bids_sorted[0]
+        winning_user_id = winning_bid["user_id"]
+        winning_amount = int(winning_bid["amount"])
 
-        # Deduct DKP
-        if auction['highest_bidder_id']:
-            await self.bot.db.modify_user_dkp(auction['highest_bidder_id'], interaction.guild.id, -auction['highest_bid'], f"Won auction for {auction['item_name']}")
+        winner = interaction.guild.get_member(winning_user_id)
+        winner_name = winner.mention if winner else f"User ID: {winning_user_id}"
+
+        # Deduct DKP from the winner.
+        await self.bot.db.modify_user_dkp(
+            winning_user_id,
+            interaction.guild.id,
+            -winning_amount,
+            f"Won auction for {auction['item_name']}",
+        )
 
         embed = create_success_embed(
             f"Auction Concluded: {auction['item_name']}",
-            f"Congratulations to {winner_name} for winning with a bid of **{auction['highest_bid']} DKP**!"
+            f"Congratulations to {winner_name} for winning with a bid of **{winning_amount} DKP**!",
         )
         # Post winner publicly in the raid thread so everyone can see the result.
         await interaction.channel.send(embed=embed)

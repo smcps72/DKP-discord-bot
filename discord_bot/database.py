@@ -80,6 +80,16 @@ class Database:
                 )
             """)
             await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS auction_bids (
+                    auction_id INTEGER,
+                    user_id INTEGER,
+                    amount INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (auction_id, user_id),
+                    FOREIGN KEY (auction_id) REFERENCES auctions(id)
+                )
+            """)
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS transactions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER,
@@ -168,3 +178,15 @@ class Database:
 
     async def set_raid_rules(self, raid_id: int, rules):
         await self.execute("UPDATE raids SET rules = ? WHERE id = ?", (rules, raid_id))
+
+    async def get_user_auction_bid(self, auction_id: int, user_id: int):
+        return await self.fetchone(
+            "SELECT amount FROM auction_bids WHERE auction_id = ? AND user_id = ?",
+            (auction_id, user_id),
+        )
+
+    async def record_auction_bid(self, auction_id: int, user_id: int, amount: int):
+        await self.execute(
+            "INSERT OR IGNORE INTO auction_bids (auction_id, user_id, amount) VALUES (?, ?, ?)",
+            (auction_id, user_id, amount),
+        )

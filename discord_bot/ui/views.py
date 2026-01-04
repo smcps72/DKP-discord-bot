@@ -2,7 +2,7 @@ import discord
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
 from discord.ui import UserSelect, Select
 from ..utils import is_admin
-class MemberSelect(UserSelect):
+class MemberSelect(Select):
     def __init__(self, bot, action: str, members: list[discord.Member]):
         self.bot = bot
         self.action = action
@@ -11,22 +11,30 @@ class MemberSelect(UserSelect):
         # Discord's built-in type-to-search user picker.
         self._allowed_member_ids = {m.id for m in members}
 
+        options = [
+            discord.SelectOption(label=m.display_name[:100], value=str(m.id))
+            for m in members
+        ][:25]
+
         super().__init__(
             placeholder=f"Select a member to {action.lower()} DKP...",
             min_values=1,
             max_values=1,
+            options=options,
         )
 
     async def callback(self, interaction: discord.Interaction):
         raid_cog = self.bot.get_cog("RaidCog")
 
-        # UserSelect returns Member/User objects directly.
-        selected = self.values[0]
-        member: discord.Member | None
-        if isinstance(selected, discord.Member):
-            member = selected
-        else:
-            member = interaction.guild.get_member(getattr(selected, "id", None)) if interaction.guild else None
+        # Resolve the selected member from the stored user ID value.
+        member: discord.Member | None = None
+        if interaction.guild:
+            try:
+                selected_id = int(self.values[0])
+            except (ValueError, TypeError):
+                member = None
+            else:
+                member = interaction.guild.get_member(selected_id)
 
         if not member or member.id not in self._allowed_member_ids:
             await interaction.response.send_message(
