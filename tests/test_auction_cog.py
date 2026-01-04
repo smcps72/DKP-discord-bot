@@ -13,6 +13,8 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.bot = AsyncMock()
         self.bot.db = AsyncMock()
+        # Default raid_members to empty for tests unless overridden.
+        self.bot.db.get_raid_members = AsyncMock(return_value=[])
         self.cog = AuctionCog(self.bot)
 
         # Avoid unintended side effects from AuctionCog calling other cogs.

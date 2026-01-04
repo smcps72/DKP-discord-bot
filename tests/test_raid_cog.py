@@ -49,6 +49,7 @@ def mock_interaction(mock_thread):
 async def test_member_autocomplete_filters_bots_and_matches_current(raid_cog, mock_interaction):
     # Arrange: active raid with a VC containing members and a bot
     raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value={"vc_id": 123})
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[])
 
     vc = MagicMock()
     member1 = MagicMock(spec=discord.Member)
@@ -91,6 +92,7 @@ async def test_member_autocomplete_no_active_raid_returns_empty(raid_cog, mock_i
 @pytest.mark.asyncio
 async def test_member_autocomplete_no_voice_channel_returns_empty(raid_cog, mock_interaction):
     raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value={"vc_id": 123})
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[])
     mock_interaction.guild.get_channel.return_value = None
 
     choices = await raid_cog.member_autocomplete(mock_interaction, current="any")
@@ -103,6 +105,7 @@ async def test_process_dkp_adjustment_triggers_panel_every_fourth_change(raid_co
     # Arrange
     raid = {"id": 1, "leader_id": mock_interaction.user.id, "vc_id": 999}
     raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[])
 
     vc = MagicMock(spec=discord.VoiceChannel)
     vc.id = 999
@@ -158,6 +161,67 @@ async def test_close_raid_sends_ephemeral_confirmation(raid_cog, mock_interactio
     mock_interaction.followup.send.assert_any_call(
         "Raid has been closed and the raid voice channel cleaned up.",
         ephemeral=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_dkp_adjustment_awards_all_vc_and_raid_members(raid_cog, mock_interaction, mock_thread):
+    # Arrange: raid exists with one member in VC and one manually added raid member
+    raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+
+    vc = MagicMock(spec=discord.VoiceChannel)
+    vc.id = 999
+    member_in_vc = MagicMock(spec=discord.Member)
+    member_in_vc.id = 111
+    member_in_vc.bot = False
+    vc.members = [member_in_vc]
+    mock_interaction.guild.get_channel.return_value = vc
+
+    manual_member = MagicMock(spec=discord.Member)
+    manual_member.id = 222
+    manual_member.bot = False
+
+    # raid_members contains the manually added member (and may or may not
+    # include the VC member; duplicates are de-duplicated in the logic).
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": manual_member.id}])
+
+    def get_member_side_effect(user_id):
+        if user_id == member_in_vc.id:
+            return member_in_vc
+        if user_id == manual_member.id:
+            return manual_member
+        return None
+
+    mock_interaction.guild.get_member.side_effect = get_member_side_effect
+
+    raid_cog.bot.db.modify_user_dkp = AsyncMock()
+
+    # Ensure we don't depend on defer semantics
+    mock_interaction.response.is_done.return_value = True
+
+    # Act: mass award (member=None)
+    await raid_cog.process_dkp_adjustment(
+        mock_interaction,
+        action="Award",
+        amount_str="5",
+        reason="Mass award",
+        member=None,
+    )
+
+    # Assert: DKP was modified for both the VC member and the manual raid member
+    assert raid_cog.bot.db.modify_user_dkp.await_count == 2
+    raid_cog.bot.db.modify_user_dkp.assert_any_await(
+        member_in_vc.id,
+        mock_interaction.guild.id,
+        5,
+        "Award: Mass award (Raid)",
+    )
+    raid_cog.bot.db.modify_user_dkp.assert_any_await(
+        manual_member.id,
+        mock_interaction.guild.id,
+        5,
+        "Award: Mass award (Raid)",
     )
 
 

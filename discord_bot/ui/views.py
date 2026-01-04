@@ -378,7 +378,8 @@ class RaidControlView(discord.ui.View):
             member_rows = []
 
         for row in member_rows:
-            user_id = row.get("user_id")
+            # sqlite/aiosqlite rows support dict-style access but not .get()
+            user_id = row["user_id"]
             if user_id in members_by_id:
                 continue
             gm = interaction.guild.get_member(user_id) if interaction.guild else None

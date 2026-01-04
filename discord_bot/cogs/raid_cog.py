@@ -458,12 +458,35 @@ class RaidCog(commands.Cog):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
-        vc = interaction.guild.get_channel(raid['vc_id'])
-        if not vc:
-            return await interaction.followup.send("Raid voice channel not found.", ephemeral=True)
-        members = vc.members
+        vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
+
+        # Build the raid team from both the current voice channel (if any)
+        # and the raid_members table so manually added members are included
+        # even when the VC is empty or has been cleaned up.
+        members_by_id: dict[int, discord.Member] = {}
+
+        if isinstance(vc, discord.VoiceChannel):
+            for m in getattr(vc, "members", []):
+                if not m.bot:
+                    members_by_id[m.id] = m
+
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        members = list(members_by_id.values())
         if not members:
-            return await interaction.followup.send("The voice channel is empty.")
+            return await interaction.followup.send("No raid members were found for this raid.")
+
         member_list = "\n".join([f"- {member.mention} ({member.display_name})" for member in members])
         embed = create_info_embed(
             "Current Raid Team",
