@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 import logging
-from ..utils import create_info_embed, create_error_embed, create_success_embed, is_officer
+from ..utils import create_info_embed, create_error_embed, create_success_embed, is_officer, send_dkp_change_dm
 from ..ui.views import RaidControlView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
 
@@ -631,6 +631,12 @@ class RaidCog(commands.Cog):
             await self.bot.db.modify_user_dkp(
                 m.id,
                 interaction.guild.id,
+                amount,
+                f"{action}: {reason} (Raid)",
+            )
+            await send_dkp_change_dm(
+                m,
+                interaction.guild,
                 amount,
                 f"{action}: {reason} (Raid)",
             )

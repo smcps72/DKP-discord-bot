@@ -1,6 +1,7 @@
 import discord
 from discord.ui import Modal, TextInput
 from discord.ext import commands
+from ..utils import send_dkp_change_dm
 
 
 class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
@@ -27,7 +28,8 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             label="Reason",
             placeholder="e.g., Boss kill, Raid participation",
             style=discord.TextStyle.long,
-            required=True
+            required=True,
+            max_length=300,
         )
         self.add_item(self.amount)
         self.add_item(self.reason)
@@ -40,6 +42,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                 placeholder="Leave blank to adjust everyone in VC",
                 style=discord.TextStyle.short,
                 required=False,
+                max_length=100,
             )
             self.add_item(self.target_member_input)
 
@@ -70,12 +73,17 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                         f"Member '{target_value}' not found. Please use their exact Discord name, nickname, or ID.",
                         ephemeral=True
                     )
-        
+        reason = (self.reason.value or "").strip()
+        if not reason:
+            reason = "No reason provided"
+        if len(reason) > 300:
+            reason = reason[:300]
+
         await self.raid_cog.process_dkp_adjustment(
             interaction,
             self.action,
             self.amount.value,
-            self.reason.value,
+            reason,
             member,
             self.source,
         )
@@ -98,6 +106,7 @@ class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
             placeholder="Explain why you are changing DKP.",
             style=discord.TextStyle.long,
             required=True,
+            max_length=300,
         )
         self.confirm_input = TextInput(
             label="Type YES to confirm",
@@ -165,6 +174,8 @@ class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
             return
 
         reason = self.reason_input.value.strip() or "No reason provided"
+        if len(reason) > 300:
+            reason = reason[:300]
 
         await self.admin_cog.bot.db.modify_user_dkp(
             member.id,
@@ -174,6 +185,13 @@ class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
         )
 
         new_dkp = await self.admin_cog.bot.db.get_user_dkp(member.id, guild.id)
+        await send_dkp_change_dm(
+            member,
+            guild,
+            amount,
+            f"ADMIN MANUAL ADJUST: {reason}",
+            new_total=new_dkp,
+        )
         await interaction.response.send_message(
             f"Adjusted {member.mention} by {amount} DKP for: {reason}\nNew DKP balance: {new_dkp}",
             ephemeral=True,
@@ -190,11 +208,17 @@ class RaidCreateModal(Modal, title="Create New Raid"):
             placeholder="e.g., MC Progression, Weekly PUG",
             style=discord.TextStyle.short,
             required=True,
+            max_length=100,
         )
         self.add_item(self.raid_name)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.raid_cog.create_raid_with_name(interaction, self.raid_name.value)
+        raid_name = (self.raid_name.value or "").strip()
+        if not raid_name:
+            raid_name = "Raid"
+        if len(raid_name) > 100:
+            raid_name = raid_name[:100]
+        await self.raid_cog.create_raid_with_name(interaction, raid_name)
 
 
 class AuctionStartModal(Modal, title="Start New Auction"):
@@ -205,12 +229,18 @@ class AuctionStartModal(Modal, title="Start New Auction"):
             label="Item Name to Auction",
             placeholder="e.g., Thunderfury, Blessed Blade of the Windseeker",
             style=discord.TextStyle.short,
-            required=True
+            required=True,
+            max_length=100,
         )
         self.add_item(self.item_name)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.auction_cog.process_auction_start(interaction, self.item_name.value)
+        item_name = (self.item_name.value or "").strip()
+        if not item_name:
+            item_name = "Item"
+        if len(item_name) > 100:
+            item_name = item_name[:100]
+        await self.auction_cog.process_auction_start(interaction, item_name)
 
 class BidModal(Modal, title="Place Your Bid"):
     def __init__(self, auction_cog, auction_id: int):
@@ -242,6 +272,7 @@ class RaidRulesModal(Modal, title="Edit Raid Rules"):
             placeholder="Describe one rule, e.g.: Showed up on time",
             style=discord.TextStyle.long,
             required=True,
+            max_length=300,
         )
         self.points_input = TextInput(
             label="Points for this Rule",
@@ -255,6 +286,8 @@ class RaidRulesModal(Modal, title="Edit Raid Rules"):
 
     async def on_submit(self, interaction: discord.Interaction):
         description = self.description_input.value.strip()
+        if len(description) > 300:
+            description = description[:300]
         points_raw = self.points_input.value.strip()
 
         # Basic validation for points

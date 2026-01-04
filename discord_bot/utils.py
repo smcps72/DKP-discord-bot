@@ -1,4 +1,22 @@
+import os
+import logging
 import discord
+
+def _get_allowed_guild_ids() -> set[int]:
+    raw = os.getenv("ALLOWED_GUILD_IDS")
+    ids: set[int] = set()
+    if not raw:
+        return ids
+    for piece in raw.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            ids.add(int(piece))
+        except ValueError:
+            continue
+    return ids
+
 
 async def is_officer(interaction: discord.Interaction) -> bool:
     """Checks if the user is an officer or has admin permissions."""
@@ -27,6 +45,56 @@ async def is_admin(interaction: discord.Interaction) -> bool:
         return False
 
     return bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator)
+
+
+async def is_allowed_guild(interaction: discord.Interaction) -> bool:
+    guild = getattr(interaction, "guild", None)
+    allowed = _get_allowed_guild_ids()
+    if not allowed:
+        return True
+    return bool(guild and guild.id in allowed)
+
+
+async def ensure_allowed_guild(interaction: discord.Interaction) -> bool:
+    if await is_allowed_guild(interaction):
+        return True
+    try:
+        msg = "This bot is not authorized for this server."
+        if not interaction.response.is_done():
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await interaction.followup.send(msg, ephemeral=True)
+    except Exception:
+        pass
+    return False
+
+async def send_dkp_change_dm(
+    member: discord.abc.User,
+    guild: discord.Guild | None,
+    amount: int,
+    reason: str,
+    new_total: int | None = None,
+):
+    if not isinstance(member, (discord.Member, discord.User)):
+        return
+    guild_name = guild.name if guild else "this server"
+    change_word = "increased" if amount > 0 else "decreased" if amount < 0 else "updated"
+    sign = "+" if amount >= 0 else "-"
+    abs_amount = abs(amount)
+    lines: list[str] = [
+        f"Your DKP has been {change_word} in **{guild_name}**.",
+        f"Change: `{sign}{abs_amount}` DKP",
+    ]
+    reason = (reason or "").strip()
+    if reason:
+        lines.append(f"Reason: {reason}")
+    if new_total is not None:
+        lines.append(f"New total: `{new_total}` DKP")
+    message = "\n".join(lines)
+    try:
+        await member.send(message)
+    except Exception as e:
+        logging.info("Failed to send DKP DM to user_id=%s: %s", getattr(member, "id", "unknown"), e)
 
 def create_info_embed(title: str, description: str) -> discord.Embed:
     """Creates a standard blue informational embed."""

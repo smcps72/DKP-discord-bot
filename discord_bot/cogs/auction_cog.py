@@ -3,7 +3,7 @@ from discord.ext import commands
 import asyncio
 import logging
 import uuid
-from ..utils import create_info_embed, create_error_embed, create_success_embed
+from ..utils import create_info_embed, create_error_embed, create_success_embed, send_dkp_change_dm
 from ..ui.views import AuctionBidView, AuctionOpenPanelView
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,11 @@ class AuctionCog(commands.Cog):
         )
 
     async def process_auction_start(self, interaction: discord.Interaction, item_name: str, trace_id: str | None = None):
+        item_name = (item_name or "").strip()
+        if not item_name:
+            item_name = "Item"
+        if len(item_name) > 100:
+            item_name = item_name[:100]
         if trace_id is None:
             trace_id = str(uuid.uuid4())
         self._log_step(interaction, trace_id, "auction_start.begin", item_name=item_name)
@@ -299,6 +304,20 @@ class AuctionCog(commands.Cog):
             -winning_amount,
             f"Won auction for {auction['item_name']}",
         )
+
+        if winner is not None and interaction.guild is not None:
+            new_total = None
+            try:
+                new_total = await self.bot.db.get_user_dkp(winning_user_id, interaction.guild.id)
+            except Exception:
+                new_total = None
+            await send_dkp_change_dm(
+                winner,
+                interaction.guild,
+                -winning_amount,
+                f"Won auction for {auction['item_name']}",
+                new_total=new_total,
+            )
 
         embed = create_success_embed(
             f"Auction Concluded: {auction['item_name']}",
