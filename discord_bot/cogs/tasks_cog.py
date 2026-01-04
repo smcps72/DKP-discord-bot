@@ -69,7 +69,6 @@ class TasksCog(commands.Cog):
                 # This simple check is fine for demonstration.
                 logging.info(f"Cleaning up empty raid VC: {channel.name}")
                 await channel.delete(reason="Automatic cleanup of empty raid channel.")
-                await self.bot.db.execute("UPDATE raids SET is_active = 0 WHERE vc_id = ?", (channel.id,))
 
     @cleanup_channels.before_loop
     async def before_cleanup(self):

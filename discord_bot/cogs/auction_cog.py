@@ -49,8 +49,31 @@ class AuctionCog(commands.Cog):
             existing_id = active_auction.get("id") if isinstance(active_auction, dict) else None
             self._log_step(interaction, trace_id, "auction_start.already_active", auction_id=existing_id, raid_id=raid['id'])
             return await interaction.followup.send(embed=create_error_embed("Error", "An auction is already in progress for this raid."), ephemeral=True)
-        vc = interaction.guild.get_channel(raid['vc_id'])
-        if not vc or not vc.members:
+        # Determine whether there are any eligible raid participants either
+        # currently in the raid voice channel or recorded in the raid_members
+        # table. This allows auctions to proceed even if the VC has been
+        # cleaned up, as long as the raid still has participants.
+        participant_ids: set[int] = set()
+
+        vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
+        if isinstance(vc, discord.VoiceChannel):
+            for m in getattr(vc, "members", []):
+                if not getattr(m, "bot", False):
+                    participant_ids.add(m.id)
+
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid['id'])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            try:
+                uid = int(row["user_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            participant_ids.add(uid)
+
+        if not participant_ids:
             self._log_step(interaction, trace_id, "auction_start.vc_empty", vc_id=getattr(vc, "id", None))
             return await interaction.followup.send("Raid voice channel is empty. Cannot start auction.", ephemeral=True)
         # Create auction in DB

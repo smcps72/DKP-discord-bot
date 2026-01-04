@@ -72,34 +72,72 @@ class AdminCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This channel is not associated with an active raid.", ephemeral=True)
 
-        vc = interaction.guild.get_channel(raid["vc_id"])
-        if not vc or not isinstance(vc, discord.VoiceChannel):
-            return await interaction.followup.send("Raid voice channel not found.", ephemeral=True)
+        # Determine raid participants from the raid_members table so that
+        # manually added raiders (and anyone who has joined the raid VC) are
+        # treated as full participants even if they are not currently in voice.
+        member_rows = await self.bot.db.get_raid_members(raid["id"])
+        if not member_rows:
+            return await interaction.followup.send(
+                "No raid members were recorded for this raid.",
+                ephemeral=True,
+            )
 
-        # Filter to non-bot members in the raid voice channel
-        raid_members = [m for m in vc.members if not m.bot]
-        if not raid_members:
-            return await interaction.followup.send("There are no non-bot members in the raid voice channel.", ephemeral=True)
+        # Build a mapping of user_id -> (member_obj_or_None, is_bot_flag)
+        participants: list[tuple[int, discord.Member | None, bool]] = []
+        for row in member_rows:
+            user_id = row["user_id"]
+            guild_member = interaction.guild.get_member(user_id)
+            is_bot = bool(getattr(guild_member, "bot", False)) if guild_member is not None else False
+            participants.append((user_id, guild_member, is_bot))
 
-        # If a specific member was requested, ensure they are in the raid VC
+        # If a specific member was requested, ensure they are a recorded raid
+        # participant (and not a bot), regardless of current voice presence.
         if member is not None:
-            if member.bot or member not in raid_members:
-                return await interaction.followup.send("That member is not currently in the raid voice channel.", ephemeral=True)
+            if member.bot:
+                return await interaction.followup.send(
+                    "Bots do not have DKP in raids.",
+                    ephemeral=True,
+                )
+
+            in_raid = any(user_id == member.id for (user_id, _gm, _is_bot) in participants)
+            if not in_raid:
+                return await interaction.followup.send(
+                    "That member is not recorded as a participant in this raid.",
+                    ephemeral=True,
+                )
 
             dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id)
             description = f"{member.mention}  **{dkp} DKP**"
             embed = create_info_embed("Raid DKP (Member)", description)
             return await interaction.followup.send(embed=embed, ephemeral=True)
 
-        # Otherwise, list DKP for everyone in the raid VC
-        dkp_entries = []
-        for m in raid_members:
-            dkp = await self.bot.db.get_user_dkp(m.id, interaction.guild.id)
-            dkp_entries.append((m, dkp))
+        # Otherwise, list DKP for all recorded raid members, skipping bots
+        dkp_entries: list[tuple[str, str, int]] = []
+        for user_id, guild_member, is_bot in participants:
+            if is_bot:
+                continue
 
-        dkp_entries.sort(key=lambda x: x[1], reverse=True)
+            dkp = await self.bot.db.get_user_dkp(user_id, interaction.guild.id)
 
-        lines = [f"{m.mention}  **{dkp} DKP**" for m, dkp in dkp_entries]
+            if guild_member is not None:
+                display_name = getattr(guild_member, "display_name", getattr(guild_member, "name", str(user_id)))
+                mention = getattr(guild_member, "mention", display_name)
+            else:
+                display_name = f"Unknown User ({user_id})"
+                mention = display_name
+
+            dkp_entries.append((mention, display_name, dkp))
+
+        if not dkp_entries:
+            return await interaction.followup.send(
+                "No eligible (non-bot) raid members were found for this raid.",
+                ephemeral=True,
+            )
+
+        # Sort by DKP descending
+        dkp_entries.sort(key=lambda x: x[2], reverse=True)
+
+        lines = [f"{mention}  **{dkp} DKP**" for (mention, _name, dkp) in dkp_entries]
         description = "\n".join(lines)
 
         embed = create_info_embed("Raid DKP", description)

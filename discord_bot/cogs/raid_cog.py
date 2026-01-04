@@ -394,17 +394,35 @@ class RaidCog(commands.Cog):
 
     async def member_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         raid = await self.bot.db.get_raid_by_thread(interaction.channel_id)
-        if not raid:
+        if not raid or not interaction.guild:
             return []
-        vc = interaction.guild.get_channel(raid['vc_id'])
-        if not vc:
-            return []
-        
-        members = vc.members
+
+        vc = interaction.guild.get_channel(raid["vc_id"])
+        members_by_id: dict[int, discord.Member] = {}
+
+        if isinstance(vc, discord.VoiceChannel):
+            for m in vc.members:
+                if not m.bot:
+                    members_by_id[m.id] = m
+
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id)
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        lowered = current.lower()
         return [
-            app_commands.Choice(name=member.display_name, value=str(member.id))
-            for member in members
-            if not member.bot and current.lower() in member.display_name.lower()
+            app_commands.Choice(name=m.display_name, value=str(m.id))
+            for m in members_by_id.values()
+            if lowered in m.display_name.lower()
         ][:25]
 
     @app_commands.command(name="award", description="Award DKP to a member or the entire raid.")
@@ -514,28 +532,32 @@ class RaidCog(commands.Cog):
             return
 
         vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
-        if not vc or not isinstance(vc, discord.VoiceChannel):
-            await interaction.followup.send(
-                embed=create_error_embed(
-                    "Raid Voice Channel Missing",
-                    "The raid voice channel for this raid could not be found. Please end the raid or recreate it before adjusting DKP.",
-                ),
-                ephemeral=True,
-            )
-            if source == "raid_panel":
-                await self.send_ephemeral_raid_panel(interaction)
-            return
 
         if member is None:
-            if not vc.members:
-                await interaction.followup.send(
-                    "The raid voice channel is empty. No points awarded.",
-                    ephemeral=True,
-                )
-                if source == "raid_panel":
-                    await self.send_ephemeral_raid_panel(interaction)
-                return
-            targets = [m for m in vc.members if not m.bot]
+            # Mass adjustment: include all non-bot members currently in the
+            # raid voice channel plus any non-bot guild members recorded in
+            # the raid_members table for this raid.
+            targets_by_id: dict[int, discord.Member] = {}
+
+            if isinstance(vc, discord.VoiceChannel):
+                for m in getattr(vc, "members", []):
+                    if not m.bot:
+                        targets_by_id[m.id] = m
+
+            try:
+                member_rows = await self.bot.db.get_raid_members(raid["id"])
+            except Exception:
+                member_rows = []
+
+            for row in member_rows:
+                user_id = row["user_id"]
+                if user_id in targets_by_id:
+                    continue
+                gm = interaction.guild.get_member(user_id) if interaction.guild else None
+                if gm and not gm.bot:
+                    targets_by_id[user_id] = gm
+
+            targets = list(targets_by_id.values())
         else:
             if member.bot:
                 await interaction.followup.send(

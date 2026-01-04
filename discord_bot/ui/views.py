@@ -59,7 +59,7 @@ class DKPAdjustmentView(discord.ui.View):
         self.action = action
         self.add_item(MemberSelect(bot, action, members))
 
-    @discord.ui.button(label="All in Voice Channel", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="All Raid Members", style=discord.ButtonStyle.primary)
     async def all_in_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
         modal = DKPAdjustmentModal(
@@ -364,13 +364,30 @@ class RaidControlView(discord.ui.View):
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        vc = interaction.guild.get_channel(raid['vc_id'])
-        if not vc or not isinstance(vc, discord.VoiceChannel):
-            return await interaction.followup.send("Raid voice channel not found.", ephemeral=True)
+        vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
+        members_by_id: dict[int, discord.Member] = {}
 
-        members = [m for m in vc.members if not m.bot]
+        if isinstance(vc, discord.VoiceChannel):
+            for m in getattr(vc, "members", []):
+                if not m.bot:
+                    members_by_id[m.id] = m
+
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row.get("user_id")
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        members = list(members_by_id.values())
         if not members:
-            return await interaction.followup.send("The voice channel is empty.", ephemeral=True)
+            return await interaction.followup.send("No eligible raid members were found.", ephemeral=True)
 
         view = DKPAdjustmentView(self.bot, action, members)
         await interaction.followup.send(f"Who do you want to {action.lower()} DKP?", view=view, ephemeral=True)
@@ -395,7 +412,8 @@ class RaidControlView(discord.ui.View):
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Before opening the auction modal, ensure this is an active raid
-        # thread and that the raid voice channel has at least one member.
+        # thread and that there is at least one raid participant (either in
+        # the raid voice channel or recorded in raid_members).
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.response.send_message(
@@ -403,8 +421,27 @@ class RaidControlView(discord.ui.View):
                 ephemeral=True,
             )
 
+        participants: set[int] = set()
+
         vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
-        if not vc or not getattr(vc, "members", None):
+        if isinstance(vc, discord.VoiceChannel):
+            for m in getattr(vc, "members", []):
+                if not getattr(m, "bot", False):
+                    participants.add(m.id)
+
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            try:
+                uid = int(row["user_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            participants.add(uid)
+
+        if not participants:
             return await interaction.response.send_message(
                 "Raid voice channel is empty. Cannot start auction.",
                 ephemeral=True,
