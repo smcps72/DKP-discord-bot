@@ -159,3 +159,106 @@ async def test_close_raid_sends_ephemeral_confirmation(raid_cog, mock_interactio
         "Raid has been closed and the raid voice channel cleaned up.",
         ephemeral=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_raid_add_member_cmd_adds_member_to_raid(raid_cog, mock_interaction, mock_thread):
+    # Arrange
+    raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+    raid_cog.bot.db.add_raid_member = AsyncMock()
+
+    member = MagicMock(spec=discord.Member)
+    member.id = 777
+    member.bot = False
+    member.mention = "@ManualRaider"
+
+    # Act
+    await raid_cog.raid_add_member_cmd.callback(raid_cog, mock_interaction, member)
+
+    # Assert
+    raid_cog.bot.db.get_raid_by_thread.assert_called_once_with(mock_thread.id)
+    raid_cog.bot.db.add_raid_member.assert_called_once_with(raid["id"], member.id)
+    mock_interaction.response.send_message.assert_called_once()
+    args, kwargs = mock_interaction.response.send_message.call_args
+    assert kwargs.get("ephemeral") is True
+    # Message content should mention the added member
+    assert any("@ManualRaider" in str(arg) for arg in args) or "@ManualRaider" in str(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_process_dkp_adjustment_allows_raid_member_not_in_vc(raid_cog, mock_interaction, mock_thread):
+    # Arrange: raid exists but VC has no members; target is recorded in raid_members
+    raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+
+    vc = MagicMock(spec=discord.VoiceChannel)
+    vc.id = 999
+    vc.members = []
+    mock_interaction.guild.get_channel.return_value = vc
+
+    member = MagicMock(spec=discord.Member)
+    member.id = 222
+    member.bot = False
+
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member.id}])
+    raid_cog.bot.db.modify_user_dkp = AsyncMock()
+
+    # Ensure we don't depend on defer semantics
+    mock_interaction.response.is_done.return_value = True
+
+    # Act
+    await raid_cog.process_dkp_adjustment(
+        mock_interaction,
+        action="Award",
+        amount_str="5",
+        reason="Manual raid member",
+        member=member,
+    )
+
+    # Assert: DKP was modified for the manually added raid member
+    raid_cog.bot.db.modify_user_dkp.assert_awaited_once_with(
+        member.id,
+        mock_interaction.guild.id,
+        5,
+        "Award: Manual raid member (Raid)",
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_dkp_adjustment_rejects_member_not_in_vc_or_raid(raid_cog, mock_interaction, mock_thread):
+    # Arrange: raid exists, VC has no members, and target is not recorded in raid_members
+    raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+
+    vc = MagicMock(spec=discord.VoiceChannel)
+    vc.id = 999
+    vc.members = []
+    mock_interaction.guild.get_channel.return_value = vc
+
+    member = MagicMock(spec=discord.Member)
+    member.id = 333
+    member.bot = False
+
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[])
+    raid_cog.bot.db.modify_user_dkp = AsyncMock()
+
+    mock_interaction.response.is_done.return_value = True
+
+    # Act
+    await raid_cog.process_dkp_adjustment(
+        mock_interaction,
+        action="Award",
+        amount_str="5",
+        reason="Not in raid",
+        member=member,
+    )
+
+    # Assert: DKP should not be modified and an error should be sent
+    raid_cog.bot.db.modify_user_dkp.assert_not_awaited()
+    mock_interaction.followup.send.assert_called_once()
+    _args, kwargs = mock_interaction.followup.send.call_args
+    assert kwargs.get("ephemeral") is True
+    embed = kwargs.get("embed")
+    assert embed is not None
+    assert embed.title == "Invalid Target"

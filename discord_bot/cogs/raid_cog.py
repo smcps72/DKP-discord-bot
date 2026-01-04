@@ -362,6 +362,36 @@ class RaidCog(commands.Cog):
             return await interaction.response.send_message("You must be an officer or admin to end a raid.", ephemeral=True)
         await self.close_raid(interaction)
 
+    @app_commands.command(name="raid_add_member", description="Admin only: add a member to the current raid without requiring them to be in the voice channel.")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(member="The member to add as a participant in this raid.")
+    async def raid_add_member_cmd(self, interaction: discord.Interaction, member: discord.Member):
+        if not interaction.guild:
+            return await interaction.response.send_message(
+                "This command can only be used inside a server.",
+                ephemeral=True,
+            )
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message(
+                "This channel is not associated with an active raid.",
+                ephemeral=True,
+            )
+
+        if member.bot:
+            return await interaction.response.send_message(
+                "Bots cannot be added as raid members.",
+                ephemeral=True,
+            )
+
+        await self.bot.db.add_raid_member(raid["id"], member.id)
+
+        await interaction.response.send_message(
+            f"{member.mention} has been added to this raid. They can now receive DKP adjustments and participate as a raid member even if they are not in the voice channel.",
+            ephemeral=True,
+        )
+
     async def member_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         raid = await self.bot.db.get_raid_by_thread(interaction.channel_id)
         if not raid:
@@ -507,11 +537,31 @@ class RaidCog(commands.Cog):
                 return
             targets = [m for m in vc.members if not m.bot]
         else:
-            if member.bot or member not in vc.members:
+            if member.bot:
                 await interaction.followup.send(
                     embed=create_error_embed(
                         "Invalid Target",
-                        "DKP can only be adjusted for non-bot members currently in the raid voice channel.",
+                        "DKP cannot be adjusted for bot accounts.",
+                    ),
+                    ephemeral=True,
+                )
+                if source == "raid_panel":
+                    await self.send_ephemeral_raid_panel(interaction)
+                return
+
+            in_vc = member in getattr(vc, "members", [])
+            raid_member_ids = set()
+            try:
+                member_rows = await self.bot.db.get_raid_members(raid["id"])
+                raid_member_ids = {row["user_id"] for row in member_rows}
+            except Exception:
+                raid_member_ids = set()
+
+            if not in_vc and member.id not in raid_member_ids:
+                await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Invalid Target",
+                        "DKP can only be adjusted for members in the raid voice channel or those who have been added as raid participants.",
                     ),
                     ephemeral=True,
                 )
