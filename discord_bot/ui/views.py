@@ -491,6 +491,35 @@ class RaidControlView(discord.ui.View):
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
+    @discord.ui.button(label="Join Raid", style=discord.ButtonStyle.success, custom_id="raid_join_raid", row=0)
+    async def join_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Record the user as a raid participant without needing to be in the voice channel."""
+        await interaction.response.defer(ephemeral=True)
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        # Check if the user is already recorded as a raid member
+        already_joined = False
+        try:
+            existing_members = await self.bot.db.get_raid_members(raid["id"])
+            user_ids = {int(row["user_id"]) for row in existing_members}
+            if interaction.user.id in user_ids:
+                already_joined = True
+        except Exception:
+            # If we can't check, we'll proceed and let the DB's INSERT OR IGNORE handle duplicates
+            pass
+
+        if already_joined:
+            return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
+
+        # Record the user only if not already present
+        try:
+            await self.bot.db.add_raid_member(raid["id"], interaction.user.id)
+            await interaction.followup.send("You have been added to the raid.", ephemeral=True)
+        except Exception:
+            await interaction.followup.send("Could not join the raid. Please try again.", ephemeral=True)
+
     # The View Rules button is temporarily disabled. To re-enable in the future,
     # uncomment the decorator and method below.
     # @discord.ui.button(label="View Rules \ud83d\udcdd", style=discord.ButtonStyle.secondary, custom_id="raid_view_rules", row=2)

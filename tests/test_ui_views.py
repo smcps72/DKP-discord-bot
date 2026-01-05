@@ -235,6 +235,34 @@ class TestRaidControlView:
         )
         mock_raid_control_interaction.response.send_modal.assert_not_called()
 
+    async def test_join_raid_button_adds_user_and_handles_duplicate(self, mock_bot, mock_raid_control_interaction):
+        """Tests that 'Join Raid' records the user and prevents duplicate joins."""
+        # Arrange
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[])  # No members yet
+        mock_bot.db.add_raid_member = AsyncMock()
+
+        # Act: first join
+        await view.join_raid.callback(mock_raid_control_interaction)
+
+        # Assert: user is added and confirmation is sent
+        mock_bot.db.add_raid_member.assert_called_once_with(1, mock_raid_control_interaction.user.id)
+        mock_raid_control_interaction.followup.send.assert_called_with("You have been added to the raid.", ephemeral=True)
+
+        # Arrange for duplicate attempt: update the mock to return the user as already joined
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": mock_raid_control_interaction.user.id}])
+        # Reset only the followup.send mock to check the new message; keep add_raid_member calls intact
+        mock_raid_control_interaction.followup.send.reset_mock()
+
+        # Act: duplicate join
+        await view.join_raid.callback(mock_raid_control_interaction)
+
+        # Assert: duplicate is rejected, no new add_raid_member call (still only one call total)
+        mock_bot.db.add_raid_member.assert_called_once()  # Still only one call from the first join
+        mock_raid_control_interaction.followup.send.assert_called_with("You are already part of this raid.", ephemeral=True)
+
 # Tests for AuctionBidView
 from discord_bot.ui.views import AuctionBidView
 from discord_bot.ui.modals import BidModal
