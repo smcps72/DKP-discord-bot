@@ -602,6 +602,28 @@ class RaidCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
         await self.maybe_send_control_panel_ephemeral(interaction, raid=raid)
+
+    async def rename_raid_thread(self, interaction: discord.Interaction, raid_id: int, new_name: str):
+        """Rename the raid thread if the user is authorized and the raid is still active."""
+        await interaction.response.defer(ephemeral=True)
+        raid = await self.bot.db.fetchone("SELECT * FROM raids WHERE id = ?", (raid_id,))
+        if not raid or not raid["is_active"]:
+            return await interaction.followup.send("This raid is no longer active.", ephemeral=True)
+
+        # Authorization: raid leader, officer, or admin
+        if not await is_officer(interaction) and interaction.user.id != raid["leader_id"]:
+            return await interaction.followup.send("You don't have permission to rename this thread.", ephemeral=True)
+
+        thread = interaction.guild.get_thread(raid["thread_id"])
+        if not thread:
+            return await interaction.followup.send("Raid thread not found.", ephemeral=True)
+
+        try:
+            await thread.edit(name=new_name)
+            await interaction.followup.send("Thread renamed successfully.", ephemeral=True)
+        except discord.HTTPException:
+            await interaction.followup.send("Failed to rename the thread. Check my permissions.", ephemeral=True)
+
     async def close_raid(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:

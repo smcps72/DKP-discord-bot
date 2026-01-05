@@ -520,6 +520,28 @@ class RaidControlView(discord.ui.View):
         except Exception:
             await interaction.followup.send("Could not join the raid. Please try again.", ephemeral=True)
 
+    @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
+    async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Open a modal to rename the raid thread (raid leaders/officers only)."""
+        await interaction.response.defer(ephemeral=True)
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        # Authorization check: raid leader, officer, or admin
+        from ..utils import is_officer
+        if not await is_officer(interaction) and interaction.user.id != raid["leader_id"]:
+            return await interaction.followup.send("You don't have permission to rename this thread.", ephemeral=True)
+
+        from ..ui.modals import ThreadRenameModal
+        raid_cog = self.bot.get_cog("RaidCog")
+        modal = ThreadRenameModal(raid_cog=raid_cog, raid_id=raid["id"])
+        try:
+            await interaction.response.send_modal(modal)
+        except discord.InteractionResponded:
+            # If already deferred (as we did above), use followup
+            await interaction.followup.send("Please try again.", ephemeral=True)
+
     # The View Rules button is temporarily disabled. To re-enable in the future,
     # uncomment the decorator and method below.
     # @discord.ui.button(label="View Rules \ud83d\udcdd", style=discord.ButtonStyle.secondary, custom_id="raid_view_rules", row=2)

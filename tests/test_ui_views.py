@@ -263,6 +263,36 @@ class TestRaidControlView:
         mock_bot.db.add_raid_member.assert_called_once()  # Still only one call from the first join
         mock_raid_control_interaction.followup.send.assert_called_with("You are already part of this raid.", ephemeral=True)
 
+    async def test_rename_thread_button_success_and_unauthorized(self, mock_bot, mock_raid_control_interaction):
+        """Tests that 'Rename Thread' opens modal for leaders and rejects non-leaders."""
+        # Arrange
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": 999})
+        mock_bot.get_cog = MagicMock()
+        mock_raid_cog = MagicMock()
+        mock_bot.get_cog.return_value = mock_raid_cog
+
+        # Simulate the interaction user is the raid leader
+        mock_raid_control_interaction.user.id = 999
+
+        # Act: leader opens modal
+        await view.rename_thread.callback(mock_raid_control_interaction)
+
+        # Assert: modal is sent
+        mock_raid_control_interaction.response.send_modal.assert_called_once()
+
+        # Arrange for unauthorized user
+        mock_raid_control_interaction.user.id = 123  # Not the leader
+        mock_raid_control_interaction.reset_mock()
+
+        # Act: non-leader attempts rename
+        await view.rename_thread.callback(mock_raid_control_interaction)
+
+        # Assert: modal is not sent; error followup is sent
+        mock_raid_control_interaction.response.send_modal.assert_not_called()
+        mock_raid_control_interaction.followup.send.assert_called_with("You don't have permission to rename this thread.", ephemeral=True)
+
 # Tests for AuctionBidView
 from discord_bot.ui.views import AuctionBidView
 from discord_bot.ui.modals import BidModal

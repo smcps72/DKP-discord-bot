@@ -331,3 +331,24 @@ class RaidRulesModal(Modal, title="Edit Raid Rules"):
             "so rules are added one at a time.",
             ephemeral=True,
         )
+
+class ThreadRenameModal(discord.ui.Modal):
+    def __init__(self, raid_cog, raid_id: int):
+        super().__init__(title="Rename Raid Thread")
+        self.raid_cog = raid_cog
+        self.raid_id = raid_id
+
+        self.new_name = discord.ui.TextInput(
+            label="New thread name",
+            placeholder="Enter the new name for the raid thread",
+            required=True,
+            max_length=100,
+        )
+        self.add_item(self.new_name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        new_name = self.new_name.value.strip()
+        if not new_name:
+            await interaction.response.send_message("Thread name cannot be empty.", ephemeral=True)
+            return
+        await self.raid_cog.rename_raid_thread(interaction, self.raid_id, new_name)

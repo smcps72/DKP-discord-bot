@@ -138,6 +138,33 @@ async def test_process_dkp_adjustment_triggers_panel_every_fourth_change(raid_co
 
 
 @pytest.mark.asyncio
+async def test_rename_raid_thread_success_and_inactive_rejection(raid_cog, mock_interaction, mock_thread):
+    # Arrange: active raid and user is raid leader
+    raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "is_active": 1, "thread_id": 555}
+    raid_cog.bot.db.fetchone = AsyncMock(return_value=raid)
+    mock_thread.edit = AsyncMock()
+    mock_interaction.guild.get_thread.return_value = mock_thread
+
+    # Act: rename active raid
+    await raid_cog.rename_raid_thread(mock_interaction, raid["id"], "New Name")
+
+    # Assert: thread is renamed and success message sent
+    mock_thread.edit.assert_called_once_with(name="New Name")
+    mock_interaction.followup.send.assert_called_with("Thread renamed successfully.", ephemeral=True)
+
+    # Arrange: inactive raid
+    inactive_raid = {**raid, "is_active": 0}
+    raid_cog.bot.db.fetchone = AsyncMock(return_value=inactive_raid)
+    mock_interaction.reset_mock()
+
+    # Act: attempt rename on inactive raid
+    await raid_cog.rename_raid_thread(mock_interaction, raid["id"], "New Name")
+
+    # Assert: rename rejected
+    mock_thread.edit.assert_not_called()
+    mock_interaction.followup.send.assert_called_with("This raid is no longer active.", ephemeral=True)
+
+@pytest.mark.asyncio
 async def test_close_raid_posts_summary_in_completed_channel(raid_cog, mock_interaction, mock_thread):
     # Arrange
     raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
