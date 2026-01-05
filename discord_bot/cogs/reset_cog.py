@@ -33,7 +33,9 @@ class ResetCog(commands.Cog):
         os.makedirs(backup_dir, exist_ok=True)
 
         if timestamp is None:
-            timestamp = datetime.utcnow().strftime("%d-%m-%Y %H:%M:%S")
+            # Use a filesystem-safe timestamp format (no colons) so it can be used
+            # in both filenames and directory names on Windows.
+            timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         backup_filename = f"dkp_bot_backup_guild_{guild_id}_{timestamp}.db"
         backup_path = os.path.join(backup_dir, backup_filename)
 
@@ -170,7 +172,9 @@ class ResetCog(commands.Cog):
 
             # Use a single shared timestamp for this reset operation so that the
             # DB snapshot and any raid thread exports are grouped together.
-            reset_timestamp = datetime.utcnow().strftime("%d-%m-%Y %H:%M:%S")
+            # Match the filesystem-safe format used in _backup_database so the
+            # DB backup and thread exports share the same backup_id.
+            reset_timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
 
             # First, back up the current database before making any destructive changes.
             try:

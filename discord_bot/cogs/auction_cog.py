@@ -61,10 +61,9 @@ class AuctionCog(commands.Cog):
         participant_ids: set[int] = set()
 
         vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
-        if isinstance(vc, discord.VoiceChannel):
-            for m in getattr(vc, "members", []):
-                if not getattr(m, "bot", False):
-                    participant_ids.add(m.id)
+        for m in getattr(vc, "members", []):
+            if not getattr(m, "bot", False):
+                participant_ids.add(m.id)
 
         try:
             member_rows = await self.bot.db.get_raid_members(raid['id'])

@@ -188,9 +188,22 @@ class RaidCog(commands.Cog):
                 ephemeral=True,
             )
 
-        template_vc = None
-        if "raid_vc_template_id" in config.keys() and config["raid_vc_template_id"]:
-            template_vc = interaction.guild.get_channel(config["raid_vc_template_id"])
+        # Use the raid leader's current voice channel as the raid VC instead of
+        # creating or cloning a dedicated raid voice channel. This keeps the
+        # bot from modifying the guild's channel structure and lets guilds
+        # manage their own voice layout.
+        leader_member = interaction.user if isinstance(interaction.user, discord.Member) else None
+        leader_voice = getattr(leader_member, "voice", None)
+        raid_vc = getattr(leader_voice, "channel", None)
+
+        if not isinstance(raid_vc, discord.VoiceChannel):
+            return await interaction.followup.send(
+                embed=create_error_embed(
+                    "No Voice Channel",
+                    "You must be connected to a voice channel in this server to create a raid.",
+                ),
+                ephemeral=True,
+            )
 
         active_raids_channel = interaction.guild.get_channel(config["raid_channel_id"])
         if not active_raids_channel:
@@ -214,49 +227,19 @@ class RaidCog(commands.Cog):
                 if isinstance(interaction.user, discord.Member)
                 else str(interaction.user)
             )
-            vc_name = f"{raid_name} - {user_display}"
-            if template_vc and isinstance(template_vc, discord.VoiceChannel):
-                new_vc = await template_vc.clone(name=vc_name)
-            else:
-                # Create a new raid voice channel under the DKP category
-                category = (
-                    interaction.guild.get_channel(config["dkp_category_id"])
-                    if "dkp_category_id" in config.keys()
-                    else None
-                )
-                overwrite = discord.PermissionOverwrite(view_channel=True)
-                if isinstance(category, discord.CategoryChannel):
-                    new_vc = await category.create_voice_channel(
-                        vc_name, overwrites={interaction.guild.default_role: overwrite}
-                    )
-                else:
-                    new_vc = await interaction.guild.create_voice_channel(
-                        vc_name, overwrites={interaction.guild.default_role: overwrite}
-                    )
-
-            # Assign raid leader role and permissions
+            # Assign raid leader role if configured (no channel permission
+            # overrides are applied here so existing voice channel permissions
+            # remain under guild control).
             raid_leader_role_id = config["raid_leader_role_id"] if "raid_leader_role_id" in config else None
             if raid_leader_role_id:
                 raid_leader_role = interaction.guild.get_role(raid_leader_role_id)
                 if raid_leader_role:
                     await interaction.user.add_roles(raid_leader_role, reason="Started a raid.")
-                    overwrite = discord.PermissionOverwrite(
-                        manage_channels=True, move_members=True, view_channel=True
-                    )
-                    await new_vc.set_permissions(raid_leader_role, overwrite=overwrite)
                 else:
                     await interaction.followup.send(
                         "The configured Raid-Leader role was not found. Please have an admin set a new one.",
                         ephemeral=True,
                     )
-            else:
-                # If no role is set, just give the user perms
-                overwrite = discord.PermissionOverwrite(
-                    manage_channels=True, move_members=True, view_channel=True
-                )
-                await new_vc.set_permissions(interaction.user, overwrite=overwrite)
-
-            await new_vc.set_permissions(interaction.guild.default_role, view_channel=True)
 
             # Create the main raid announcement message and thread.
             start_timestamp = int(datetime.now().timestamp())
@@ -266,44 +249,8 @@ class RaidCog(commands.Cog):
             thread = await raid_message.create_thread(name=thread_name)
             await self.bot.db.execute(
                 "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id) VALUES (?, ?, ?, ?)",
-                (interaction.guild.id, interaction.user.id, new_vc.id, thread.id),
+                (interaction.guild.id, interaction.user.id, raid_vc.id, thread.id),
             )
-
-            # Bring members from the General voice channel into the raid log thread.
-            general_vc = None
-
-            # Prefer a dedicated "Raid Lobby" style channel if one exists.
-            for channel in interaction.guild.voice_channels:
-                name = channel.name.lower()
-                if "raid" in name and "lobby" in name:
-                    general_vc = channel
-                    break
-
-            # If no dedicated lobby was found, fall back to a channel named "General" (case-insensitive).
-            if general_vc is None:
-                for channel in interaction.guild.voice_channels:
-                    if channel.name.lower() == "general":
-                        general_vc = channel
-                        break
-
-            if isinstance(general_vc, discord.VoiceChannel):
-                general_members = [m for m in general_vc.members if not m.bot]
-                if general_members:
-                    # Move everyone from the lobby/general into the new raid voice channel.
-                    for member in list(general_members):
-                        if not member.voice or member.voice.channel == new_vc:
-                            continue
-                        try:
-                            await member.move_to(new_vc, reason="Raid started - moving from lobby to raid VC.")
-                        except discord.HTTPException:
-                            # Ignore move failures (e.g., missing perms or user disconnects).
-                            pass
-
-                    # Then mention them in the raid log thread so they can easily jump to it.
-                    mentions = " ".join(m.mention for m in general_members)
-                    await thread.send(
-                        f"{mentions}\nYou were in the raid lobby when this raid started. This is the active raid log thread."
-                    )
 
             # After the thread exists, edit the original raid message to ping
             # raiders (if configured) and include a direct jump link to the
@@ -400,10 +347,9 @@ class RaidCog(commands.Cog):
         vc = interaction.guild.get_channel(raid["vc_id"])
         members_by_id: dict[int, discord.Member] = {}
 
-        if isinstance(vc, discord.VoiceChannel):
-            for m in vc.members:
-                if not m.bot:
-                    members_by_id[m.id] = m
+        for m in getattr(vc, "members", []):
+            if not getattr(m, "bot", False):
+                members_by_id[m.id] = m
 
         try:
             member_rows = await self.bot.db.get_raid_members(raid["id"])
@@ -660,44 +606,9 @@ class RaidCog(commands.Cog):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This raid is already closed or does not exist.", ephemeral=True)
-        vc = interaction.guild.get_channel(raid['vc_id'])
         thread = interaction.channel
         # Deactivate raid in DB
         await self.bot.db.execute("UPDATE raids SET is_active = 0 WHERE id = ?", (raid['id'],))
-
-        # If the raid voice channel still exists, try to move members out before deleting it.
-        if vc and isinstance(vc, discord.VoiceChannel):
-            # Find a suitable voice channel to move members into.
-            target_vc = None
-
-            # 1) Prefer a channel actually named "General" (case-insensitive) that is not the raid VC.
-            for channel in interaction.guild.voice_channels:
-                if channel.id == vc.id:
-                    continue
-                if channel.name.lower() == "general":
-                    target_vc = channel
-                    break
-
-            # 2) If no explicit General channel is available, fall back to the first other voice channel.
-            if target_vc is None:
-                for channel in interaction.guild.voice_channels:
-                    if channel.id != vc.id:
-                        target_vc = channel
-                        break
-
-            # Move members to the target voice channel
-            for member in list(vc.members):
-                # Skip bots and users not actually connected to this VC
-                if member.bot or not member.voice or member.voice.channel != vc:
-                    continue
-                try:
-                    if target_vc is not None:
-                        await member.move_to(target_vc, reason="Raid closed.")
-                    else:
-                        await member.move_to(None, reason="Raid closed.")
-                except discord.HTTPException as e:
-                    # Ignore cases where the user is no longer in voice (error 40032) or other move issues.
-                    pass
 
         # Remove raid leader role
         config = await self.bot.db.get_guild_config(interaction.guild.id)
@@ -711,18 +622,31 @@ class RaidCog(commands.Cog):
                 except discord.HTTPException:
                     pass # Ignore if user left or role is gone
 
-        if vc:
-            await vc.delete(reason="Raid closed.")
+        # Mark the raid log thread as closed and archive/lock it. The
+        # associated voice channel is left untouched so guilds can continue to
+        # manage their own channel layout.
+        try:
+            await thread.send(f"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.")
+        except Exception:
+            pass
 
-        await thread.send(f"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.")
-        await thread.edit(archived=True, locked=True)
+        new_name = getattr(thread, "name", None)
+        if isinstance(new_name, str) and "[closed]" not in new_name.lower():
+            new_name = f"[Closed] {new_name}"
+
+        try:
+            await thread.edit(name=new_name, archived=True, locked=True)
+        except Exception:
+            # If we cannot rename/archive the thread, the DB flag still marks
+            # the raid as inactive.
+            pass
 
         # Send an explicit ephemeral confirmation to the user who closed the
         # raid so that any temporary "bot is thinking" message from the
         # deferred button interaction is replaced.
         try:
             await interaction.followup.send(
-                "Raid has been closed and the raid voice channel cleaned up.",
+                "Raid has been closed and the raid log thread has been archived.",
                 ephemeral=True,
             )
         except discord.HTTPException:

@@ -145,11 +145,6 @@ async def test_close_raid_sends_ephemeral_confirmation(raid_cog, mock_interactio
     raid_cog.bot.db.execute = AsyncMock()
     raid_cog.bot.db.get_guild_config = AsyncMock(return_value={})
 
-    vc = MagicMock(spec=discord.VoiceChannel)
-    vc.id = 999
-    vc.members = []
-    mock_interaction.guild.get_channel.return_value = vc
-
     mock_interaction.channel = mock_thread
     mock_thread.send = AsyncMock()
     mock_thread.edit = AsyncMock()
@@ -159,7 +154,7 @@ async def test_close_raid_sends_ephemeral_confirmation(raid_cog, mock_interactio
 
     # Assert: final ephemeral confirmation replaces any prior "thinking" state
     mock_interaction.followup.send.assert_any_call(
-        "Raid has been closed and the raid voice channel cleaned up.",
+        "Raid has been closed and the raid log thread has been archived.",
         ephemeral=True,
     )
 
