@@ -65,6 +65,7 @@ class SetupCog(commands.Cog):
             # Create text channels
             dkp_channel = await category.create_text_channel("dkp-system")
             raid_channel = await category.create_text_channel("active-raids")
+            completed_raid_channel = await category.create_text_channel("completed-raids")
 
             # Explicitly clean up any legacy "Raid-Template" voice channel under this category.
             # Older versions of the bot created a template VC; the current design does not use it.
@@ -109,8 +110,8 @@ class SetupCog(commands.Cog):
 
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, raid_vc_template_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (guild.id, category.id, dkp_channel.id, raid_channel.id, vc_template_id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guild.id, category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
             )
             # Send welcome panel
             embed = create_info_embed(

@@ -33,6 +33,7 @@ class Database:
                     dkp_category_id INTEGER,
                     dkp_channel_id INTEGER,
                     raid_channel_id INTEGER,
+                    completed_raid_channel_id INTEGER,
                     officer_role_id INTEGER,
                     raider_role_id INTEGER,
                     raid_leader_role_id INTEGER,

@@ -138,25 +138,34 @@ async def test_process_dkp_adjustment_triggers_panel_every_fourth_change(raid_co
 
 
 @pytest.mark.asyncio
-async def test_close_raid_sends_ephemeral_confirmation(raid_cog, mock_interaction, mock_thread):
+async def test_close_raid_posts_summary_in_completed_channel(raid_cog, mock_interaction, mock_thread):
     # Arrange
     raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
     raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
     raid_cog.bot.db.execute = AsyncMock()
-    raid_cog.bot.db.get_guild_config = AsyncMock(return_value={})
+    raid_cog.bot.db.get_guild_config = AsyncMock(return_value={"completed_raid_channel_id": 111})
 
     mock_interaction.channel = mock_thread
     mock_thread.send = AsyncMock()
     mock_thread.edit = AsyncMock()
+    mock_thread.mention = "#archived-thread"
+    mock_interaction.user.mention = "@User"
+
+    mock_completed_channel = MagicMock()
+    mock_completed_channel.send = AsyncMock()
+    mock_interaction.guild.get_channel.side_effect = lambda cid: mock_completed_channel if cid == 111 else None
 
     # Act
     await raid_cog.close_raid(mock_interaction)
 
-    # Assert: final ephemeral confirmation replaces any prior "thinking" state
-    mock_interaction.followup.send.assert_any_call(
-        "Raid has been closed and the raid log thread has been archived.",
-        ephemeral=True,
-    )
+    # Assert: summary is posted in completed raids channel
+    mock_completed_channel.send.assert_called_once()
+    args, kwargs = mock_completed_channel.send.call_args
+    embed = kwargs.get("embed")
+    assert embed is not None
+    assert "Raid Completed" in embed.title
+    assert mock_thread.mention in embed.description
+    assert mock_interaction.user.mention in embed.description
 
 
 @pytest.mark.asyncio

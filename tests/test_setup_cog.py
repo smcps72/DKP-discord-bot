@@ -64,13 +64,13 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
 
     # Get the mock category and channels that are supposed to be created
     mock_category = mock_guild.create_category.return_value
-    mock_dkp_channel = mock_category.create_text_channel.return_value # This will be the same mock for both text channels by default
-    mock_raid_channel = AsyncMock(spec=discord.TextChannel) # Create a new one for the second call
-    mock_raid_channel.id = 333
+    mock_dkp_channel = AsyncMock(spec=discord.TextChannel)
+    mock_raid_channel = AsyncMock(spec=discord.TextChannel)
+    mock_completed_raid_channel = AsyncMock(spec=discord.TextChannel)
     mock_vc_template = mock_category.create_voice_channel.return_value
 
-    # Ensure create_text_channel returns dkp_channel then raid_channel
-    mock_category.create_text_channel.side_effect = [mock_dkp_channel, mock_raid_channel]
+    # Ensure create_text_channel returns dkp-channel, active-raids, completed-raids
+    mock_category.create_text_channel.side_effect = [mock_dkp_channel, mock_raid_channel, mock_completed_raid_channel]
 
     # --- Act ---
     await setup_cog.run_setup(mock_guild, mock_interaction)
@@ -91,22 +91,25 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     # 3. Verify text channel creation
     expected_dkp_channel_name = "dkp-system"
     expected_raid_channel_name = "active-raids"
+    expected_completed_channel_name = "completed-raids"
 
     calls = mock_category.create_text_channel.call_args_list
-    assert len(calls) == 2
-    calls[0].assert_called_with(expected_dkp_channel_name)
-    calls[1].assert_called_with(expected_raid_channel_name)
+    assert len(calls) == 3
+    assert calls[0][0][0] == expected_dkp_channel_name
+    assert calls[1][0][0] == expected_raid_channel_name
+    assert calls[2][0][0] == expected_completed_channel_name
 
-    # 4. Verify database execute call (schema now includes role IDs and vc_template_id NULL)
+    # 4. Verify database execute call (schema now includes role IDs, completed_raid_channel_id, and vc_template_id NULL)
     mock_bot.db.execute.assert_called_once()
     sql, params = mock_bot.db.execute.call_args[0]
     assert "INSERT OR REPLACE INTO guilds" in sql
-    # guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, raid_vc_template_id
+    # guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id
     assert params[0] == mock_guild.id
     assert params[1] == mock_category.id
     assert params[2] == mock_dkp_channel.id
     assert params[3] == mock_raid_channel.id
-    assert params[4] is None
+    assert params[4] == mock_completed_raid_channel.id
+    assert params[5] is None
 
     # 5. Verify welcome message sent to dkp_channel and pinned
     mock_dkp_channel.send.assert_called_once()

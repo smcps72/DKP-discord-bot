@@ -641,6 +641,22 @@ class RaidCog(commands.Cog):
             # the raid as inactive.
             pass
 
+        # Post a summary with a link to the archived thread in the completed raids channel
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        completed_channel_id = config.get("completed_raid_channel_id") if config else None
+        if completed_channel_id:
+            completed_channel = interaction.guild.get_channel(completed_channel_id)
+            if completed_channel:
+                embed = create_info_embed(
+                    "Raid Completed",
+                    f"Raid log thread: {thread.mention}\n"
+                    f"Closed by: {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>"
+                )
+                try:
+                    await completed_channel.send(embed=embed)
+                except Exception:
+                    pass
+
         # Send an explicit ephemeral confirmation to the user who closed the
         # raid so that any temporary "bot is thinking" message from the
         # deferred button interaction is replaced.
