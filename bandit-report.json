@@ -1,17 +1,17 @@
 {
   "errors": [],
-  "generated_at": "2026-01-06T02:12:13Z",
+  "generated_at": "2026-01-06T02:21:07Z",
   "metrics": {
     "_totals": {
-      "CONFIDENCE.HIGH": 23,
+      "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 0,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 23,
+      "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 3895,
+      "loc": 3900,
       "nosec": 0,
       "skipped_tests": 1
     },
@@ -68,12 +68,12 @@
       "skipped_tests": 1
     },
     "discord_bot\\cogs\\auction_cog.py": {
-      "CONFIDENCE.HIGH": 7,
+      "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 0,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 7,
+      "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
       "loc": 268,
@@ -81,25 +81,25 @@
       "skipped_tests": 0
     },
     "discord_bot\\cogs\\export_cog.py": {
-      "CONFIDENCE.HIGH": 8,
+      "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 0,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 8,
+      "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 731,
+      "loc": 736,
       "nosec": 0,
       "skipped_tests": 0
     },
     "discord_bot\\cogs\\raid_cog.py": {
-      "CONFIDENCE.HIGH": 3,
+      "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 0,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 3,
+      "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
       "loc": 553,
@@ -146,12 +146,12 @@
       "skipped_tests": 0
     },
     "discord_bot\\cogs\\user_cog.py": {
-      "CONFIDENCE.HIGH": 1,
+      "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 0,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 1,
+      "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
       "loc": 151,
@@ -185,12 +185,12 @@
       "skipped_tests": 0
     },
     "discord_bot\\ui\\views.py": {
-      "CONFIDENCE.HIGH": 3,
+      "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 0,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 3,
+      "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
       "loc": 446,
@@ -198,12 +198,12 @@
       "skipped_tests": 0
     },
     "discord_bot\\utils.py": {
-      "CONFIDENCE.HIGH": 1,
+      "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 0,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 1,
+      "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
       "loc": 90,
@@ -211,497 +211,5 @@
       "skipped_tests": 0
     }
   },
-  "results": [
-    {
-      "code": "101             await interaction.followup.send(\"Auction started.\", ephemeral=True)\n102         except Exception:\n103             pass\n104 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\cogs\\auction_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 102,
-      "line_range": [
-        102,
-        103
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "111             )\n112         except Exception:\n113             pass\n114 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\cogs\\auction_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 112,
-      "line_range": [
-        112,
-        113
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "120                 await raid_cog.maybe_send_control_panel_ephemeral(interaction, raid=raid)\n121             except Exception:\n122                 pass\n123 \n",
-      "col_offset": 12,
-      "end_col_offset": 20,
-      "filename": "discord_bot\\cogs\\auction_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 121,
-      "line_range": [
-        121,
-        122
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "164                 await raid_cog.maybe_send_control_panel_ephemeral(interaction)\n165             except Exception:\n166                 pass\n167 \n",
-      "col_offset": 12,
-      "end_col_offset": 20,
-      "filename": "discord_bot\\cogs\\auction_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 165,
-      "line_range": [
-        165,
-        166
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "208                     await raid_cog.maybe_send_control_panel_ephemeral(interaction)\n209                 except Exception:\n210                     pass\n211             return\n",
-      "col_offset": 16,
-      "end_col_offset": 24,
-      "filename": "discord_bot\\cogs\\auction_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 209,
-      "line_range": [
-        209,
-        210
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "229                     await raid_cog.maybe_send_control_panel_ephemeral(interaction)\n230                 except Exception:\n231                     pass\n232             return\n",
-      "col_offset": 16,
-      "end_col_offset": 24,
-      "filename": "discord_bot\\cogs\\auction_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 230,
-      "line_range": [
-        230,
-        231
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "251                 await raid_cog.maybe_send_control_panel_ephemeral(interaction)\n252             except Exception:\n253                 pass\n254 \n",
-      "col_offset": 12,
-      "end_col_offset": 20,
-      "filename": "discord_bot\\cogs\\auction_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 252,
-      "line_range": [
-        252,
-        253
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "181                             zf.writestr(path_in_zip, data)\n182                 except Exception:\n183                     continue\n184 \n",
-      "col_offset": 16,
-      "end_col_offset": 28,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Continue detected.",
-      "line_number": 182,
-      "line_range": [
-        182,
-        183
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b112_try_except_continue.html",
-      "test_id": "B112",
-      "test_name": "try_except_continue"
-    },
-    {
-      "code": "231                 f.write(bio.getvalue())\n232         except Exception:\n233             # Local backup failure should not prevent delivering the export to the user.\n234             pass\n235 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 232,
-      "line_range": [
-        232,
-        233,
-        234
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "285                     threads.append(th)\n286         except Exception:\n287             # Older discord.py or missing permissions may not support archived_threads;\n288             # in that case we proceed with whatever we have.\n289             pass\n290 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 286,
-      "line_range": [
-        286,
-        287,
-        288,
-        289
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "347                             zf.write(path, arcname=name)\n348                         except Exception:\n349                             # If one file fails, skip it but continue building the archive\n350                             continue\n351                 all_bio.seek(0)\n",
-      "col_offset": 24,
-      "end_col_offset": 36,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Continue detected.",
-      "line_number": 348,
-      "line_range": [
-        348,
-        349,
-        350
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b112_try_except_continue.html",
-      "test_id": "B112",
-      "test_name": "try_except_continue"
-    },
-    {
-      "code": "412                 f.write(bio.getvalue())\n413         except Exception:\n414             # Local backup failure should not prevent delivering the export to the user.\n415             pass\n416 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 413,
-      "line_range": [
-        413,
-        414,
-        415
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "602                                 embeds.append(discord.Embed.from_dict(e))\n603                             except Exception:\n604                                 continue\n605 \n",
-      "col_offset": 28,
-      "end_col_offset": 40,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Continue detected.",
-      "line_number": 603,
-      "line_range": [
-        603,
-        604
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b112_try_except_continue.html",
-      "test_id": "B112",
-      "test_name": "try_except_continue"
-    },
-    {
-      "code": "678                             embeds.append(discord.Embed.from_dict(e))\n679                         except Exception:\n680                             continue\n681 \n",
-      "col_offset": 24,
-      "end_col_offset": 36,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Continue detected.",
-      "line_number": 679,
-      "line_range": [
-        679,
-        680
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b112_try_except_continue.html",
-      "test_id": "B112",
-      "test_name": "try_except_continue"
-    },
-    {
-      "code": "782                                 embeds.append(discord.Embed.from_dict(e))\n783                             except Exception:\n784                                 continue\n785 \n",
-      "col_offset": 28,
-      "end_col_offset": 40,
-      "filename": "discord_bot\\cogs\\export_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Continue detected.",
-      "line_number": 783,
-      "line_range": [
-        783,
-        784
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b112_try_except_continue.html",
-      "test_id": "B112",
-      "test_name": "try_except_continue"
-    },
-    {
-      "code": "651             await thread.send(f\"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.\")\n652         except Exception:\n653             pass\n654 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\cogs\\raid_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 652,
-      "line_range": [
-        652,
-        653
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "660             await thread.edit(name=new_name, archived=True, locked=True)\n661         except Exception:\n662             # If we cannot rename/archive the thread, the DB flag still marks\n663             # the raid as inactive.\n664             pass\n665 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\cogs\\raid_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 661,
-      "line_range": [
-        661,
-        662,
-        663,
-        664
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "678                     await completed_channel.send(embed=embed)\n679                 except Exception:\n680                     pass\n681 \n",
-      "col_offset": 16,
-      "end_col_offset": 24,
-      "filename": "discord_bot\\cogs\\raid_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 679,
-      "line_range": [
-        679,
-        680
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "39                 await raid_cog.maybe_send_control_panel_ephemeral(interaction)\n40             except Exception:\n41                 pass\n42 \n",
-      "col_offset": 12,
-      "end_col_offset": 20,
-      "filename": "discord_bot\\cogs\\user_cog.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 40,
-      "line_range": [
-        40,
-        41
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "399                 await raid_cog.maybe_send_control_panel_ephemeral(interaction, raid=raid)\n400             except Exception:\n401                 pass\n402 \n",
-      "col_offset": 12,
-      "end_col_offset": 20,
-      "filename": "discord_bot\\ui\\views.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 400,
-      "line_range": [
-        400,
-        401
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "469                 )\n470             except Exception:\n471                 pass  # Fully expired, ignore\n472         except discord.HTTPException:\n",
-      "col_offset": 12,
-      "end_col_offset": 20,
-      "filename": "discord_bot\\ui\\views.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 470,
-      "line_range": [
-        470,
-        471
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "508                 already_joined = True\n509         except Exception:\n510             # If we can't check, we'll proceed and let the DB's INSERT OR IGNORE handle duplicates\n511             pass\n512 \n",
-      "col_offset": 8,
-      "end_col_offset": 16,
-      "filename": "discord_bot\\ui\\views.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 509,
-      "line_range": [
-        509,
-        510,
-        511
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "66             await interaction.followup.send(msg, ephemeral=True)\n67     except Exception:\n68         pass\n69     return False\n",
-      "col_offset": 4,
-      "end_col_offset": 12,
-      "filename": "discord_bot\\utils.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 67,
-      "line_range": [
-        67,
-        68
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.2/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    }
-  ]
+  "results": []
 }

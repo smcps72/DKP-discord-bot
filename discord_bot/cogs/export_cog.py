@@ -180,6 +180,7 @@ class ExportCog(commands.Cog):
                             data = await resp.read()
                             zf.writestr(path_in_zip, data)
                 except Exception:
+                    logging.exception("Failed to fetch attachment for export")
                     continue
 
     @app_commands.command(name="export_thread", description="Export this thread to a ZIP (Markdown + CSV + attachments).")
@@ -231,7 +232,7 @@ class ExportCog(commands.Cog):
                 f.write(bio.getvalue())
         except Exception:
             # Local backup failure should not prevent delivering the export to the user.
-            pass
+            logging.exception("Failed to write local backup of export")
 
         file = discord.File(bio, filename=filename)
         await interaction.followup.send(content="Thread export ready.", file=file, ephemeral=True)
@@ -286,7 +287,7 @@ class ExportCog(commands.Cog):
         except Exception:
             # Older discord.py or missing permissions may not support archived_threads;
             # in that case we proceed with whatever we have.
-            pass
+            logging.exception("Failed to fetch archived threads")
 
         if not threads:
             return await interaction.followup.send("No threads found under this channel to export.", ephemeral=True)
@@ -347,6 +348,7 @@ class ExportCog(commands.Cog):
                             zf.write(path, arcname=name)
                         except Exception:
                             # If one file fails, skip it but continue building the archive
+                            logging.exception("Failed to write file to aggregate export ZIP")
                             continue
                 all_bio.seek(0)
                 agg_name = f"all_threads_export_guild_{guild.id}_channel_{target.id}_{ts}.zip"
@@ -412,7 +414,7 @@ class ExportCog(commands.Cog):
                 f.write(bio.getvalue())
         except Exception:
             # Local backup failure should not prevent delivering the export to the user.
-            pass
+            logging.exception("Failed to write local backup of export")
 
         file = discord.File(bio, filename=filename)
         await interaction.followup.send(content="Channel export ready.", file=file, ephemeral=True)
@@ -601,6 +603,7 @@ class ExportCog(commands.Cog):
                             try:
                                 embeds.append(discord.Embed.from_dict(e))
                             except Exception:
+                                logging.exception("Failed to deserialize embed during import")
                                 continue
 
                         # When embeds are present, prefer the embed UI only to avoid
@@ -677,6 +680,7 @@ class ExportCog(commands.Cog):
                         try:
                             embeds.append(discord.Embed.from_dict(e))
                         except Exception:
+                            logging.exception("Failed to deserialize embed during import (channel import)")
                             continue
 
                     # When embeds are present, prefer the embed UI only to avoid
@@ -781,6 +785,7 @@ class ExportCog(commands.Cog):
                             try:
                                 embeds.append(discord.Embed.from_dict(e))
                             except Exception:
+                                logging.exception("Failed to deserialize embed during import")
                                 continue
 
                         # When embeds are present, prefer the embed UI only to avoid

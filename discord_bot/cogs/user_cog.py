@@ -38,7 +38,7 @@ class UserCog(commands.Cog):
             try:
                 await raid_cog.maybe_send_control_panel_ephemeral(interaction)
             except Exception:
-                pass
+                logging.exception("Failed to re-show control panel in my_dkp")
 
     @app_commands.command(name="my_dkp", description="Check your DKP balance.")
     async def my_dkp_cmd(self, interaction: discord.Interaction):

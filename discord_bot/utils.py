@@ -65,7 +65,7 @@ async def ensure_allowed_guild(interaction: discord.Interaction) -> bool:
         else:
             await interaction.followup.send(msg, ephemeral=True)
     except Exception:
-        pass
+        logging.exception("Failed to send ephemeral message")
     return False
 
 async def send_dkp_change_dm(

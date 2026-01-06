@@ -398,7 +398,7 @@ class RaidControlView(discord.ui.View):
             try:
                 await raid_cog.maybe_send_control_panel_ephemeral(interaction, raid=raid)
             except Exception:
-                pass
+                logging.exception("Failed to re-show control panel after award DKP")
 
     @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_award_dkp", row=0)
     async def award_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -468,7 +468,7 @@ class RaidControlView(discord.ui.View):
                     ephemeral=True,
                 )
             except Exception:
-                pass  # Fully expired, ignore
+                logging.exception("Failed to send expired interaction message")  # Fully expired, ignore
         except discord.HTTPException:
             # Optionally log or handle other HTTP errors
             pass
@@ -508,7 +508,7 @@ class RaidControlView(discord.ui.View):
                 already_joined = True
         except Exception:
             # If we can't check, we'll proceed and let the DB's INSERT OR IGNORE handle duplicates
-            pass
+            logging.exception("Failed to check existing raid members for duplicate join")
 
         if already_joined:
             return await interaction.followup.send("You are already part of this raid.", ephemeral=True)

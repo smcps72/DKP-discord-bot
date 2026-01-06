@@ -650,7 +650,7 @@ class RaidCog(commands.Cog):
         try:
             await thread.send(f"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.")
         except Exception:
-            pass
+            logging.exception("Failed to send raid closure message to thread")
 
         new_name = getattr(thread, "name", None)
         if isinstance(new_name, str) and "[closed]" not in new_name.lower():
@@ -661,7 +661,7 @@ class RaidCog(commands.Cog):
         except Exception:
             # If we cannot rename/archive the thread, the DB flag still marks
             # the raid as inactive.
-            pass
+            logging.exception("Failed to archive/rename raid thread")
 
         # Post a summary with a link to the archived thread in the completed raids channel
         config = await self.bot.db.get_guild_config(interaction.guild.id)
@@ -677,7 +677,7 @@ class RaidCog(commands.Cog):
                 try:
                     await completed_channel.send(embed=embed)
                 except Exception:
-                    pass
+                    logging.exception("Failed to post raid completion summary to completed channel")
 
         # Send an explicit ephemeral confirmation to the user who closed the
         # raid so that any temporary "bot is thinking" message from the

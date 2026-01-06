@@ -100,7 +100,7 @@ class AuctionCog(commands.Cog):
         try:
             await interaction.followup.send("Auction started.", ephemeral=True)
         except Exception:
-            pass
+            logging.exception("Failed to send followup in auction start")
 
         # Store the message id so future enhancements (like updating the embed)
         # can locate the canonical auction message.
@@ -110,7 +110,7 @@ class AuctionCog(commands.Cog):
                 (msg.id, auction_id),
             )
         except Exception:
-            pass
+            logging.exception("Failed to store auction message_id")
 
         # Re-show raid control panel to the leader/admin so "End Auction" is
         # easy to reach without scrolling.
@@ -119,7 +119,7 @@ class AuctionCog(commands.Cog):
             try:
                 await raid_cog.maybe_send_control_panel_ephemeral(interaction, raid=raid)
             except Exception:
-                pass
+                logging.exception("Failed to re-show raid control panel after auction start")
 
     async def send_bid_panel(self, interaction: discord.Interaction, auction_id: int, trace_id: str | None = None):
         if trace_id is None:
@@ -163,7 +163,7 @@ class AuctionCog(commands.Cog):
             try:
                 await raid_cog.maybe_send_control_panel_ephemeral(interaction)
             except Exception:
-                pass
+                logging.exception("Failed to re-show control panel after bid panel")
 
     async def process_bid(self, interaction: discord.Interaction, auction_id: int, bid_amount_str: str, trace_id: str | None = None):
         if trace_id is None:
@@ -207,7 +207,7 @@ class AuctionCog(commands.Cog):
                 try:
                     await raid_cog.maybe_send_control_panel_ephemeral(interaction)
                 except Exception:
-                    pass
+                    logging.exception("Failed to re-show control panel after bid validation")
             return
 
         # Enforce a single bid per user per auction.
@@ -228,7 +228,7 @@ class AuctionCog(commands.Cog):
                 try:
                     await raid_cog.maybe_send_control_panel_ephemeral(interaction)
                 except Exception:
-                    pass
+                    logging.exception("Failed to re-show control panel after bid recording")
             return
 
         # Record the user's single bid without revealing any information about
@@ -250,7 +250,7 @@ class AuctionCog(commands.Cog):
             try:
                 await raid_cog.maybe_send_control_panel_ephemeral(interaction)
             except Exception:
-                pass
+                logging.exception("Failed to re-show control panel after auction end")
 
     async def end_auction_from_button(self, interaction: discord.Interaction):
         trace_id = str(uuid.uuid4())
