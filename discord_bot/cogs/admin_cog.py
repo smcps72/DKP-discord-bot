@@ -411,8 +411,14 @@ class AdminCog(commands.Cog):
         await ctx.reply(embed=embed)
 
     async def set_role(self, interaction: discord.Interaction, role_type: str, role: discord.Role):
+        # Validate role_type to prevent SQL injection
+        valid_columns = {"officer", "raider", "raid_leader"}
+        if role_type.lower() not in valid_columns:
+            await interaction.followup.send("Invalid role type.", ephemeral=True)
+            return
+        column = f"{role_type.lower()}_role_id"
         await self.bot.db.execute(
-            f"UPDATE guilds SET {role_type.lower()}_role_id = ? WHERE guild_id = ?",
+            f"UPDATE guilds SET {column} = ? WHERE guild_id = ?",  # nosec B608
             (role.id, interaction.guild.id)
         )
 
