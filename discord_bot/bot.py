@@ -21,6 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from discord_bot.database import Database, DB_FILE
 from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelView
+from discord_bot.utils import ensure_allowed_guild
 
 # --- Environment Variable Loading ---
 # The bot will look for the .env file in the project root.
@@ -66,6 +67,11 @@ if LICENSE_CHECK_ENABLED and not all([LICENSE_KEY, LICENSE_SERVER_URL]):
     raise ValueError("GUILD_LICENSE_KEY or LICENSE_SERVER_URL are missing for license check. Please check your .env file or disable license check.")
 
 # --- Bot Class ---
+class DkpCommandTree(app_commands.CommandTree):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await ensure_allowed_guild(interaction)
+
+
 class DkpBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -75,7 +81,7 @@ class DkpBot(commands.Bot):
         intents.messages = True
         intents.message_content = True # Required for potential future prefix commands
 
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, tree_cls=DkpCommandTree)
         self.db = Database(DB_FILE)
         self.license_key = LICENSE_KEY
         self.license_server_url = LICENSE_SERVER_URL
@@ -166,24 +172,6 @@ class DkpBot(commands.Bot):
 
 # --- Run the Bot ---
 bot = DkpBot()
-
-@bot.tree.check
-async def guild_allowlist_check(interaction: discord.Interaction) -> bool:
-    if not ALLOWED_GUILD_IDS:
-        return True
-    guild = interaction.guild
-    if guild and guild.id in ALLOWED_GUILD_IDS:
-        return True
-    try:
-        msg = "This bot is not authorized for this server."
-        if not interaction.response.is_done():
-            await interaction.response.send_message(msg, ephemeral=True)
-        else:
-            await interaction.followup.send(msg, ephemeral=True)
-    except Exception:
-        pass
-    return False
-
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     logging.error(f"App command error: {type(error).__name__}: {error}")
