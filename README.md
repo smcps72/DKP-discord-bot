@@ -187,6 +187,8 @@ python -m bandit -r discord_bot -f json -o bandit-report.json
 python -m pip_audit --format json --output audit-report.json
 ```
 
+**Note:** Pre-commit hooks are not supported on Windows with Git. Run `python security-scan.py` manually before commits, or use `git commit --no-verify` to bypass if needed (not recommended).
+
 ### Least Privilege Guidance
 
 - **Roles**: The bot creates `Officer`, `Raider`, and `Raid-Leader` roles. Only assign `Officer` to trusted users.
