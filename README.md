@@ -156,3 +156,39 @@ These integrations are fully disabled by default. To enable them, configure the 
 - `RAIDLOG_EVM_ENABLED` / `RAIDLOG_EVM_ENDPOINT`
 
 If the endpoints are unreachable or return errors, raid closure and local logging will still succeed; the bot simply logs a warning.
+
+## Security
+
+### Checklist
+
+- **Bot Permissions**: Grant only the permissions listed in the "Inviting the Bot" section. Avoid granting `Administrator`.
+- **Environment Variables**: Never commit `.env.local` with real tokens. Use `.env.example` as a template.
+- **Dependency Updates**: Run `pip-audit` regularly to check for known vulnerabilities.
+- **Static Analysis**: Run `bandit` to catch common security issues in the code.
+
+### Running Security Scans
+
+A convenience script is provided to run both `bandit` (static analysis) and `pip-audit` (dependency vulnerability scan):
+
+```bash
+python security-scan.py
+```
+
+This will generate:
+- `bandit-report.json` (static analysis report)
+- `audit-report.json` (dependency vulnerability report)
+
+You can also run the tools manually:
+```bash
+# Static analysis
+python -m bandit -r discord_bot -f json -o bandit-report.json
+
+# Dependency vulnerability scan
+python -m pip_audit --format json --output audit-report.json
+```
+
+### Least Privilege Guidance
+
+- **Roles**: The bot creates `Officer`, `Raider`, and `Raid-Leader` roles. Only assign `Officer` to trusted users.
+- **Channels**: The bot creates channels under a `DKP-System` category with read-only permissions for the default role.
+- **Commands**: Sensitive commands (`/setup_dkp`, `/reset_dkp`) are restricted to users with `Administrator` permission or the `Officer` role.
