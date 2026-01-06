@@ -10,6 +10,7 @@ from datetime import datetime
 class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._history_cooldowns: dict[int, float] = {}
 
     async def _create_status_embed(self, guild_id: int) -> discord.Embed:
         config = await self.bot.db.get_guild_config(guild_id)
@@ -32,6 +33,25 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="history", description="Downloads a CSV of the last 30 days of DKP transactions.")
     @app_commands.checks.has_permissions(administrator=True)
     async def history_cmd(self, interaction: discord.Interaction):
+        now = datetime.utcnow().timestamp()
+        guild_id = interaction.guild.id
+        last = self._history_cooldowns.get(guild_id, 0)
+        if now - last < 60:
+            remaining = int(60 - (now - last))
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"This command can only be used once every 60 seconds per server. Please try again in {remaining} seconds.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    f"This command can only be used once every 60 seconds per server. Please try again in {remaining} seconds.",
+                    ephemeral=True,
+                )
+            return
+
+        self._history_cooldowns[guild_id] = now
+
         await interaction.response.defer(ephemeral=True)
         records = await self.bot.db.fetchall(
             "SELECT user_id, change, reason, timestamp FROM transactions WHERE guild_id = ? AND timestamp >= date('now', '-30 days')",

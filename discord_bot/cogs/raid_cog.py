@@ -411,10 +411,9 @@ class RaidCog(commands.Cog):
         # even when the VC is empty or has been cleaned up.
         members_by_id: dict[int, discord.Member] = {}
 
-        if isinstance(vc, discord.VoiceChannel):
-            for m in getattr(vc, "members", []):
-                if not m.bot:
-                    members_by_id[m.id] = m
+        for m in getattr(vc, "members", []):
+            if not getattr(m, "bot", False):
+                members_by_id[m.id] = m
 
         try:
             member_rows = await self.bot.db.get_raid_members(raid["id"])
@@ -505,11 +504,11 @@ class RaidCog(commands.Cog):
         if member is None:
             # Mass adjustment: include all non-bot members currently in the
             # raid voice channel plus any non-bot guild members recorded in
-            # the raid_members table for this raid.
+            # raid_members table for this raid.
             targets_by_id: dict[int, discord.Member] = {}
 
-            if isinstance(vc, discord.VoiceChannel):
-                for m in getattr(vc, "members", []):
+            if vc and hasattr(vc, "members"):
+                for m in vc.members:
                     if not m.bot:
                         targets_by_id[m.id] = m
 

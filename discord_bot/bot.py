@@ -40,7 +40,17 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 LICENSE_KEY = os.getenv("GUILD_LICENSE_KEY")
 LICENSE_SERVER_URL = os.getenv("LICENSE_SERVER_URL", "https://dkp-discord-bot-production.up.railway.app")
 LICENSE_CHECK_ENABLED = os.getenv("LICENSE_CHECK_ENABLED", "false").lower() == "true"
-
+ALLOWED_GUILD_IDS_ENV = os.getenv("ALLOWED_GUILD_IDS")
+ALLOWED_GUILD_IDS: set[int] = set()
+if ALLOWED_GUILD_IDS_ENV:
+    for raw in ALLOWED_GUILD_IDS_ENV.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ALLOWED_GUILD_IDS.add(int(raw))
+        except ValueError:
+            logging.warning("Invalid guild id in ALLOWED_GUILD_IDS: %s", raw)
 # Optional: limit slash-command sync to a single test guild so changes appear immediately.
 TEST_GUILD_ID_ENV = os.getenv("TEST_GUILD_ID")
 TEST_GUILD_ID: int | None = None
@@ -156,6 +166,23 @@ class DkpBot(commands.Bot):
 
 # --- Run the Bot ---
 bot = DkpBot()
+
+@bot.tree.check
+async def guild_allowlist_check(interaction: discord.Interaction) -> bool:
+    if not ALLOWED_GUILD_IDS:
+        return True
+    guild = interaction.guild
+    if guild and guild.id in ALLOWED_GUILD_IDS:
+        return True
+    try:
+        msg = "This bot is not authorized for this server."
+        if not interaction.response.is_done():
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await interaction.followup.send(msg, ephemeral=True)
+    except Exception:
+        pass
+    return False
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):

@@ -1,7 +1,7 @@
 import discord
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
 from discord.ui import UserSelect, Select
-from ..utils import is_admin
+from ..utils import is_admin, ensure_allowed_guild
 class MemberSelect(Select):
     def __init__(self, bot, action: str, members: list[discord.Member]):
         self.bot = bot
@@ -74,6 +74,9 @@ class WelcomeView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
         self.bot = bot
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await ensure_allowed_guild(interaction)
 
     @discord.ui.button(label="Create Raid 🏰", style=discord.ButtonStyle.success, custom_id="welcome_create_raid")
     async def create_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -228,6 +231,8 @@ class AdminPanelView(discord.ui.View):
         self.bot = bot
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await ensure_allowed_guild(interaction):
+            return False
         if not await is_admin(interaction):
             await interaction.response.send_message("You must be a server admin to use this.", ephemeral=True)
             return False
@@ -293,6 +298,8 @@ class RaidControlView(discord.ui.View):
                 self.remove_item(child)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await ensure_allowed_guild(interaction):
+            return False
         # On bot startup, interaction_check can be called with a mock interaction
         # that has no channel. We return False to prevent errors.
         if not interaction.channel:
@@ -586,6 +593,8 @@ class AuctionBidView(discord.ui.View):
 
     @discord.ui.button(label="Bid", style=discord.ButtonStyle.success, custom_id="auction_bid")
     async def bid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
         auction_cog = self.bot.get_cog("AuctionCog")
         modal = BidModal(auction_cog=auction_cog, auction_id=self.auction_id)
         await interaction.response.send_modal(modal)
@@ -598,6 +607,8 @@ class AuctionOpenPanelView(discord.ui.View):
 
     @discord.ui.button(label="Open Bid Panel", style=discord.ButtonStyle.primary, custom_id="auction_open_panel")
     async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
         auction_cog = self.bot.get_cog("AuctionCog")
         if not auction_cog:
             return await interaction.response.send_message("Auction module is currently offline.", ephemeral=True)
