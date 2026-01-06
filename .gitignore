@@ -12,14 +12,6 @@ bash.exe.stackdump
 dkp_bot.db
 js-e2e/node_modules
 backups
-
+Documentation/dont_commit/
 # Local notes / scratch files
 
-todo list.txt
-\#\# Scenario 5 – Alts and Mains
-
-getting first users.txt
-Early user acquisition strategy.txt
-loot modes.md
-Concrete next steps for your bot
-.env
