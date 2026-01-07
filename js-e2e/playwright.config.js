@@ -1,6 +1,9 @@
 // @ts-check
-import { defineConfig } from '@playwright/test';
 import fs from 'fs';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { defineConfig } = require('@playwright/test');
 
 /**
  * Playwright configuration for JS + ZeroStep tests.
