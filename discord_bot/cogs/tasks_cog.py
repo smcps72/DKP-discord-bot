@@ -63,7 +63,16 @@ class TasksCog(commands.Cog):
         logging.info("Running cleanup task for empty raid VCs.")
         raids = await self.bot.db.fetchall("SELECT vc_id FROM raids WHERE is_active = 1")
         for raid in raids:
-            channel = self.bot.get_channel(raid['vc_id'])
+            vc_id = None
+            try:
+                vc_id = raid["vc_id"]
+            except Exception:
+                vc_id = None
+
+            if not vc_id:
+                continue
+
+            channel = self.bot.get_channel(vc_id)
             if channel and isinstance(channel, discord.VoiceChannel) and not channel.members:
                 # In a real bot, you'd add a grace period check (e.g., if empty for 30 seconds)
                 # This simple check is fine for demonstration.
