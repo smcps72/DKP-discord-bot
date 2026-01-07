@@ -21,6 +21,54 @@ class Database:
         # bot process, this is robust.
         self.pool.row_factory = aiosqlite.Row
         await self._create_tables()
+        await self._migrate_schema()
+
+    async def _migrate_schema(self):
+        async with self.pool.execute("PRAGMA table_info(guilds)") as cursor:
+            rows = await cursor.fetchall()
+        existing = {row[1] for row in rows}
+
+        migrations: list[tuple[str, str]] = [
+            ("license_key", "ALTER TABLE guilds ADD COLUMN license_key TEXT"),
+            (
+                "license_status",
+                "ALTER TABLE guilds ADD COLUMN license_status TEXT DEFAULT 'unknown'",
+            ),
+            (
+                "warning_sent",
+                "ALTER TABLE guilds ADD COLUMN warning_sent INTEGER DEFAULT 0",
+            ),
+            ("dkp_category_id", "ALTER TABLE guilds ADD COLUMN dkp_category_id INTEGER"),
+            ("dkp_channel_id", "ALTER TABLE guilds ADD COLUMN dkp_channel_id INTEGER"),
+            ("raid_channel_id", "ALTER TABLE guilds ADD COLUMN raid_channel_id INTEGER"),
+            (
+                "completed_raid_channel_id",
+                "ALTER TABLE guilds ADD COLUMN completed_raid_channel_id INTEGER",
+            ),
+            ("officer_role_id", "ALTER TABLE guilds ADD COLUMN officer_role_id INTEGER"),
+            ("raider_role_id", "ALTER TABLE guilds ADD COLUMN raider_role_id INTEGER"),
+            (
+                "raid_leader_role_id",
+                "ALTER TABLE guilds ADD COLUMN raid_leader_role_id INTEGER",
+            ),
+            (
+                "raid_vc_template_id",
+                "ALTER TABLE guilds ADD COLUMN raid_vc_template_id INTEGER",
+            ),
+            (
+                "default_dkp_award",
+                "ALTER TABLE guilds ADD COLUMN default_dkp_award INTEGER DEFAULT 5",
+            ),
+        ]
+
+        for col, sql in migrations:
+            if col in existing:
+                continue
+            try:
+                await self.pool.execute(sql)
+            except aiosqlite.OperationalError:
+                continue
+        await self.pool.commit()
 
     async def _create_tables(self):
         async with self.pool.cursor() as cursor:
