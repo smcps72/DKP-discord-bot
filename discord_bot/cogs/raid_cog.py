@@ -3,6 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 import logging
+import re
+import io
 from ..utils import create_info_embed, create_error_embed, create_success_embed, is_officer, send_dkp_change_dm
 from ..ui.views import RaidControlView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
@@ -18,6 +20,78 @@ class RaidCog(commands.Cog):
         # instead of after every single award/deduct.
         # Key: (guild_id, thread_id, leader_id) -> int count
         self._dkp_adjust_counts: dict[tuple[int, int, int], int] = {}
+
+    @commands.Cog.listener()
+    async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
+        if not isinstance(after, discord.Thread):
+            return
+        if after.guild is None:
+            return
+        try:
+            raid = await self.bot.db.fetchone(
+                "SELECT * FROM raids WHERE thread_id = ?",
+                (after.id,),
+            )
+        except Exception:
+            return
+
+        if not raid:
+            return
+
+        try:
+            await self.ensure_raid_thread_name(after, raid, requested_name=after.name)
+        except Exception:
+            logging.exception("Failed to enforce raid thread name on thread update")
+
+    def _format_raid_log_thread_name(self, guild: discord.Guild, raid: dict, requested_name: str) -> str:
+        leader_id = None
+        try:
+            leader_id = raid["leader_id"]
+        except Exception:
+            leader_id = raid.get("leader_id") if isinstance(raid, dict) else None
+        leader_member = guild.get_member(int(leader_id)) if leader_id and guild else None
+        leader_display = (
+            leader_member.display_name
+            if isinstance(leader_member, discord.Member)
+            else str(leader_id) if leader_id else "Unknown"
+        )
+
+        suffix_prefix = " - Raid Log - "
+        max_len = 100
+        max_display = max_len - len(suffix_prefix)
+        if max_display < 1:
+            max_display = 1
+        if len(leader_display) > max_display:
+            leader_display = leader_display[:max_display]
+
+        suffix = f"{suffix_prefix}{leader_display}"
+
+        base = (requested_name or "").strip()
+        base = re.sub(r"\s*-\s*Raid Log\s*-\s*.*$", "", base, flags=re.IGNORECASE).strip()
+        if not base:
+            base = "Raid"
+
+        allowed_base_len = max_len - len(suffix)
+        if allowed_base_len < 1:
+            allowed_base_len = 1
+        if len(base) > allowed_base_len:
+            base = base[:allowed_base_len].rstrip()
+
+        full = f"{base}{suffix}"
+        if len(full) > max_len:
+            full = full[:max_len]
+        return full
+
+    async def ensure_raid_thread_name(self, thread: discord.Thread, raid: dict, requested_name: str | None = None):
+        if not thread.guild:
+            return
+        desired = self._format_raid_log_thread_name(thread.guild, raid, requested_name or thread.name)
+        if thread.name == desired:
+            return
+        try:
+            await thread.edit(name=desired)
+        except Exception:
+            logging.exception("Failed to enforce raid thread name")
 
     async def maybe_send_control_panel_ephemeral(
         self,
@@ -191,22 +265,12 @@ class RaidCog(commands.Cog):
             except Exception:
                 return
 
-        # Use the raid leader's current voice channel as the raid VC instead of
-        # creating or cloning a dedicated raid voice channel. This keeps the
-        # bot from modifying the guild's channel structure and lets guilds
-        # manage their own voice layout.
+        # Optionally associate the raid with the leader's current voice channel.
+        # Raids can be started even if the leader is not connected to voice.
         leader_member = interaction.user if isinstance(interaction.user, discord.Member) else None
         leader_voice = getattr(leader_member, "voice", None)
         raid_vc = getattr(leader_voice, "channel", None)
-
-        if not isinstance(raid_vc, discord.VoiceChannel):
-            return await interaction.followup.send(
-                embed=create_error_embed(
-                    "No Voice Channel",
-                    "You must be connected to a voice channel in this server to create a raid.",
-                ),
-                ephemeral=True,
-            )
+        raid_vc_id = raid_vc.id if isinstance(raid_vc, discord.VoiceChannel) else None
 
         active_raids_channel = interaction.guild.get_channel(config["raid_channel_id"])
         if not active_raids_channel:
@@ -251,12 +315,23 @@ class RaidCog(commands.Cog):
             start_timestamp = int(datetime.now().timestamp())
             base_content = f"Raid '{raid_name}' started by {interaction.user.mention} on <t:{start_timestamp}:F>"
             raid_message = await active_raids_channel.send(base_content)
-            thread_name = f"{raid_name} - Raid Log - {user_display}"
+            thread_name = self._format_raid_log_thread_name(
+                interaction.guild,
+                {"leader_id": interaction.user.id},
+                raid_name,
+            )
             thread = await raid_message.create_thread(name=thread_name)
             await self.bot.db.execute(
                 "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id) VALUES (?, ?, ?, ?)",
-                (interaction.guild.id, interaction.user.id, raid_vc.id, thread.id),
+                (interaction.guild.id, interaction.user.id, raid_vc_id, thread.id),
             )
+
+            try:
+                raid_row = await self.bot.db.fetchone("SELECT * FROM raids WHERE thread_id = ?", (thread.id,))
+                if raid_row:
+                    await self.ensure_raid_thread_name(thread, raid_row)
+            except Exception:
+                logging.exception("Failed to enforce initial raid thread name")
 
             # After the thread exists, edit the original raid message to ping
             # raiders (if configured) and include a direct jump link to the
@@ -624,10 +699,92 @@ class RaidCog(commands.Cog):
             return await interaction.followup.send("Raid thread not found.", ephemeral=True)
 
         try:
-            await thread.edit(name=new_name)
+            desired = self._format_raid_log_thread_name(interaction.guild, raid, new_name)
+            await thread.edit(name=desired)
             await interaction.followup.send("Thread renamed successfully.", ephemeral=True)
         except discord.HTTPException:
             await interaction.followup.send("Failed to rename the thread. Check my permissions.", ephemeral=True)
+
+    async def _copy_thread_to_completed_channel(
+        self,
+        guild: discord.Guild,
+        source_thread: discord.Thread,
+        raid: dict,
+        completed_channel: discord.TextChannel,
+        desired_thread_name: str | None = None,
+    ) -> discord.Thread | None:
+        try:
+            seed = await completed_channel.send(f"Raid log moved here: {source_thread.mention}")
+            desired_name = self._format_raid_log_thread_name(
+                guild,
+                raid,
+                desired_thread_name or source_thread.name,
+            )
+            dest_thread = await seed.create_thread(name=desired_name)
+        except Exception:
+            logging.exception("Failed to create completed raid thread")
+            return None
+
+        export_cog = self.bot.get_cog("ExportCog")
+        session = getattr(self.bot, "http_session", None)
+
+        async for msg in source_thread.history(limit=None, oldest_first=True):
+            try:
+                content = (
+                    export_cog._extract_message_content(msg)  # type: ignore[attr-defined]
+                    if export_cog is not None
+                    else (msg.clean_content or "")
+                )
+            except Exception:
+                content = msg.clean_content or ""
+
+            author_name = getattr(msg.author, "display_name", None) or getattr(msg.author, "name", None) or "Unknown"
+            ts = msg.created_at.isoformat()
+
+            prefix = f"[{ts}] {author_name}:\n"
+            body = (content or "").strip()
+            text = (prefix + body).strip()
+            if len(text) > 1900:
+                text = text[:1900] + "..."
+
+            attachments = list(getattr(msg, "attachments", []) or [])
+
+            if not text and not attachments:
+                continue
+
+            # Discord limits a single message to 10 attachments.
+            batches = [attachments[i : i + 10] for i in range(0, len(attachments), 10)] or [[]]
+
+            for idx, batch in enumerate(batches):
+                files: list[discord.File] = []
+                for a in batch:
+                    if session is None:
+                        continue
+                    try:
+                        async with session.get(a.url) as resp:
+                            if resp.status != 200:
+                                continue
+                            data = await resp.read()
+                        files.append(discord.File(io.BytesIO(data), filename=a.filename))
+                    except Exception:
+                        continue
+
+                send_text = text if idx == 0 else ""
+                if not send_text and not files:
+                    continue
+
+                try:
+                    await dest_thread.send(content=send_text or None, files=files)
+                except Exception:
+                    logging.exception("Failed to copy a message into completed raid thread")
+                    continue
+
+        try:
+            await dest_thread.edit(archived=True, locked=True)
+        except Exception:
+            logging.exception("Failed to lock/archive completed raid thread")
+
+        return dest_thread
 
     async def close_raid(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -649,9 +806,7 @@ class RaidCog(commands.Cog):
                 except discord.HTTPException:
                     pass # Ignore if user left or role is gone
 
-        # Mark the raid log thread as closed and archive/lock it. The
-        # associated voice channel is left untouched so guilds can continue to
-        # manage their own channel layout.
+        # Mark the raid log thread as closed and archive/lock it.
         try:
             await thread.send(f"Raid closed by {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>. This thread is now locked.")
         except Exception:
@@ -662,21 +817,52 @@ class RaidCog(commands.Cog):
             new_name = f"[Closed] {new_name}"
 
         try:
+            if interaction.guild and isinstance(new_name, str):
+                new_name = self._format_raid_log_thread_name(interaction.guild, raid, new_name)
+        except Exception:
+            pass
+
+        completed_thread: discord.Thread | None = None
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        completed_channel_id = config.get("completed_raid_channel_id") if config else None
+        if completed_channel_id and interaction.guild:
+            completed_channel = interaction.guild.get_channel(completed_channel_id)
+            if isinstance(completed_channel, discord.TextChannel):
+                try:
+                    completed_thread = await self._copy_thread_to_completed_channel(
+                        interaction.guild,
+                        thread,
+                        raid,
+                        completed_channel,
+                        desired_thread_name=new_name,
+                    )
+                except Exception:
+                    logging.exception("Failed to move raid log to completed channel")
+
+        if completed_thread is not None:
+            try:
+                await self.bot.db.execute(
+                    "UPDATE raids SET thread_id = ? WHERE id = ?",
+                    (completed_thread.id, raid["id"]),
+                )
+            except Exception:
+                logging.exception("Failed to update raid thread_id after move to completed channel")
+
+        try:
             await thread.edit(name=new_name, archived=True, locked=True)
         except Exception:
             # If we cannot rename/archive the thread, the DB flag still marks
             # the raid as inactive.
             logging.exception("Failed to archive/rename raid thread")
 
-        # Post a summary with a link to the archived thread in the completed raids channel
-        config = await self.bot.db.get_guild_config(interaction.guild.id)
-        completed_channel_id = config.get("completed_raid_channel_id") if config else None
-        if completed_channel_id:
+        # Post a summary with a link in the completed raids channel
+        if completed_channel_id and interaction.guild:
             completed_channel = interaction.guild.get_channel(completed_channel_id)
             if completed_channel:
+                target_thread = completed_thread or thread
                 embed = create_info_embed(
                     "Raid Completed",
-                    f"Raid log thread: {thread.mention}\n"
+                    f"Raid log thread: {target_thread.mention}\n"
                     f"Closed by: {interaction.user.mention} at <t:{int(datetime.now().timestamp())}:F>"
                 )
                 try:
