@@ -147,21 +147,60 @@ class DkpBot(commands.Bot):
         if after.channel is None:
             return
 
+        # Prefer normal association by voice channel.
+        raid = None
         try:
             raid = await self.db.get_raid_by_vc(after.channel.id)
         except Exception as e:
             logging.error(f"Error fetching raid for voice channel {after.channel.id}: {e}")
-            return
+            raid = None
+
+        # If no raid is tied to this VC yet, allow the raid leader's first join
+        # to attach their active raid to this voice channel (for raids started
+        # without being in voice).
+        if raid is None:
+            try:
+                if member.guild is not None:
+                    leader_raid = await self.db.get_active_raid_by_leader(member.guild.id, member.id)
+                else:
+                    leader_raid = None
+            except Exception as e:
+                logging.error(f"Error fetching active raid for leader {member.id}: {e}")
+                leader_raid = None
+
+            if leader_raid is not None:
+                try:
+                    if not leader_raid["vc_id"]:
+                        await self.db.execute(
+                            "UPDATE raids SET vc_id = ? WHERE id = ?",
+                            (after.channel.id, leader_raid["id"]),
+                        )
+                        raid = dict(leader_raid)
+                        raid["vc_id"] = after.channel.id
+                except Exception as e:
+                    logging.error(f"Error attaching raid {getattr(leader_raid, 'id', None)} to VC: {e}")
+                    raid = None
 
         if not raid:
             return
 
+        # Record the joining member, and also snapshot any current VC members
+        # so the roster is correct even if the leader joins after others.
         try:
             await self.db.add_raid_member(raid["id"], member.id)
         except Exception as e:
-            logging.error(
-                f"Error recording raid member {member.id} for raid {raid.get('id')}: {e}"
-            )
+            logging.error(f"Error recording raid member {member.id} for raid {raid.get('id')}: {e}")
+
+        try:
+            for m in getattr(after.channel, "members", []) or []:
+                if getattr(m, "bot", False):
+                    continue
+                try:
+                    await self.db.add_raid_member(raid["id"], m.id)
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     async def close(self):
         await super().close()
