@@ -269,6 +269,12 @@ class Database:
     async def get_raid_by_vc(self, vc_id):
         return await self.fetchone("SELECT * FROM raids WHERE vc_id = ? AND is_active = 1", (vc_id,))
 
+    async def get_active_raid_by_leader(self, guild_id: int, leader_id: int):
+        return await self.fetchone(
+            "SELECT * FROM raids WHERE guild_id = ? AND leader_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1",
+            (guild_id, leader_id),
+        )
+
     async def add_raid_member(self, raid_id: int, user_id: int):
         await self.execute(
             "INSERT OR IGNORE INTO raid_members (raid_id, user_id) VALUES (?, ?)",
