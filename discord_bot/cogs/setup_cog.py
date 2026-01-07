@@ -150,7 +150,10 @@ class SetupCog(commands.Cog):
     async def setup_dkp(self, interaction: discord.Interaction):
         """Manually (re)run the DKP system setup."""
         # We need to defer here because the setup can take a moment
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.NotFound, discord.HTTPException):
+            return
         await self.run_setup(interaction.guild, interaction=interaction)
 
 async def setup(bot: commands.Bot):

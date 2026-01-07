@@ -1,7 +1,9 @@
 import discord
+import logging
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
 from discord.ui import UserSelect, Select
-from ..utils import is_admin, ensure_allowed_guild
+from ..utils import is_admin, is_officer, ensure_allowed_guild
+
 class MemberSelect(Select):
     def __init__(self, bot, action: str, members: list[discord.Member]):
         self.bot = bot
@@ -69,6 +71,7 @@ class DKPAdjustmentView(discord.ui.View):
             source="raid_panel",
         )
         await interaction.response.send_modal(modal)
+
 
 class WelcomeView(discord.ui.View):
     def __init__(self, bot):
@@ -272,6 +275,7 @@ class AdminPanelView(discord.ui.View):
             view=view,
         )
 
+
 class RaidControlView(discord.ui.View):
     def __init__(self, bot, show_leader_buttons: bool = True):
         super().__init__(timeout=None)
@@ -313,7 +317,11 @@ class RaidControlView(discord.ui.View):
         # Defer most interactions immediately to prevent timeouts.
         # IMPORTANT: Do NOT defer for buttons that will open a modal, since
         # modals must be sent via the initial interaction response.
-        if interaction.type != discord.InteractionType.modal_submit and custom_id not in ("raid_add_rule", "raid_start_auction"):
+        if interaction.type != discord.InteractionType.modal_submit and custom_id not in (
+            "raid_add_rule",
+            "raid_start_auction",
+            "raid_rename_thread",
+        ):
             # Only defer if the interaction hasn't already been acknowledged
             # by another handler (e.g., a command or previous callback).
             if not interaction.response.is_done():
@@ -328,7 +336,7 @@ class RaidControlView(discord.ui.View):
                     pass
 
         # Allow everyone to use the raid "My DKP" button and view rules.
-        if custom_id in ("raid_my_dkp", "raid_view_rules"):
+        if custom_id in ("raid_my_dkp", "raid_view_rules", "raid_join_raid"):
             return True
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -338,6 +346,9 @@ class RaidControlView(discord.ui.View):
             and interaction.user.guild_permissions.administrator
         )
         if raid and (interaction.user.id == raid['leader_id'] or is_admin):
+            return True
+
+        if custom_id == "raid_rename_thread" and raid and await is_officer(interaction):
             return True
 
         # User is not the raid leader. If we haven't responded yet, send an
@@ -414,8 +425,6 @@ class RaidControlView(discord.ui.View):
     @discord.ui.button(label="Deduct DKP", style=discord.ButtonStyle.danger, custom_id="raid_deduct_dkp", row=0)
     async def deduct_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._show_dkp_adjustment_view(interaction, "Deduct")
-
-
 
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -501,7 +510,6 @@ class RaidControlView(discord.ui.View):
     @discord.ui.button(label="Join Raid", style=discord.ButtonStyle.success, custom_id="raid_join_raid", row=0)
     async def join_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Record the user as a raid participant without needing to be in the voice channel."""
-        await interaction.response.defer(ephemeral=True)
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
@@ -530,24 +538,35 @@ class RaidControlView(discord.ui.View):
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Open a modal to rename the raid thread (raid leaders/officers only)."""
-        await interaction.response.defer(ephemeral=True)
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
+            if not interaction.response.is_done():
+                return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
             return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
 
         # Authorization check: raid leader, officer, or admin
-        from ..utils import is_officer
         if not await is_officer(interaction) and interaction.user.id != raid["leader_id"]:
+            if not interaction.response.is_done():
+                return await interaction.response.send_message(
+                    "You don't have permission to rename this thread.",
+                    ephemeral=True,
+                )
             return await interaction.followup.send("You don't have permission to rename this thread.", ephemeral=True)
 
         from ..ui.modals import ThreadRenameModal
         raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            if not interaction.response.is_done():
+                return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
         modal = ThreadRenameModal(raid_cog=raid_cog, raid_id=raid["id"])
         try:
             await interaction.response.send_modal(modal)
-        except discord.InteractionResponded:
-            # If already deferred (as we did above), use followup
-            await interaction.followup.send("Please try again.", ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            try:
+                await interaction.followup.send("Please try again.", ephemeral=True)
+            except Exception:
+                pass
 
     # The View Rules button is temporarily disabled. To re-enable in the future,
     # uncomment the decorator and method below.

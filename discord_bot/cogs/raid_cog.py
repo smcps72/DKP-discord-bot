@@ -140,34 +140,17 @@ class RaidCog(commands.Cog):
 
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
         """Entry point from commands/buttons: checks, then opens the raid-name modal."""
-        if not await is_officer(interaction):
-            return await interaction.response.send_message(
-                "You must be an officer to create a raid.",
-                ephemeral=True,
-            )
-
-        config = await self.bot.db.get_guild_config(interaction.guild.id)
-        if not config or not config["raid_channel_id"]:
-            return await interaction.response.send_message(
-                embed=create_error_embed(
-                    "Setup Incomplete",
-                    "The bot is not fully set up. Please ask an admin to re-invite the bot.",
-                ),
-                ephemeral=True,
-            )
-
-        active_raids_channel = interaction.guild.get_channel(config["raid_channel_id"])
-        if not active_raids_channel:
-            return await interaction.response.send_message(
-                embed=create_error_embed(
-                    "Setup Error",
-                    "Required channels are missing. Please re-invite the bot.",
-                ),
-                ephemeral=True,
-            )
-
         modal = RaidCreateModal(self)
-        await interaction.response.send_modal(modal)
+        try:
+            await interaction.response.send_modal(modal)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            try:
+                await interaction.followup.send(
+                    "This interaction expired. Please try /raid_create again.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
 
     async def create_raid_with_name(self, interaction: discord.Interaction, raid_name: str):
         """Actually create the raid using a provided raid name from the modal."""
@@ -176,17 +159,37 @@ class RaidCog(commands.Cog):
 
         # Defer so we can safely do followup messages from modal submission
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        if not await is_officer(interaction):
+            try:
+                if interaction.response.is_done():
+                    return await interaction.followup.send(
+                        "You must be an officer to create a raid.",
+                        ephemeral=True,
+                    )
+                return await interaction.response.send_message(
+                    "You must be an officer to create a raid.",
+                    ephemeral=True,
+                )
+            except Exception:
+                return
 
         config = await self.bot.db.get_guild_config(interaction.guild.id)
         if not config or not config["raid_channel_id"]:
-            return await interaction.followup.send(
-                embed=create_error_embed(
-                    "Setup Incomplete",
-                    "The bot is not fully set up. Please ask an admin to re-invite the bot.",
-                ),
-                ephemeral=True,
-            )
+            try:
+                return await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Setup Incomplete",
+                        "The bot is not fully set up. Please ask an admin to re-invite the bot.",
+                    ),
+                    ephemeral=True,
+                )
+            except Exception:
+                return
 
         # Use the raid leader's current voice channel as the raid VC instead of
         # creating or cloning a dedicated raid voice channel. This keeps the
@@ -207,13 +210,16 @@ class RaidCog(commands.Cog):
 
         active_raids_channel = interaction.guild.get_channel(config["raid_channel_id"])
         if not active_raids_channel:
-            return await interaction.followup.send(
-                embed=create_error_embed(
-                    "Setup Error",
-                    "Required channels are missing. Please re-invite the bot.",
-                ),
-                ephemeral=True,
-            )
+            try:
+                return await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Setup Error",
+                        "Required channels are missing. Please re-invite the bot.",
+                    ),
+                    ephemeral=True,
+                )
+            except Exception:
+                return
 
         # Basic sanitisation/trim to keep within Discord limits
         raid_name = raid_name.strip()
