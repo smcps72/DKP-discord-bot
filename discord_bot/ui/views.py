@@ -499,7 +499,7 @@ class RaidControlView(discord.ui.View):
         raid_cog = self.bot.get_cog("RaidCog")
         await raid_cog.close_raid(interaction)
 
-    @discord.ui.button(label="My DKP ", style=discord.ButtonStyle.secondary, custom_id="raid_my_dkp", row=0)
+    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="raid_my_dkp", row=0)
     async def raid_my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_cog = self.bot.get_cog("UserCog")
         if user_cog:
