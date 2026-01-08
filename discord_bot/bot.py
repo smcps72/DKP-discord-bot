@@ -29,7 +29,7 @@ dotenv_path = project_root / ".env"
 
 if dotenv_path.exists():
     print(f"INFO: Loading environment from {dotenv_path}")
-    load_dotenv(dotenv_path=dotenv_path, override=True)
+    load_dotenv(dotenv_path=dotenv_path, override=False)
 else:
     print("WARNING: No .env file found. Relying on system environment variables.")
 
