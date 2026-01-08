@@ -714,13 +714,17 @@ class RaidCog(commands.Cog):
         desired_thread_name: str | None = None,
     ) -> discord.Thread | None:
         try:
-            seed = await completed_channel.send(f"Raid log moved here: {source_thread.mention}")
+            seed = await completed_channel.send("Raid log moved here: (creating thread...)")
             desired_name = self._format_raid_log_thread_name(
                 guild,
                 raid,
                 desired_thread_name or source_thread.name,
             )
             dest_thread = await seed.create_thread(name=desired_name)
+            try:
+                await seed.edit(content=f"Raid log moved here: {dest_thread.mention}")
+            except Exception:
+                pass
         except Exception:
             logging.exception("Failed to create completed raid thread")
             return None
@@ -729,27 +733,40 @@ class RaidCog(commands.Cog):
         session = getattr(self.bot, "http_session", None)
 
         async for msg in source_thread.history(limit=None, oldest_first=True):
+            raw_content = (getattr(msg, "content", None) or msg.clean_content or "")
             try:
-                content = (
+                extracted = (
                     export_cog._extract_message_content(msg)  # type: ignore[attr-defined]
                     if export_cog is not None
-                    else (msg.clean_content or "")
+                    else raw_content
                 )
             except Exception:
-                content = msg.clean_content or ""
+                extracted = raw_content
 
             author_name = getattr(msg.author, "display_name", None) or getattr(msg.author, "name", None) or "Unknown"
             ts = msg.created_at.isoformat()
+            is_bot = bool(getattr(msg.author, "bot", False))
+            embeds = list(getattr(msg, "embeds", []) or [])
 
-            prefix = f"[{ts}] {author_name}:\n"
-            body = (content or "").strip()
-            text = (prefix + body).strip()
+            # If the message contains embeds, avoid flattening embed content into
+            # text because we will re-send the embed objects themselves.
+            body_source = raw_content if embeds else extracted
+            body = (body_source or "").strip()
+            text = ""
+            if is_bot or embeds:
+                # For bot/embedded messages, prefer preserving the original look.
+                # We cannot impersonate authors, but embeds retain most of the UI.
+                text = body
+            else:
+                prefix = f"[{ts}] {author_name}:\n"
+                text = (prefix + body).strip()
+
             if len(text) > 1900:
                 text = text[:1900] + "..."
 
             attachments = list(getattr(msg, "attachments", []) or [])
 
-            if not text and not attachments:
+            if not text and not attachments and not embeds:
                 continue
 
             # Discord limits a single message to 10 attachments.
@@ -770,23 +787,34 @@ class RaidCog(commands.Cog):
                         continue
 
                 send_text = text if idx == 0 else ""
-                if not send_text and not files:
+                send_embeds = embeds if idx == 0 else []
+
+                if not send_text and not files and not send_embeds:
                     continue
 
                 try:
-                    await dest_thread.send(content=send_text or None, files=files)
+                    await dest_thread.send(content=send_text or None, embeds=send_embeds or None, files=files)
                 except Exception:
                     logging.exception("Failed to copy a message into completed raid thread")
                     continue
 
         try:
-            await dest_thread.edit(archived=True, locked=True)
+            await dest_thread.edit(locked=True)
         except Exception:
-            logging.exception("Failed to lock/archive completed raid thread")
+            logging.exception("Failed to lock completed raid thread")
 
         return dest_thread
 
     async def close_raid(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This raid is already closed or does not exist.", ephemeral=True)
@@ -824,11 +852,61 @@ class RaidCog(commands.Cog):
 
         completed_thread: discord.Thread | None = None
         config = await self.bot.db.get_guild_config(interaction.guild.id)
-        completed_channel_id = config.get("completed_raid_channel_id") if config else None
-        if completed_channel_id and interaction.guild:
-            completed_channel = interaction.guild.get_channel(completed_channel_id)
-            if isinstance(completed_channel, discord.TextChannel):
+        completed_channel_id = (
+            config["completed_raid_channel_id"]
+            if config and "completed_raid_channel_id" in config
+            else None
+        )
+        completed_channel: discord.TextChannel | None = None
+        move_error: str | None = None
+
+        if interaction.guild:
+            if completed_channel_id:
+                ch = interaction.guild.get_channel(completed_channel_id)
+                if isinstance(ch, discord.TextChannel):
+                    completed_channel = ch
+
+            # If config wasn't set, fall back to finding a channel named
+            # "completed-raids" and persist it for next time.
+            if completed_channel is None:
                 try:
+                    for ch in interaction.guild.text_channels:
+                        if (ch.name or "").lower() == "completed-raids":
+                            completed_channel = ch
+                            completed_channel_id = ch.id
+                            try:
+                                await self.bot.db.execute(
+                                    "UPDATE guilds SET completed_raid_channel_id = ? WHERE guild_id = ?",
+                                    (ch.id, interaction.guild.id),
+                                )
+                            except Exception:
+                                logging.exception("Failed to persist completed_raid_channel_id")
+                            break
+                except Exception:
+                    pass
+
+        if completed_channel is not None and interaction.guild:
+            try:
+                bot_member = interaction.guild.me
+                if bot_member is None and self.bot.user is not None:
+                    bot_member = interaction.guild.get_member(self.bot.user.id)
+
+                if bot_member is not None:
+                    perms = completed_channel.permissions_for(bot_member)
+                    missing: list[str] = []
+                    if not perms.view_channel:
+                        missing.append("View Channel")
+                    if not perms.send_messages:
+                        missing.append("Send Messages")
+                    if not getattr(perms, "create_public_threads", False):
+                        missing.append("Create Public Threads")
+                    if not getattr(perms, "send_messages_in_threads", False):
+                        missing.append("Send Messages in Threads")
+
+                    if missing and move_error is None:
+                        move_error = "Missing permissions in #completed-raids: " + ", ".join(missing)
+
+                if move_error is None:
                     completed_thread = await self._copy_thread_to_completed_channel(
                         interaction.guild,
                         thread,
@@ -836,8 +914,38 @@ class RaidCog(commands.Cog):
                         completed_channel,
                         desired_thread_name=new_name,
                     )
-                except Exception:
-                    logging.exception("Failed to move raid log to completed channel")
+
+                if completed_thread is None and move_error is None:
+                    move_error = (
+                        "Could not create the completed raid thread. "
+                        "Make sure I can Send Messages and Create Public Threads in #completed-raids."
+                    )
+            except Exception:
+                logging.exception("Failed to move raid log to completed channel")
+                move_error = "Failed to move raid log to the completed raids channel. Check my permissions there."
+        elif interaction.guild:
+            move_error = "Completed raids channel is not configured (or could not be found)."
+
+        raid_id_for_log = None
+        try:
+            raid_id_for_log = raid["id"]
+        except Exception:
+            raid_id_for_log = None
+
+        logging.info(
+            "close_raid move_attempt guild_id=%s raid_id=%s completed_channel_id=%s completed_thread=%s move_error=%s",
+            interaction.guild.id,
+            raid_id_for_log,
+            completed_channel_id,
+            bool(completed_thread),
+            move_error,
+        )
+
+        if move_error:
+            try:
+                await thread.send(f"Could not move raid log to completed raids. {move_error}")
+            except Exception:
+                pass
 
         if completed_thread is not None:
             try:
@@ -848,12 +956,47 @@ class RaidCog(commands.Cog):
             except Exception:
                 logging.exception("Failed to update raid thread_id after move to completed channel")
 
-        try:
-            await thread.edit(name=new_name, archived=True, locked=True)
-        except Exception:
-            # If we cannot rename/archive the thread, the DB flag still marks
-            # the raid as inactive.
-            logging.exception("Failed to archive/rename raid thread")
+        original_deleted = False
+        if completed_thread is not None and interaction.guild:
+            try:
+                active_channel_id = config["raid_channel_id"] if config and "raid_channel_id" in config else None
+                active_channel = (
+                    interaction.guild.get_channel(active_channel_id)
+                    if isinstance(active_channel_id, int)
+                    else None
+                )
+                bot_user = getattr(self.bot, "user", None)
+                if bot_user and isinstance(active_channel, discord.TextChannel):
+                    needle = thread.mention
+                    async for msg in active_channel.history(limit=1000, oldest_first=False):
+                        if msg.author.id != bot_user.id:
+                            continue
+                        if needle in (msg.content or ""):
+                            try:
+                                await msg.delete()
+                            except Exception:
+                                try:
+                                    if completed_thread is not None:
+                                        await msg.edit(content=(msg.content or "").replace(needle, completed_thread.mention))
+                                except Exception:
+                                    pass
+                            break
+            except Exception:
+                logging.exception("Failed to delete raid announcement message from active raids channel")
+
+            try:
+                await thread.delete()
+                original_deleted = True
+            except Exception:
+                logging.exception("Failed to delete original raid thread after move")
+
+        if not original_deleted:
+            try:
+                await thread.edit(name=new_name, archived=True, locked=True)
+            except Exception:
+                # If we cannot rename/archive the thread, the DB flag still marks
+                # the raid as inactive.
+                logging.exception("Failed to archive/rename raid thread")
 
         # Post a summary with a link in the completed raids channel
         if completed_channel_id and interaction.guild:
@@ -874,10 +1017,21 @@ class RaidCog(commands.Cog):
         # raid so that any temporary "bot is thinking" message from the
         # deferred button interaction is replaced.
         try:
-            await interaction.followup.send(
-                "Raid has been closed and the raid log thread has been archived.",
-                ephemeral=True,
-            )
+            if move_error:
+                await interaction.followup.send(
+                    f"Raid has been closed, but it was not moved to completed raids. {move_error}",
+                    ephemeral=True,
+                )
+            elif completed_thread is not None:
+                await interaction.followup.send(
+                    f"Raid has been closed and moved to {completed_thread.mention}.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "Raid has been closed and the raid log thread has been archived.",
+                    ephemeral=True,
+                )
         except discord.HTTPException:
             # If the interaction has expired or the followup webhook is gone,
             # the public log message above is still sufficient feedback.
