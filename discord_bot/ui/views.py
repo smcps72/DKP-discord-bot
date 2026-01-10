@@ -582,7 +582,7 @@ class RaidControlView(discord.ui.View):
             # Optionally log or handle other HTTP errors
             pass
 
-    @discord.ui.button(label="Update Team", style=discord.ButtonStyle.primary, custom_id="raid_update_team", row=2)
+    @discord.ui.button(label="🔄 Update Team", style=discord.ButtonStyle.secondary, custom_id="raid_update_team", row=2)
     async def update_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
         if not raid_cog:
