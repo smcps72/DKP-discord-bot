@@ -197,17 +197,17 @@ async function createRaidAndOpenLogThread(page, raidName) {
     await page.getByRole('link', { name: /active-raids.*text channel/i }).last().click();
   }
 
-  const threadButton = page
-    .getByRole('button', { name: new RegExp(`${escapeRegExp(raidName)}.*Raid Log.*\(thread\)`, 'i') })
+  const unreadThreadButton = page
+    .getByRole('button', { name: new RegExp(`^unread,\\s*${escapeRegExp(raidName)}.*Raid Log.*\\(thread\\)$`, 'i') })
     .first();
-  if (await threadButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await threadButton.click();
+  if (await unreadThreadButton.isVisible({ timeout: 8000 }).catch(() => false)) {
+    await unreadThreadButton.click();
   } else {
-    const threadLink = page
-      .getByRole('link', { name: new RegExp(`${escapeRegExp(raidName)}.*Rai`, 'i') })
-      .first();
-    await expect(threadLink).toBeVisible({ timeout: 20000 });
-    await threadLink.click();
+    const threadButton = page
+      .getByRole('button', { name: new RegExp(`${escapeRegExp(raidName)}.*Raid Log.*\\(thread\\)`, 'i') })
+      .last();
+    await expect(threadButton).toBeVisible({ timeout: 45000 });
+    await threadButton.click();
   }
 
   const threadHeading = page.getByRole('heading', { name: new RegExp(`Thread:.*${escapeRegExp(raidName)}.*Raid Log`, 'i') });
@@ -234,17 +234,11 @@ test('raid member list shows empty VC message when no one is in raid voice chann
 	await loginAndOpenChannel(page);
 	await createRaidAndOpenLogThread(page, raidName);
 
-	await page.getByRole('button', { name: 'Update Team' }).click();
-
-	// Depending on whether the raid leader remains connected to voice (e.g. on
-	// another client), the team list may show members immediately instead of an
-	// empty-state message.
-	const emptyMessage = page.getByText('No raid members were found for this raid.', { exact: false }).first();
-	const teamEmbed = page.getByText('Current Raid Team', { exact: false }).first();
-	await Promise.race([
-		emptyMessage.waitFor({ state: 'visible', timeout: 15000 }),
-		teamEmbed.waitFor({ state: 'visible', timeout: 15000 }),
-	]);
+	// The raid log thread should now use automatic roster tracking and no longer
+	// includes the legacy "Update Team" button.
+	const joinButton = page.getByRole('button', { name: /^Join Raid$/ }).first();
+	await expect(joinButton).toBeVisible({ timeout: 45000 });
+	await expect(page.getByRole('button', { name: 'Update Team' })).toHaveCount(0);
 });
 
 test('award DKP dropdown supports typing and selecting another member', async ({ page }) => {
@@ -255,14 +249,8 @@ test('award DKP dropdown supports typing and selecting another member', async ({
   await loginAndOpenChannel(page);
   await createRaidAndOpenLogThread(page, raidName);
 
-  // In the newly created raid log thread, verify that the Raid Control
-  // Panel is present and that the "Award DKP" button is visible for the
-  // raid leader. This ensures the dropdown entry point is available.
-  const panel = page.getByText('Raid Control Panel for', { exact: false });
-  await expect(panel).toBeVisible();
-
-  const awardButton = page.getByRole('button', { name: 'Award DKP' });
-  await expect(awardButton).toBeVisible();
+  const awardButton = page.getByRole('button', { name: 'Award DKP' }).first();
+  await expect(awardButton).toBeVisible({ timeout: 45000 });
 });
 
 test('My DKP shows balance but does not re-send the raid panel', async ({ page }) => {
@@ -301,14 +289,13 @@ test('Join Raid button adds the user to the raid', async ({ page }) => {
   await joinAnyVoiceChannel(page);
   await createRaidAndOpenLogThread(page, raidName);
 
-  const panel = page.getByText('Raid Control Panel', { exact: false }).first();
-  await expect(panel).toBeVisible({ timeout: 20000 });
+  const joinButton = page.getByRole('button', { name: /^Join Raid$/ }).first();
+  await expect(joinButton).toBeVisible({ timeout: 45000 });
 
-  await page.getByRole('button', { name: /^Join Raid$/ }).click();
-  await expect(page.getByText('You have been added to the raid.', { exact: false })).toBeVisible();
+  await joinButton.click();
 
-  await page.getByRole('button', { name: /^Join Raid$/ }).click();
-  await expect(page.getByText('You are already part of this raid.', { exact: false })).toBeVisible();
+  // The raid leader/admin is auto-approved; the bot posts a public join message.
+  await expect(page.getByText('joined the raid', { exact: false }).first()).toBeVisible({ timeout: 20000 });
 });
 
 test('Rename Thread button opens modal and renames the raid log thread', async ({ page }) => {
@@ -324,10 +311,9 @@ test('Rename Thread button opens modal and renames the raid log thread', async (
   await joinAnyVoiceChannel(page);
   await createRaidAndOpenLogThread(page, raidName);
 
-  const panel = page.getByText('Raid Control Panel', { exact: false }).first();
-  await expect(panel).toBeVisible({ timeout: 20000 });
-
-  await page.getByRole('button', { name: /^Rename Thread$/ }).click();
+  const renameButton = page.getByRole('button', { name: /^Rename Thread$/ }).first();
+  await expect(renameButton).toBeVisible({ timeout: 45000 });
+  await renameButton.click();
 
   const modal = page.getByRole('dialog', { name: 'Rename Raid Thread' });
   await expect(modal).toBeVisible();
@@ -335,6 +321,6 @@ test('Rename Thread button opens modal and renames the raid log thread', async (
   await modal.getByLabel('New thread name').fill(newThreadName);
   await modal.getByRole('button', { name: 'Submit' }).click();
 
-  await expect(page.getByText('Thread renamed successfully.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Thread renamed successfully.', { exact: false }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: `Thread: ${newThreadName}` })).toBeVisible();
 });

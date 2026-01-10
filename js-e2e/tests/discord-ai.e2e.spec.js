@@ -22,27 +22,38 @@ test('Discord bot responds to !help (AI-driven)', async ({ page }) => {
     'DISCORD_TEST_* env vars must be set in .env for this test',
   );
 
-  // 1. Go to Discord login
-  await page.goto('https://discord.com/login');
+  // Prefer a saved storageState (discord-auth.json) via playwright.config.js.
+  // If it is missing/expired, the Discord login form may trigger hCaptcha,
+  // so instruct to regenerate auth state manually.
+  await page.goto('https://discord.com/app');
 
-  // 2. Log in using regular Playwright selectors
-  await page.getByLabel('Email or Phone Number').fill(EMAIL);
-  await page.getByLabel('Password').fill(PASSWORD);
-  await page.getByRole('button', { name: 'Log In' }).click();
+  const loginHeading = page.getByRole('heading', { name: 'Welcome back!' });
+  if (await loginHeading.isVisible({ timeout: 5000 }).catch(() => false)) {
+    throw new Error(
+      'Discord login page detected. Run `DISCORD_SETUP_AUTH=1 npx playwright test tests/setup-discord-auth.spec.js --headed` from js-e2e/ to log in once and create discord-auth.json, then re-run the tests.',
+    );
+  }
 
-  // Wait for the main UI to stabilize
-  await page.waitForTimeout(8000);
+  // Close any promo dialog that can block navigation.
+  const closeDialog = page.getByRole('button', { name: 'Close' }).first();
+  if (await closeDialog.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await closeDialog.click();
+  }
 
-  // 3. Use AI to navigate to the server and channel
-  await ai(`Open the server called "${SERVER}"`, { page, test });
-  await ai(`Open the channel called "${CHANNEL}"`, { page, test });
+  await page.getByRole('treeitem', { name: SERVER }).click();
+  await page.waitForTimeout(2000);
+  await page.getByRole('link', { name: CHANNEL }).click();
+  await page.waitForTimeout(2000);
 
   // 4. Measure current message count
   const messages = page.locator('div[class*="messageContent"]');
   const beforeCount = await messages.count();
 
-  // 5. Use AI to send the !help command
-  await ai('Type "!help" in the message input and send it.', { page, test });
+  // 5. Send the !help command
+  const messageBox = page.getByRole('textbox', { name: /Message #/ });
+  await messageBox.click();
+  await messageBox.fill('!help');
+  await messageBox.press('Enter');
 
   // 6. Assert that at least one new message appears afterwards
   await page.waitForTimeout(5000);
