@@ -1,5 +1,4 @@
 import discord
-import discord
 from discord.ext import commands
 from discord import app_commands
 from ..ui.views import WelcomeView
@@ -17,6 +16,25 @@ class SetupCog(commands.Cog):
     async def run_setup(self, guild: discord.Guild, interaction=None):
         logging.info(f"Running DKP setup for guild: {guild.name} ({guild.id})")
 
+        bot_member = guild.me
+        if bot_member is None and getattr(self.bot, "user", None) is not None:
+            bot_member = guild.get_member(self.bot.user.id)
+        if bot_member is None and getattr(self.bot, "user", None) is not None:
+            try:
+                bot_member = await guild.fetch_member(self.bot.user.id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                bot_member = None
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False)
+        }
+        if bot_member is not None:
+            overwrites[bot_member] = discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                manage_messages=True,
+            )
+
         def _is_category_channel(ch) -> bool:
             return isinstance(ch, discord.CategoryChannel) or (
                 ch is not None and hasattr(ch, "create_text_channel") and hasattr(ch, "text_channels")
@@ -30,6 +48,24 @@ class SetupCog(commands.Cog):
         if config and config['dkp_category_id']:
             category = guild.get_channel(config['dkp_category_id'])
             if _is_category_channel(category):
+                if bot_member is not None:
+                    try:
+                        await category.set_permissions(
+                            bot_member,
+                            read_messages=True,
+                            send_messages=True,
+                            manage_messages=True,
+                        )
+                        await category.set_permissions(
+                            guild.default_role,
+                            read_messages=True,
+                            send_messages=False,
+                        )
+                    except discord.Forbidden:
+                        pass
+                    except Exception:
+                        pass
+
                 try:
                     existing_active_named = None
                     for ch in guild.categories:
@@ -81,15 +117,29 @@ class SetupCog(commands.Cog):
                             archive_category = ch
                             break
                     if archive_category is None:
-                        overwrites = {
-                            guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False)
-                        }
                         archive_category = await guild.create_category("DKP-archive", overwrites=overwrites)
                     await self.bot.db.execute(
                         "UPDATE guilds SET archive_category_id = ? WHERE guild_id = ?",
                         (archive_category.id, guild.id),
                     )
                     changed = True
+                elif bot_member is not None:
+                    try:
+                        await archive_category.set_permissions(
+                            bot_member,
+                            read_messages=True,
+                            send_messages=True,
+                            manage_messages=True,
+                        )
+                        await archive_category.set_permissions(
+                            guild.default_role,
+                            read_messages=True,
+                            send_messages=False,
+                        )
+                    except discord.Forbidden:
+                        pass
+                    except Exception:
+                        pass
 
                 completed_raid_channel_id = (
                     config['completed_raid_channel_id']
@@ -138,9 +188,6 @@ class SetupCog(commands.Cog):
                 return
         # Create a DKP category
         try:
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False)
-            }
             category = None
             for ch in guild.categories:
                 if (ch.name or "").lower() == "dkp-active-raids":
@@ -148,11 +195,31 @@ class SetupCog(commands.Cog):
                     break
             if category is None:
                 category = await guild.create_category("DKP-active-raids", overwrites=overwrites)
-            elif category.overwrites_for(guild.default_role).send_messages is not False:
-                try:
-                    await category.edit(overwrites=overwrites)
-                except Exception:
-                    pass
+            else:
+                if bot_member is not None:
+                    try:
+                        await category.set_permissions(
+                            bot_member,
+                            read_messages=True,
+                            send_messages=True,
+                            manage_messages=True,
+                        )
+                    except discord.Forbidden:
+                        pass
+                    except Exception:
+                        pass
+
+                if category.overwrites_for(guild.default_role).send_messages is not False:
+                    try:
+                        await category.set_permissions(
+                            guild.default_role,
+                            read_messages=True,
+                            send_messages=False,
+                        )
+                    except discord.Forbidden:
+                        pass
+                    except Exception:
+                        pass
 
             # Create text channels
             dkp_channel = None
@@ -175,6 +242,23 @@ class SetupCog(commands.Cog):
                     break
             if archive_category is None:
                 archive_category = await guild.create_category("DKP-archive", overwrites=overwrites)
+            elif bot_member is not None:
+                try:
+                    await archive_category.set_permissions(
+                        bot_member,
+                        read_messages=True,
+                        send_messages=True,
+                        manage_messages=True,
+                    )
+                    await archive_category.set_permissions(
+                        guild.default_role,
+                        read_messages=True,
+                        send_messages=False,
+                    )
+                except discord.Forbidden:
+                    pass
+                except Exception:
+                    pass
 
             completed_raid_channel = None
             for channel in archive_category.text_channels:
@@ -250,15 +334,22 @@ class SetupCog(commands.Cog):
                 except (discord.NotFound, discord.HTTPException):
                     logging.warning("Setup complete but interaction is no longer valid.")
         except discord.Forbidden:
-            logging.error(f"Missing permissions to set up channels or roles in {guild.name}")
+            logging.exception(f"Missing permissions to set up channels or roles in {guild.name}")
             # Try to send a message to the owner or the first available channel
             try:
-                await guild.owner.send("I tried to set up my channels and roles in your server but I'm missing the 'Manage Channels' or 'Manage Roles' permission. Please grant them and re-invite me.")
+                await guild.owner.send(
+                    "I tried to set up my channels and roles in your server but I'm missing required permissions. "
+                    "Please ensure I have at least: 'Manage Channels', 'Manage Roles', and permission to 'View Channels' and 'Send Messages' "
+                    "in the DKP channels/categories, then re-invite me."
+                )
             except discord.Forbidden:
                 pass # Can't do anything else
             if interaction:
                 try:
-                    await interaction.followup.send("Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True)
+                    await interaction.followup.send(
+                        "Missing permissions to complete setup. Please grant 'Manage Channels', 'Manage Roles', and ensure I can 'View Channels' and 'Send Messages' in the DKP channels/categories, then try again.",
+                        ephemeral=True,
+                    )
                 except (discord.NotFound, discord.HTTPException):
                     logging.warning("Setup permissions error but interaction is no longer valid.")
 
