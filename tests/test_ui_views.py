@@ -243,7 +243,7 @@ class TestRaidControlView:
 
         # Assert: error message is sent and modal is not opened
         mock_raid_control_interaction.response.send_message.assert_called_once_with(
-            "No eligible raid members were found. Cannot start auction.",
+            "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button. Cannot start auction.",
             ephemeral=True,
         )
         mock_raid_control_interaction.response.send_modal.assert_not_called()

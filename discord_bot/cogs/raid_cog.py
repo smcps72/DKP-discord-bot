@@ -476,6 +476,73 @@ class RaidCog(commands.Cog):
         except (ValueError, TypeError):
             return None
 
+    async def update_team_from_voice_channel(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return await interaction.followup.send(
+                "This command can only be used inside a server.",
+                ephemeral=True,
+            )
+
+        # Ensure we can safely use followups even when called outside the raid
+        # panel (e.g., future slash commands).
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=False)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.followup.send(
+                "You must be the raid leader or a bot admin to update the team.",
+                ephemeral=True,
+            )
+
+        leader_member = interaction.guild.get_member(int(raid["leader_id"]))
+        if not leader_member:
+            return await interaction.followup.send(
+                "Raid leader not found in this server.",
+                ephemeral=True,
+            )
+
+        leader_voice = getattr(leader_member, "voice", None)
+        vc = getattr(leader_voice, "channel", None)
+        if not isinstance(vc, discord.VoiceChannel):
+            return await interaction.followup.send(
+                "You must be connected to a voice channel to use Update Team.",
+                ephemeral=True,
+            )
+
+        try:
+            await self.bot.db.execute(
+                "UPDATE raids SET vc_id = ? WHERE id = ?",
+                (vc.id, int(raid["id"])),
+            )
+        except Exception:
+            pass
+
+        added = 0
+        for member in list(getattr(vc, "members", []) or []):
+            if getattr(member, "bot", False):
+                continue
+            try:
+                inserted = await self.bot.db.add_raid_member(int(raid["id"]), int(member.id))
+            except Exception:
+                inserted = False
+            if inserted:
+                added += 1
+
+        if added:
+            await interaction.followup.send(
+                f"Added **{added}** member(s) from {vc.mention} to the raid.",
+            )
+
+        await self.update_team_list(interaction)
+
     async def update_team_list(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:

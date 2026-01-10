@@ -390,6 +390,7 @@ class RaidControlView(discord.ui.View):
             leader_only_ids = {
                 "raid_award_dkp",
                 "raid_deduct_dkp",
+                "raid_update_team",
                 "raid_start_auction",
                 "raid_end_auction",
                 "raid_close_raid",
@@ -428,7 +429,7 @@ class RaidControlView(discord.ui.View):
                 # "Update Team" should be a public message so raiders can see
                 # the current team list. Defer non-ephemerally for that button
                 # while keeping other raid controls ephemeral.
-                ephemeral = True
+                ephemeral = custom_id != "raid_update_team"
                 try:
                     await interaction.response.defer(ephemeral=ephemeral)
                 except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
@@ -500,7 +501,10 @@ class RaidControlView(discord.ui.View):
 
         members = list(members_by_id.values())
         if not members:
-            return await interaction.followup.send("No eligible raid members were found.", ephemeral=True)
+            return await interaction.followup.send(
+                "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button.",
+                ephemeral=True,
+            )
 
         view = DKPAdjustmentView(self.bot, action, members)
         await interaction.followup.send(f"Who do you want to {action.lower()} DKP?", view=view, ephemeral=True)
@@ -548,7 +552,7 @@ class RaidControlView(discord.ui.View):
 
         if not participants:
             return await interaction.response.send_message(
-                "No eligible raid members were found. Cannot start auction.",
+                "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button. Cannot start auction.",
                 ephemeral=True,
             )
 
@@ -577,6 +581,13 @@ class RaidControlView(discord.ui.View):
         except discord.HTTPException:
             # Optionally log or handle other HTTP errors
             pass
+
+    @discord.ui.button(label="Update Team", style=discord.ButtonStyle.primary, custom_id="raid_update_team", row=2)
+    async def update_team(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        await raid_cog.update_team_from_voice_channel(interaction)
 
     @discord.ui.button(label="End Auction", style=discord.ButtonStyle.primary, custom_id="raid_end_auction", row=1)
     async def end_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
