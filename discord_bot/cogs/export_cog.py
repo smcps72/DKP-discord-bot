@@ -10,6 +10,7 @@ import asyncio
 import json
 
 from ..utils import is_officer
+from ..utils import is_admin
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
 
@@ -184,7 +185,7 @@ class ExportCog(commands.Cog):
                     continue
 
     @app_commands.command(name="export_thread", description="Export this thread to a ZIP (Markdown + CSV + attachments).")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def export_thread_cmd(self, interaction: discord.Interaction, thread: discord.Thread | None = None):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
@@ -238,7 +239,7 @@ class ExportCog(commands.Cog):
         await interaction.followup.send(content="Thread export ready.", file=file, ephemeral=True)
 
     @app_commands.command(name="export_all_threads", description="Export all threads under a text channel to ZIPs in the backups folder.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def export_all_threads_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None):
         """Bulk-export all threads under the given text channel.
 
@@ -362,7 +363,7 @@ class ExportCog(commands.Cog):
             await interaction.followup.send(summary, ephemeral=True)
 
     @app_commands.command(name="export_channel", description="Export a text channel to a ZIP (Markdown + CSV + attachments).")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def export_channel_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
@@ -420,7 +421,7 @@ class ExportCog(commands.Cog):
         await interaction.followup.send(content="Channel export ready.", file=file, ephemeral=True)
 
     @app_commands.command(name="export_test", description="Test command to verify export cog slash commands are synced.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def export_test_cmd(self, interaction: discord.Interaction):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
@@ -525,7 +526,7 @@ class ExportCog(commands.Cog):
             await target.send(content if first else "", files=batch, embeds=embeds or None)
 
     @app_commands.command(name="import_thread", description="Import a thread from an exported ZIP (replay messages and attachments).")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     @app_commands.describe(archive="The exported ZIP file created by /export_thread", name_override="Optional new thread name")
     async def import_thread_cmd(self, interaction: discord.Interaction, archive: discord.Attachment, name_override: str | None = None):
         if not interaction.response.is_done():
@@ -626,7 +627,7 @@ class ExportCog(commands.Cog):
         await interaction.followup.send(f"Import complete. Replayed {sent} messages into {target_thread.mention}.", ephemeral=True)
 
     @app_commands.command(name="import_channel", description="Import a text channel from an exported ZIP (replay messages and attachments).")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     @app_commands.describe(archive="The exported ZIP file created by /export_channel")
     async def import_channel_cmd(self, interaction: discord.Interaction, archive: discord.Attachment):
         if not interaction.response.is_done():
@@ -702,7 +703,7 @@ class ExportCog(commands.Cog):
         await interaction.followup.send(f"Import complete. Replayed {sent} messages into {target_channel.mention}.", ephemeral=True)
 
     @app_commands.command(name="import_all_threads", description="Bulk-import multiple thread exports from a ZIP-of-ZIPs or a backups timestamp.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     @app_commands.describe(
         archive="ZIP file created by /export_all_threads containing multiple thread_export_...zip files",
         backup_id="Timestamp ID matching a backups/<TIMESTAMP>/ folder on the bot server",

@@ -1,4 +1,5 @@
 import discord
+import logging
 from discord.ext import commands
 from discord import app_commands
 from ..utils import create_info_embed

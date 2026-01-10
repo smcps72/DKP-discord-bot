@@ -40,7 +40,7 @@ class MemberSelect(Select):
 
         if not member or member.id not in self._allowed_member_ids:
             await interaction.response.send_message(
-                "That member is not currently in the raid voice channel.",
+                "That member is not an eligible raid member.",
                 ephemeral=True,
             )
             return
@@ -122,7 +122,7 @@ class WelcomeView(discord.ui.View):
     async def admin_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         if not await is_admin(interaction):
-            return await interaction.followup.send("You must be a server admin to use this.", ephemeral=True)
+            return await interaction.followup.send("You must be a bot admin to use this.", ephemeral=True)
 
         view = AdminPanelView(self.bot)
         await interaction.followup.send("Welcome to the Admin Panel.", view=view, ephemeral=True)
@@ -228,6 +228,74 @@ class OfficerRoleAssignView(discord.ui.View):
         self.add_item(OfficerRoleSelect(bot))
 
 
+class AdminRoleSelect(discord.ui.Select):
+    def __init__(self, bot: discord.Client):
+        self.bot = bot
+
+        options: list[discord.SelectOption] = []
+        options.append(discord.SelectOption(label="Loading roles...", value="dummy"))
+
+        super().__init__(
+            placeholder="Select an existing role to use as Bot Admins",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "dummy":
+            roles = [
+                r for r in interaction.guild.roles
+                if not r.is_default() and not r.managed
+            ]
+            options = [
+                discord.SelectOption(label=role.name[:100], value=str(role.id))
+                for role in roles[:25]
+            ]
+            if not options:
+                return await interaction.response.edit_message(
+                    content="No configurable roles found. Please create a role in Server Settings first.",
+                    view=None,
+                )
+
+            self.options = options
+            return await interaction.response.edit_message(
+                content="Select an existing role to use as the Bot Admin role:",
+                view=self.view,
+            )
+
+        role_id = int(self.values[0])
+        role = interaction.guild.get_role(role_id)
+        if not role:
+            return await interaction.response.edit_message(
+                content="The selected role could not be found. Please try again.",
+                view=self.view,
+            )
+
+        admin_cog = self.view.bot.get_cog("AdminCog") if hasattr(self.view, "bot") else None
+        if not admin_cog:
+            return await interaction.response.edit_message(
+                content="Admin module is currently offline. Please try again later.",
+                view=None,
+            )
+
+        await admin_cog.set_role(interaction, "Admin", role)
+
+        await send_admin_confirmation(
+            interaction,
+            panel_text=f"Bot Admin role set to {role.mention}.",
+            ephemeral_text=f"Bot Admin role has been updated to {role.mention}.",
+        )
+
+
+class AdminRoleAssignView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.add_item(AdminRoleSelect(bot))
+
+
 class AdminPanelView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=180)
@@ -237,11 +305,44 @@ class AdminPanelView(discord.ui.View):
         if not await ensure_allowed_guild(interaction):
             return False
         if not await is_admin(interaction):
-            await interaction.response.send_message("You must be a server admin to use this.", ephemeral=True)
+            await interaction.response.send_message("You must be a bot admin to use this.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(label="Assign Officers Role Name", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Assign Bot Admin Role", style=discord.ButtonStyle.primary, row=0)
+    async def assign_bot_admin_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = AdminRoleAssignView(self.bot)
+
+        roles = [
+            r for r in interaction.guild.roles
+            if not r.is_default() and not r.managed
+        ]
+
+        select: AdminRoleSelect | None = None
+        for child in view.children:
+            if isinstance(child, AdminRoleSelect):
+                select = child
+                break
+
+        if select:
+            options = [
+                discord.SelectOption(label=role.name[:100], value=str(role.id))
+                for role in roles[:25]
+            ]
+            if options:
+                select.options = options
+            else:
+                return await interaction.response.send_message(
+                    "No configurable roles found. Please create a role in Server Settings first.",
+                    ephemeral=True,
+                )
+
+        await interaction.response.edit_message(
+            content="Select an existing role to use as the Bot Admin role:",
+            view=view,
+        )
+
+    @discord.ui.button(label="Assign Officers Role Name", style=discord.ButtonStyle.primary, row=1)
     async def assign_officers_role_name(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = OfficerRoleAssignView(self.bot)
 
@@ -287,7 +388,6 @@ class RaidControlView(discord.ui.View):
         self.show_leader_buttons = show_leader_buttons
         if not self.show_leader_buttons:
             leader_only_ids = {
-                "raid_update_team",
                 "raid_award_dkp",
                 "raid_deduct_dkp",
                 "raid_start_auction",
@@ -328,7 +428,7 @@ class RaidControlView(discord.ui.View):
                 # "Update Team" should be a public message so raiders can see
                 # the current team list. Defer non-ephemerally for that button
                 # while keeping other raid controls ephemeral.
-                ephemeral = custom_id != "raid_update_team"
+                ephemeral = True
                 try:
                     await interaction.response.defer(ephemeral=ephemeral)
                 except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
@@ -336,16 +436,13 @@ class RaidControlView(discord.ui.View):
                     pass
 
         # Allow everyone to use the raid "My DKP" button and view rules.
-        if custom_id in ("raid_my_dkp", "raid_view_rules", "raid_join_raid"):
+        if custom_id in ("raid_my_dkp", "raid_view_rules", "raid_join_raid", "raid_leave_raid"):
             return True
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
 
-        is_admin = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.administrator
-        )
-        if raid and (interaction.user.id == raid['leader_id'] or is_admin):
+        admin_ok = await is_admin(interaction)
+        if raid and (interaction.user.id == raid['leader_id'] or admin_ok):
             return True
 
         if custom_id == "raid_rename_thread" and raid and await is_officer(interaction):
@@ -358,12 +455,12 @@ class RaidControlView(discord.ui.View):
         try:
             if not interaction.response.is_done():
                 await interaction.response.send_message(
-                    "You must be the raid leader or a server admin to use this control.",
+                    "You must be the raid leader or a bot admin to use this control.",
                     ephemeral=True,
                 )
             else:
                 await interaction.followup.send(
-                    "You must be the raid leader or a server admin to use this control.",
+                    "You must be the raid leader or a bot admin to use this control.",
                     ephemeral=True,
                 )
         except discord.HTTPException:
@@ -372,23 +469,20 @@ class RaidControlView(discord.ui.View):
 
         return False
 
-    @discord.ui.button(label="Update Team", style=discord.ButtonStyle.secondary, custom_id="raid_update_team", row=0)
-    async def update_team(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_cog = self.bot.get_cog("RaidCog")
-        await raid_cog.update_team_list(interaction)
+    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="raid_my_dkp", row=0)
+    async def raid_my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_cog = self.bot.get_cog("UserCog")
+        if user_cog:
+            await user_cog.show_my_dkp(interaction)
+        else:
+            await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
     async def _show_dkp_adjustment_view(self, interaction: discord.Interaction, action: str):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
         members_by_id: dict[int, discord.Member] = {}
-
-        if isinstance(vc, discord.VoiceChannel):
-            for m in getattr(vc, "members", []):
-                if not m.bot:
-                    members_by_id[m.id] = m
 
         try:
             member_rows = await self.bot.db.get_raid_members(raid["id"])
@@ -440,11 +534,6 @@ class RaidControlView(discord.ui.View):
 
         participants: set[int] = set()
 
-        vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
-        for m in getattr(vc, "members", []):
-            if not getattr(m, "bot", False):
-                participants.add(m.id)
-
         try:
             member_rows = await self.bot.db.get_raid_members(raid["id"])
         except Exception:
@@ -459,7 +548,7 @@ class RaidControlView(discord.ui.View):
 
         if not participants:
             return await interaction.response.send_message(
-                "Raid voice channel is empty. Cannot start auction.",
+                "No eligible raid members were found. Cannot start auction.",
                 ephemeral=True,
             )
 
@@ -499,41 +588,108 @@ class RaidControlView(discord.ui.View):
         raid_cog = self.bot.get_cog("RaidCog")
         await raid_cog.close_raid(interaction)
 
-    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="raid_my_dkp", row=0)
-    async def raid_my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        user_cog = self.bot.get_cog("UserCog")
-        if user_cog:
-            await user_cog.show_my_dkp(interaction)
-        else:
-            await interaction.followup.send("User module is currently offline.", ephemeral=True)
-
     @discord.ui.button(label="Join Raid", style=discord.ButtonStyle.success, custom_id="raid_join_raid", row=0)
     async def join_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Record the user as a raid participant without needing to be in the voice channel."""
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
 
-        # Check if the user is already recorded as a raid member
-        already_joined = False
-        try:
-            existing_members = await self.bot.db.get_raid_members(raid["id"])
-            user_ids = {int(row["user_id"]) for row in existing_members}
-            if interaction.user.id in user_ids:
-                already_joined = True
-        except Exception:
-            # If we can't check, we'll proceed and let the DB's INSERT OR IGNORE handle duplicates
-            logging.exception("Failed to check existing raid members for duplicate join")
+        if getattr(interaction.user, "bot", False):
+            return await interaction.followup.send("Bots cannot join raids.", ephemeral=True)
 
-        if already_joined:
-            return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
+        raid_id = int(raid["id"])
+        user_id = int(interaction.user.id)
 
-        # Record the user only if not already present
         try:
-            await self.bot.db.add_raid_member(raid["id"], interaction.user.id)
-            await interaction.followup.send("You have been added to the raid.", ephemeral=True)
+            if await self.bot.db.is_raid_member(raid_id, user_id):
+                return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
         except Exception:
-            await interaction.followup.send("Could not join the raid. Please try again.", ephemeral=True)
+            pass
+
+        admin_ok = await is_admin(interaction)
+        if user_id == int(raid["leader_id"]) or admin_ok:
+            try:
+                inserted = await self.bot.db.add_raid_member(raid_id, user_id)
+            except Exception:
+                inserted = False
+            if not inserted:
+                return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
+            try:
+                if isinstance(interaction.channel, discord.Thread):
+                    await interaction.channel.send(f"{interaction.user.mention} joined the raid.")
+            except Exception:
+                logging.exception("Failed to send join message to raid thread")
+            return await interaction.followup.send("You have been added to the raid.", ephemeral=True)
+
+        try:
+            existing = await self.bot.db.get_raid_join_request(raid_id, user_id)
+        except Exception:
+            existing = None
+        if existing is not None:
+            try:
+                if str(existing["status"]) == "pending":
+                    return await interaction.followup.send(
+                        "Your join request is already pending approval.",
+                        ephemeral=True,
+                    )
+            except Exception:
+                pass
+
+        try:
+            await self.bot.db.upsert_raid_join_request(raid_id, user_id, source="button")
+        except Exception:
+            return await interaction.followup.send(
+                "Failed to submit join request. Please try again.",
+                ephemeral=True,
+            )
+
+        leader_id = int(raid["leader_id"])
+        leader_mention = f"<@{leader_id}>"
+        if interaction.guild:
+            leader_member = interaction.guild.get_member(leader_id)
+            if leader_member:
+                leader_mention = leader_member.mention
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(
+                    f"{leader_mention} approve join request from {interaction.user.mention}?",
+                    view=RaidJoinApprovalView(self.bot, raid_id, user_id),
+                )
+        except Exception:
+            logging.exception("Failed to send join approval request to raid thread")
+
+        return await interaction.followup.send(
+            "Join request sent to the raid leader for approval.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Leave Raid", style=discord.ButtonStyle.secondary, custom_id="raid_leave_raid", row=0)
+    async def leave_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        if getattr(interaction.user, "bot", False):
+            return await interaction.followup.send("Bots cannot leave raids.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+        user_id = int(interaction.user.id)
+
+        try:
+            removed = await self.bot.db.remove_raid_member(raid_id, user_id)
+        except Exception:
+            removed = False
+
+        try:
+            await self.bot.db.delete_raid_join_request(raid_id, user_id)
+        except Exception:
+            pass
+
+        if not removed:
+            return await interaction.followup.send("You are not part of this raid.", ephemeral=True)
+
+        return await interaction.followup.send("You have left the raid.", ephemeral=True)
 
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -595,14 +751,130 @@ class RaidControlView(discord.ui.View):
     #     raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
     #     if not raid:
     #         return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
-    #
-    #     try:
-    #         existing_rules = raid["rules"]
-    #     except (KeyError, TypeError):
-    #         existing_rules = None
-    #
-    #     modal = RaidRulesModal(bot=self.bot, raid_id=raid["id"], existing_rules=existing_rules)
-    #     await interaction.response.send_modal(modal)
+
+
+class RaidJoinApprovalView(discord.ui.View):
+    def __init__(self, bot, raid_id: int, user_id: int):
+        super().__init__(timeout=3600)
+        self.bot = bot
+        self.raid_id = int(raid_id)
+        self.user_id = int(user_id)
+
+    async def _get_raid_row(self):
+        return await self.bot.db.fetchone(
+            "SELECT id, leader_id, is_active FROM raids WHERE id = ?",
+            (self.raid_id,),
+        )
+
+    async def _authorize(self, interaction: discord.Interaction, raid_row) -> bool:
+        if raid_row is None:
+            await interaction.response.send_message("This raid was not found.", ephemeral=True)
+            return False
+        try:
+            if int(raid_row["is_active"]) != 1:
+                await interaction.response.send_message("This raid is no longer active.", ephemeral=True)
+                return False
+        except Exception:
+            await interaction.response.send_message("This raid is no longer active.", ephemeral=True)
+            return False
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid_row["leader_id"]) and not admin_ok:
+            await interaction.response.send_message(
+                "Only the raid leader (or a bot admin) can approve join requests.",
+                ephemeral=True,
+            )
+            return False
+
+        return True
+
+    async def _finalize(self, interaction: discord.Interaction):
+        try:
+            for child in self.children:
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = True
+            msg = getattr(interaction, "message", None)
+            if msg:
+                await msg.edit(view=self)
+        except Exception:
+            pass
+
+    async def _ensure_pending(self, interaction: discord.Interaction) -> bool:
+        req = await self.bot.db.get_raid_join_request(self.raid_id, self.user_id)
+        if req is None:
+            await interaction.response.send_message("This join request no longer exists.", ephemeral=True)
+            await self._finalize(interaction)
+            return False
+        try:
+            if str(req["status"]) != "pending":
+                await interaction.response.send_message("This join request is no longer pending.", ephemeral=True)
+                await self._finalize(interaction)
+                return False
+        except Exception:
+            await interaction.response.send_message("This join request is no longer pending.", ephemeral=True)
+            await self._finalize(interaction)
+            return False
+        return True
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_row = await self._get_raid_row()
+        if not await self._authorize(interaction, raid_row):
+            return
+        if not await self._ensure_pending(interaction):
+            return
+
+        try:
+            inserted = await self.bot.db.add_raid_member(self.raid_id, self.user_id)
+        except Exception:
+            inserted = False
+
+        await self.bot.db.set_raid_join_request_status(
+            self.raid_id,
+            self.user_id,
+            "approved",
+            decided_by=int(interaction.user.id),
+        )
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                member = interaction.guild.get_member(self.user_id) if interaction.guild else None
+                mention = member.mention if member else f"<@{self.user_id}>"
+                if inserted:
+                    await interaction.channel.send(f"{mention} joined the raid.")
+                else:
+                    await interaction.channel.send(f"{mention} is already part of the raid.")
+        except Exception:
+            logging.exception("Failed to send approval result to raid thread")
+
+        await interaction.response.send_message("Approved.", ephemeral=True)
+        await self._finalize(interaction)
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_row = await self._get_raid_row()
+        if not await self._authorize(interaction, raid_row):
+            return
+        if not await self._ensure_pending(interaction):
+            return
+
+        await self.bot.db.set_raid_join_request_status(
+            self.raid_id,
+            self.user_id,
+            "denied",
+            decided_by=int(interaction.user.id),
+        )
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                member = interaction.guild.get_member(self.user_id) if interaction.guild else None
+                mention = member.mention if member else f"<@{self.user_id}>"
+                await interaction.channel.send(f"Join request denied for {mention}.")
+        except Exception:
+            logging.exception("Failed to send denial result to raid thread")
+
+        await interaction.response.send_message("Denied.", ephemeral=True)
+        await self._finalize(interaction)
 
 class AuctionBidView(discord.ui.View):
     def __init__(self, bot, auction_id):

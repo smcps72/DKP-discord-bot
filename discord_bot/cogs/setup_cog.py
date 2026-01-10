@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from ..ui.views import WelcomeView
-from ..utils import create_info_embed
+from ..utils import create_info_embed, is_admin
 import logging
 
 class SetupCog(commands.Cog):
@@ -16,16 +16,38 @@ class SetupCog(commands.Cog):
 
     async def run_setup(self, guild: discord.Guild, interaction=None):
         logging.info(f"Running DKP setup for guild: {guild.name} ({guild.id})")
+
+        def _is_category_channel(ch) -> bool:
+            return isinstance(ch, discord.CategoryChannel) or (
+                ch is not None and hasattr(ch, "create_text_channel") and hasattr(ch, "text_channels")
+            )
+
+        def _is_text_channel(ch) -> bool:
+            return isinstance(ch, discord.TextChannel) or (ch is not None and hasattr(ch, "send"))
+
         # Check if setup has already been run
         config = await self.bot.db.get_guild_config(guild.id)
         if config and config['dkp_category_id']:
             category = guild.get_channel(config['dkp_category_id'])
-            if isinstance(category, discord.CategoryChannel):
+            if _is_category_channel(category):
+                try:
+                    existing_active_named = None
+                    for ch in guild.categories:
+                        if (ch.name or "").lower() == "dkp-active-raids":
+                            existing_active_named = ch
+                            break
+                    if category.name != "DKP-active-raids" and (existing_active_named is None or existing_active_named.id == category.id):
+                        await category.edit(name="DKP-active-raids")
+                except Exception:
+                    pass
+
                 # We have a config row and a DKP category, but older installs may be missing
                 # the raid channel ID or the channel may have been deleted. In that case,
                 # attempt a lightweight repair instead of bailing out.
                 raid_channel_id = config['raid_channel_id'] if 'raid_channel_id' in config.keys() else None
                 raid_channel = guild.get_channel(raid_channel_id) if raid_channel_id else None
+
+                changed = False
 
                 if not raid_channel:
                     # Try to locate an existing "active-raids" channel under the DKP category,
@@ -43,11 +65,69 @@ class SetupCog(commands.Cog):
                         "UPDATE guilds SET raid_channel_id = ? WHERE guild_id = ?",
                         (raid_channel.id, guild.id),
                     )
+                    changed = True
                     msg = f"Setup repaired for {guild.name}: raid channel linked."
                     logging.info(msg)
                 else:
                     msg = f"Setup already exists for {guild.name}."
                     logging.warning(f"Bot re-joined {guild.name}, setup already exists.")
+
+                archive_category_id = config['archive_category_id'] if 'archive_category_id' in config.keys() else None
+                archive_category = guild.get_channel(archive_category_id) if archive_category_id else None
+                if not _is_category_channel(archive_category):
+                    archive_category = None
+                    for ch in guild.categories:
+                        if (ch.name or "").lower() == "dkp-archive":
+                            archive_category = ch
+                            break
+                    if archive_category is None:
+                        overwrites = {
+                            guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False)
+                        }
+                        archive_category = await guild.create_category("DKP-archive", overwrites=overwrites)
+                    await self.bot.db.execute(
+                        "UPDATE guilds SET archive_category_id = ? WHERE guild_id = ?",
+                        (archive_category.id, guild.id),
+                    )
+                    changed = True
+
+                completed_raid_channel_id = (
+                    config['completed_raid_channel_id']
+                    if 'completed_raid_channel_id' in config.keys()
+                    else None
+                )
+                completed_raid_channel = (
+                    guild.get_channel(completed_raid_channel_id)
+                    if completed_raid_channel_id
+                    else None
+                )
+                if not _is_text_channel(completed_raid_channel):
+                    completed_raid_channel = None
+                    for ch in guild.text_channels:
+                        if (ch.name or "").lower() == "completed-raids":
+                            completed_raid_channel = ch
+                            break
+
+                if _is_text_channel(completed_raid_channel) and _is_category_channel(archive_category):
+                    if completed_raid_channel.category_id != archive_category.id:
+                        try:
+                            await completed_raid_channel.edit(category=archive_category)
+                        except Exception:
+                            pass
+
+                if not _is_text_channel(completed_raid_channel):
+                    if _is_category_channel(archive_category):
+                        completed_raid_channel = await archive_category.create_text_channel("completed-raids")
+
+                if _is_text_channel(completed_raid_channel):
+                    await self.bot.db.execute(
+                        "UPDATE guilds SET completed_raid_channel_id = ? WHERE guild_id = ?",
+                        (completed_raid_channel.id, guild.id),
+                    )
+                    changed = True
+
+                if changed and msg.startswith("Setup already exists"):
+                    msg = f"Setup repaired for {guild.name}."
 
                 if interaction:
                     # followup.send is used because we deferred the response
@@ -61,11 +141,48 @@ class SetupCog(commands.Cog):
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False)
             }
-            category = await guild.create_category("DKP-System", overwrites=overwrites)
+            category = None
+            for ch in guild.categories:
+                if (ch.name or "").lower() == "dkp-active-raids":
+                    category = ch
+                    break
+            if category is None:
+                category = await guild.create_category("DKP-active-raids", overwrites=overwrites)
+            elif category.overwrites_for(guild.default_role).send_messages is not False:
+                try:
+                    await category.edit(overwrites=overwrites)
+                except Exception:
+                    pass
+
             # Create text channels
-            dkp_channel = await category.create_text_channel("dkp-system")
-            raid_channel = await category.create_text_channel("active-raids")
-            completed_raid_channel = await category.create_text_channel("completed-raids")
+            dkp_channel = None
+            raid_channel = None
+            for channel in category.text_channels:
+                if (channel.name or "").lower() == "dkp-system":
+                    dkp_channel = channel
+                elif (channel.name or "").lower() == "active-raids":
+                    raid_channel = channel
+
+            if dkp_channel is None:
+                dkp_channel = await category.create_text_channel("dkp-system")
+            if raid_channel is None:
+                raid_channel = await category.create_text_channel("active-raids")
+
+            archive_category = None
+            for ch in guild.categories:
+                if (ch.name or "").lower() == "dkp-archive":
+                    archive_category = ch
+                    break
+            if archive_category is None:
+                archive_category = await guild.create_category("DKP-archive", overwrites=overwrites)
+
+            completed_raid_channel = None
+            for channel in archive_category.text_channels:
+                if (channel.name or "").lower() == "completed-raids":
+                    completed_raid_channel = channel
+                    break
+            if completed_raid_channel is None:
+                completed_raid_channel = await archive_category.create_text_channel("completed-raids")
 
             # Explicitly clean up any legacy "Raid-Template" voice channel under this category.
             # Older versions of the bot created a template VC; the current design does not use it.
@@ -110,8 +227,8 @@ class SetupCog(commands.Cog):
 
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (guild.id, category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guild.id, category.id, archive_category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
             )
             # Send welcome panel
             embed = create_info_embed(
@@ -146,7 +263,7 @@ class SetupCog(commands.Cog):
                     logging.warning("Setup permissions error but interaction is no longer valid.")
 
     @app_commands.command(name="setup_dkp", description="Manually (re)run the DKP system setup. Admins only.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def setup_dkp(self, interaction: discord.Interaction):
         """Manually (re)run the DKP system setup."""
         # We need to defer here because the setup can take a moment

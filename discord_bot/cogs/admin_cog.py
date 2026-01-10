@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from ..utils import is_officer, create_info_embed
+from ..utils import is_admin, is_officer, create_info_embed
 from ..ui.modals import AdminDKPAdjustModal
 import csv
 import io
@@ -24,14 +24,14 @@ class AdminCog(commands.Cog):
         )
 
     @app_commands.command(name="status", description="Check the bot's operational status.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def status_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         embed = await self._create_status_embed(interaction.guild.id)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="history", description="Downloads a CSV of the last 30 days of DKP transactions.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def history_cmd(self, interaction: discord.Interaction):
         now = datetime.utcnow().timestamp()
         guild_id = interaction.guild.id
@@ -164,7 +164,7 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="raid_status", description="Show status of the current raid and any active auction.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def raid_status_cmd(self, interaction: discord.Interaction):
         if not interaction.guild:
             if not interaction.response.is_done():
@@ -264,7 +264,7 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="admin_adjust_dkp", description="Manually adjust a member's DKP (admin only).")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     @app_commands.describe(member="The member whose DKP will be adjusted.")
     async def admin_adjust_dkp_cmd(self, interaction: discord.Interaction, member: discord.Member):
         # Ensure this command is used in a guild context
@@ -285,7 +285,7 @@ class AdminCog(commands.Cog):
         await interaction.response.send_modal(modal)
 
     @app_commands.command(name="list_members", description="List members who participated in this raid log thread.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def list_members(self, interaction: discord.Interaction):
         # This command is intended to be used inside a raid log thread under
         # the Active Raids channel. It lists unique, non-bot users who have
@@ -349,7 +349,7 @@ class AdminCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="debug_config", description="Show DKP configuration for this server.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def debug_config(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
@@ -378,6 +378,7 @@ class AdminCog(commands.Cog):
             f"**DKP Category:** {fmt_channel(config['dkp_category_id'])}\n"
             f"**DKP Channel:** {fmt_channel(config['dkp_channel_id'])}\n"
             f"**Raid Channel:** {fmt_channel(config['raid_channel_id'])}\n"
+            f"**Bot Admin Role:** {fmt_role(config['admin_role_id'])}\n"
             f"**Officer Role:** {fmt_role(config['officer_role_id'])}\n"
             f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
             f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
@@ -419,6 +420,7 @@ class AdminCog(commands.Cog):
             f"**DKP Category:** {fmt_channel(config['dkp_category_id'])}\n"
             f"**DKP Channel:** {fmt_channel(config['dkp_channel_id'])}\n"
             f"**Raid Channel:** {fmt_channel(config['raid_channel_id'])}\n"
+            f"**Bot Admin Role:** {fmt_role(config['admin_role_id'])}\n"
             f"**Officer Role:** {fmt_role(config['officer_role_id'])}\n"
             f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
             f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
@@ -432,7 +434,7 @@ class AdminCog(commands.Cog):
 
     async def set_role(self, interaction: discord.Interaction, role_type: str, role: discord.Role):
         # Validate role_type to prevent SQL injection
-        valid_columns = {"officer", "raider", "raid_leader"}
+        valid_columns = {"admin", "officer", "raider", "raid_leader"}
         if role_type.lower() not in valid_columns:
             await interaction.followup.send("Invalid role type.", ephemeral=True)
             return

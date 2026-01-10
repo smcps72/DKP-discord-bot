@@ -5,7 +5,7 @@ from datetime import datetime
 import logging
 import re
 import io
-from ..utils import create_info_embed, create_error_embed, create_success_embed, is_officer, send_dkp_change_dm
+from ..utils import create_info_embed, create_error_embed, create_success_embed, is_admin, is_officer, send_dkp_change_dm
 from ..ui.views import RaidControlView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
 
@@ -125,8 +125,8 @@ class RaidCog(commands.Cog):
         if not raid:
             return
 
-        is_admin = interaction.user.guild_permissions.administrator
-        if interaction.user.id != raid["leader_id"] and not is_admin:
+        admin_ok = await is_admin(interaction)
+        if interaction.user.id != raid["leader_id"] and not admin_ok:
             return
 
         key = (interaction.guild.id, thread.id, interaction.user.id)
@@ -176,8 +176,8 @@ class RaidCog(commands.Cog):
             return
 
         is_leader = interaction.user.id == raid["leader_id"]
-        is_admin = interaction.user.guild_permissions.administrator
-        can_manage = is_leader or is_admin
+        admin_ok = await is_admin(interaction)
+        can_manage = is_leader or admin_ok
 
         title = (
             f"Raid Control Panel for {interaction.user.display_name}"
@@ -322,8 +322,8 @@ class RaidCog(commands.Cog):
             )
             thread = await raid_message.create_thread(name=thread_name)
             await self.bot.db.execute(
-                "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id) VALUES (?, ?, ?, ?)",
-                (interaction.guild.id, interaction.user.id, raid_vc_id, thread.id),
+                "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, announcement_message_id) VALUES (?, ?, ?, ?, ?)",
+                (interaction.guild.id, interaction.user.id, raid_vc_id, thread.id, raid_message.id),
             )
 
             try:
@@ -380,7 +380,7 @@ class RaidCog(commands.Cog):
             await interaction.followup.send(embed=create_error_embed("Error", "Could not create the raid. Check my permissions."))
 
     @app_commands.command(name="raid_create", description="Creates a new raid channel and control thread.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def raid_create_cmd(self, interaction: discord.Interaction):
         await self.create_raid_from_interaction(interaction)
 
@@ -391,7 +391,7 @@ class RaidCog(commands.Cog):
         await self.close_raid(interaction)
 
     @app_commands.command(name="raid_add_member", description="Admin only: add a member to the current raid without requiring them to be in the voice channel.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     @app_commands.describe(member="The member to add as a participant in this raid.")
     async def raid_add_member_cmd(self, interaction: discord.Interaction, member: discord.Member):
         if not interaction.guild:
@@ -425,12 +425,7 @@ class RaidCog(commands.Cog):
         if not raid or not interaction.guild:
             return []
 
-        vc = interaction.guild.get_channel(raid["vc_id"])
         members_by_id: dict[int, discord.Member] = {}
-
-        for m in getattr(vc, "members", []):
-            if not getattr(m, "bot", False):
-                members_by_id[m.id] = m
 
         try:
             member_rows = await self.bot.db.get_raid_members(raid["id"])
@@ -485,16 +480,8 @@ class RaidCog(commands.Cog):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
-        vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
 
-        # Build the raid team from both the current voice channel (if any)
-        # and the raid_members table so manually added members are included
-        # even when the VC is empty or has been cleaned up.
         members_by_id: dict[int, discord.Member] = {}
-
-        for m in getattr(vc, "members", []):
-            if not getattr(m, "bot", False):
-                members_by_id[m.id] = m
 
         try:
             member_rows = await self.bot.db.get_raid_members(raid["id"])
@@ -550,9 +537,9 @@ class RaidCog(commands.Cog):
                 await self.send_ephemeral_raid_panel(interaction)
             return
 
-        is_admin = isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator
+        admin_ok = await is_admin(interaction)
 
-        if amount > MAX_DKP_ADJUSTMENT and not is_admin:
+        if amount > MAX_DKP_ADJUSTMENT and not admin_ok:
             await interaction.followup.send(
                 embed=create_error_embed(
                     "Invalid Amount",
@@ -583,15 +570,9 @@ class RaidCog(commands.Cog):
         vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
 
         if member is None:
-            # Mass adjustment: include all non-bot members currently in the
-            # raid voice channel plus any non-bot guild members recorded in
+            # Mass adjustment: include all non-bot guild members recorded in
             # raid_members table for this raid.
             targets_by_id: dict[int, discord.Member] = {}
-
-            if vc and hasattr(vc, "members"):
-                for m in vc.members:
-                    if not m.bot:
-                        targets_by_id[m.id] = m
 
             try:
                 member_rows = await self.bot.db.get_raid_members(raid["id"])
@@ -619,8 +600,6 @@ class RaidCog(commands.Cog):
                 if source == "raid_panel":
                     await self.send_ephemeral_raid_panel(interaction)
                 return
-
-            in_vc = member in getattr(vc, "members", [])
             raid_member_ids = set()
             try:
                 member_rows = await self.bot.db.get_raid_members(raid["id"])
@@ -628,11 +607,11 @@ class RaidCog(commands.Cog):
             except Exception:
                 raid_member_ids = set()
 
-            if not in_vc and member.id not in raid_member_ids:
+            if member.id not in raid_member_ids:
                 await interaction.followup.send(
                     embed=create_error_embed(
                         "Invalid Target",
-                        "DKP can only be adjusted for members in the raid voice channel or those who have been added as raid participants.",
+                        "DKP can only be adjusted for approved raid members.",
                     ),
                     ephemeral=True,
                 )
@@ -822,6 +801,59 @@ class RaidCog(commands.Cog):
         # Deactivate raid in DB
         await self.bot.db.execute("UPDATE raids SET is_active = 0 WHERE id = ?", (raid['id'],))
 
+        # Remove the raid announcement from the active raids channel so closed
+        # raids do not linger (and don't become #unknown once the thread is deleted).
+        try:
+            config_for_announcement = await self.bot.db.get_guild_config(interaction.guild.id)
+            active_channel_id = (
+                config_for_announcement["raid_channel_id"]
+                if config_for_announcement and "raid_channel_id" in config_for_announcement.keys()
+                else None
+            )
+            announcement_message_id = None
+            try:
+                announcement_message_id = raid["announcement_message_id"]
+            except Exception:
+                announcement_message_id = None
+
+            active_channel = (
+                interaction.guild.get_channel(active_channel_id)
+                if isinstance(active_channel_id, int)
+                else None
+            )
+            if isinstance(active_channel, discord.TextChannel) and isinstance(announcement_message_id, int):
+                try:
+                    msg = await active_channel.fetch_message(announcement_message_id)
+                    await msg.delete()
+                except (discord.NotFound, discord.Forbidden):
+                    pass
+                except Exception:
+                    logging.exception("Failed to delete raid announcement message")
+
+            # Backward compatibility: older raids may not have
+            # announcement_message_id persisted. In that case, search recent bot
+            # messages that mention this thread and delete the first match.
+            if isinstance(active_channel, discord.TextChannel) and not isinstance(announcement_message_id, int):
+                try:
+                    bot_user = getattr(self.bot, "user", None)
+                    needle = thread.mention
+                    if bot_user is not None and needle:
+                        async for msg in active_channel.history(limit=200, oldest_first=False):
+                            if getattr(msg.author, "id", None) != getattr(bot_user, "id", None):
+                                continue
+                            if needle in (msg.content or ""):
+                                try:
+                                    await msg.delete()
+                                except (discord.NotFound, discord.Forbidden):
+                                    pass
+                                except Exception:
+                                    logging.exception("Failed to delete legacy raid announcement message")
+                                break
+                except Exception:
+                    logging.exception("Failed while attempting legacy raid announcement cleanup")
+        except Exception:
+            logging.exception("Failed while attempting to remove raid announcement from active raids")
+
         # Remove raid leader role
         config = await self.bot.db.get_guild_config(interaction.guild.id)
         raid_leader_role_id = config['raid_leader_role_id'] if 'raid_leader_role_id' in config else None
@@ -958,32 +990,6 @@ class RaidCog(commands.Cog):
 
         original_deleted = False
         if completed_thread is not None and interaction.guild:
-            try:
-                active_channel_id = config["raid_channel_id"] if config and "raid_channel_id" in config else None
-                active_channel = (
-                    interaction.guild.get_channel(active_channel_id)
-                    if isinstance(active_channel_id, int)
-                    else None
-                )
-                bot_user = getattr(self.bot, "user", None)
-                if bot_user and isinstance(active_channel, discord.TextChannel):
-                    needle = thread.mention
-                    async for msg in active_channel.history(limit=1000, oldest_first=False):
-                        if msg.author.id != bot_user.id:
-                            continue
-                        if needle in (msg.content or ""):
-                            try:
-                                await msg.delete()
-                            except Exception:
-                                try:
-                                    if completed_thread is not None:
-                                        await msg.edit(content=(msg.content or "").replace(needle, completed_thread.mention))
-                                except Exception:
-                                    pass
-                            break
-            except Exception:
-                logging.exception("Failed to delete raid announcement message from active raids channel")
-
             try:
                 await thread.delete()
                 original_deleted = True

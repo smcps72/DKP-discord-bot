@@ -73,11 +73,16 @@ class TasksCog(commands.Cog):
                 continue
 
             channel = self.bot.get_channel(vc_id)
-            if channel and isinstance(channel, discord.VoiceChannel) and not channel.members:
-                # In a real bot, you'd add a grace period check (e.g., if empty for 30 seconds)
-                # This simple check is fine for demonstration.
-                logging.info(f"Cleaning up empty raid VC: {channel.name}")
-                await channel.delete(reason="Automatic cleanup of empty raid channel.")
+            # vc_id is often the raid leader's *existing* voice channel (e.g. General),
+            # so it must never be auto-deleted. Instead, when a VC is gone or empty,
+            # we simply stop associating the raid with that channel.
+            try:
+                if channel is None:
+                    await self.bot.db.execute("UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1", (vc_id,))
+                elif isinstance(channel, discord.VoiceChannel) and not channel.members:
+                    await self.bot.db.execute("UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1", (vc_id,))
+            except Exception:
+                logging.exception("Failed to clear stale raid vc_id during cleanup")
 
     @cleanup_channels.before_loop
     async def before_cleanup(self):

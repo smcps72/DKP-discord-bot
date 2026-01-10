@@ -32,7 +32,15 @@ async def is_officer(interaction: discord.Interaction) -> bool:
         return True
 
     config = await interaction.client.db.get_guild_config(guild.id)
-    officer_role_id = config['officer_role_id'] if config else None
+    admin_role_id = None
+    if config and ("admin_role_id" in getattr(config, "keys", lambda: [])()):
+        admin_role_id = config["admin_role_id"]
+    if admin_role_id and discord.utils.get(user.roles, id=admin_role_id):
+        return True
+
+    officer_role_id = None
+    if config and ("officer_role_id" in getattr(config, "keys", lambda: [])()):
+        officer_role_id = config["officer_role_id"]
     if officer_role_id and discord.utils.get(user.roles, id=officer_role_id):
         return True
     return False
@@ -44,7 +52,19 @@ async def is_admin(interaction: discord.Interaction) -> bool:
     if not guild or not isinstance(user, discord.Member):
         return False
 
-    return bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator)
+    # Always allow true server admins as a backstop (e.g. initial setup).
+    if bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator):
+        return True
+
+    # Otherwise, allow users who have the configured bot-admin role.
+    config = await interaction.client.db.get_guild_config(guild.id)
+    admin_role_id = None
+    if config and ("admin_role_id" in getattr(config, "keys", lambda: [])()):
+        admin_role_id = config["admin_role_id"]
+    if admin_role_id and discord.utils.get(user.roles, id=admin_role_id):
+        return True
+
+    return False
 
 
 async def is_allowed_guild(interaction: discord.Interaction) -> bool:

@@ -8,6 +8,8 @@ import io
 import zipfile
 from datetime import datetime, timezone
 
+from ..utils import is_admin
+
 class ResetCog(commands.Cog):
     """A cog for resetting the bot's configuration on a server."""
     def __init__(self, bot: commands.Bot):
@@ -126,8 +128,64 @@ class ResetCog(commands.Cog):
             except Exception as e:
                 logging.error(f"Failed to export raid thread {thread_id} for guild {guild.id}: {e}", exc_info=True)
 
+    async def _post_backup_record_to_archive(
+        self,
+        guild: discord.Guild,
+        config: dict,
+        backup_id: str,
+        backup_path: str,
+    ) -> None:
+        """Post a persistent record of the reset backup into the archive.
+
+        This is the primary way to associate backups with the completed-raids
+        history across multiple resets, since the DB is wiped on reset but the
+        archive category is preserved.
+        """
+        try:
+            completed_channel = None
+            completed_id = None
+            try:
+                completed_id = (
+                    config.get("completed_raid_channel_id")
+                    if isinstance(config, dict)
+                    else None
+                )
+            except Exception:
+                completed_id = None
+
+            if completed_id:
+                ch = guild.get_channel(completed_id)
+                if isinstance(ch, discord.TextChannel):
+                    completed_channel = ch
+
+            if completed_channel is None:
+                # Fall back by name/category
+                archive_category = None
+                for cat in getattr(guild, "categories", []) or []:
+                    if (getattr(cat, "name", "") or "").lower() == "dkp-archive":
+                        archive_category = cat
+                        break
+                for ch in getattr(guild, "text_channels", []) or []:
+                    if (getattr(ch, "name", "") or "").lower() != "completed-raids":
+                        continue
+                    if archive_category is not None and getattr(ch, "category_id", None) != getattr(archive_category, "id", None):
+                        continue
+                    completed_channel = ch
+                    break
+
+            if completed_channel is None:
+                return
+
+            file_name = os.path.basename(backup_path) if backup_path else "(unknown)"
+            await completed_channel.send(
+                f"Reset backup created. backup_id=`{backup_id}` file=`{file_name}`\n"
+                f"Use `/restore_backup backup_id:{backup_id} confirm:true` to restore, or `/list_backups` to list all backups."
+            )
+        except Exception:
+            logging.exception("Failed to post reset backup record to archive")
+
     @app_commands.command(name="reset", description="Resets the DKP bot's configuration on this server.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def reset(self, interaction: discord.Interaction):
         """Allows an admin to wipe the bot's configuration and channels."""
         guild = interaction.guild
@@ -141,6 +199,12 @@ class ResetCog(commands.Cog):
 
         db = self.bot.db
         config = await db.get_guild_config(guild.id)
+        # Normalize to a plain dict so newer code can safely use .get().
+        if config:
+            try:
+                config = dict(config)
+            except Exception:
+                pass
 
         # For safety, do not allow /reset to run from within the DKP-System
         # category or its primary channels, since those may be deleted as part
@@ -150,11 +214,19 @@ class ResetCog(commands.Cog):
             dkp_category_id = config['dkp_category_id']
             dkp_channel_id = config['dkp_channel_id']
             raid_channel_id = config['raid_channel_id']
+            archive_category_id = config['archive_category_id'] if 'archive_category_id' in config.keys() else None
+            completed_raid_channel_id = (
+                config['completed_raid_channel_id'] if 'completed_raid_channel_id' in config.keys() else None
+            )
 
             in_dkp_category = getattr(channel, 'category_id', None) == dkp_category_id
+            in_archive_category = (
+                archive_category_id is not None and getattr(channel, 'category_id', None) == archive_category_id
+            )
             is_dkp_channel = channel.id in (dkp_channel_id, raid_channel_id)
+            is_archive_channel = completed_raid_channel_id is not None and channel.id == completed_raid_channel_id
 
-            if in_dkp_category or is_dkp_channel:
+            if in_dkp_category or is_dkp_channel or in_archive_category or is_archive_channel:
                 await interaction.response.send_message(
                     "For safety, please run `/reset` in a non-DKP channel such as #general.",
                     ephemeral=True,
@@ -188,6 +260,13 @@ class ResetCog(commands.Cog):
                 )
                 return
 
+            # Persistently record the backup in the archive so the backup history
+            # survives multiple resets.
+            try:
+                await self._post_backup_record_to_archive(guild, config, reset_timestamp, backup_path)
+            except Exception:
+                logging.exception("Failed while recording backup into archive")
+
             # Next, try to export any raid threads for this guild into the same
             # timestamped backup folder. Failures here are logged but do not
             # abort the reset since the DB snapshot has already been taken.
@@ -204,83 +283,77 @@ class ResetCog(commands.Cog):
                         await item.delete(reason="DKP Bot Reset")
                         logging.info(f"Deleted {item_type} {item.name} ({item_id})")
 
+            def _channel_in_category(ch, category_id: int | None) -> bool:
+                try:
+                    return category_id is not None and getattr(ch, "category_id", None) == category_id
+                except Exception:
+                    return False
+
+            def _is_category_channel(ch) -> bool:
+                return isinstance(ch, discord.CategoryChannel) or (
+                    ch is not None and hasattr(ch, "text_channels") and hasattr(ch, "delete")
+                )
+
+            async def safe_delete_dkp_channel(item_id, expected_names: set[str] | None = None):
+                """Delete a channel only if it appears to be DKP-owned."""
+                if not item_id:
+                    return
+                ch = guild.get_channel(item_id)
+                if ch is None:
+                    return
+
+                dkp_category_id = config.get("dkp_category_id") if isinstance(config, dict) else None
+                if _channel_in_category(ch, dkp_category_id):
+                    await ch.delete(reason="DKP Bot Reset")
+                    logging.info(f"Deleted channel {getattr(ch, 'name', '')} ({item_id})")
+                    return
+
+                if expected_names is not None:
+                    name = (getattr(ch, "name", "") or "").lower()
+                    if name in {n.lower() for n in expected_names}:
+                        await ch.delete(reason="DKP Bot Reset")
+                        logging.info(f"Deleted channel {getattr(ch, 'name', '')} ({item_id})")
+
             # Remove all roles except admin roles, @everyone, and the configured
-            # Officer role. Skip managed roles. Requires the bot's top role to be
-            # above roles it tries to delete.
+            # Officer role. Reset should only affect DKP-owned roles; do not
+            # touch unrelated guild roles.
             deleted_roles = []
             skipped_roles = []  # tuples of (name, reason)
-            # Known DKP role names to force-delete (case-insensitive). Officer
-            # is intentionally *not* included here so that the configured
-            # officer_role_id is preserved during reset.
-            dkp_role_names = {"raider", "raid-leader", "raid leader"}
-
-            officer_role_id = None
-            if config and "officer_role_id" in config.keys():
-                officer_role_id = config["officer_role_id"]
 
             # Determine the bot member and top role position for diagnostics
             bot_member = guild.get_member(self.bot.user.id) if self.bot.user else None
             bot_top_pos = bot_member.top_role.position if bot_member and bot_member.top_role else None
 
-            for role in list(guild.roles):
-                try:
-                    # Always preserve the configured Officer role so guilds can
-                    # manage it themselves without it being destroyed on reset.
-                    if officer_role_id is not None and role.id == officer_role_id:
-                        skipped_roles.append((role.name, "configured officer role (preserved)"))
-                        continue
+            # Delete Discord entities for the *active* raids category only.
+            # Archive (DKP-archive and #completed-raids) is intentionally preserved.
+            await safe_delete_dkp_channel(config.get('dkp_channel_id'), expected_names={"dkp-system"})
+            await safe_delete_dkp_channel(config.get('raid_channel_id'), expected_names={"active-raids"})
 
-                    if role.is_default():
-                        skipped_roles.append((role.name, "default role"))
-                        continue
-                    if role.managed:
-                        skipped_roles.append((role.name, "managed role"))
-                        continue
-                    # Allow forced deletion for known DKP roles even if they have admin perms
-                    normalized_name = role.name.lower()
-                    if role.permissions.administrator and normalized_name not in dkp_role_names:
-                        # Skip true admin roles
-                        reason = "administrator role"
-                        if bot_top_pos is not None:
-                            reason += f" (role_pos={role.position}, bot_top_pos={bot_top_pos})"
-                        skipped_roles.append((role.name, reason))
-                        continue
-                    await role.delete(reason="DKP Bot Reset: remove all roles except admin")
-                    deleted_roles.append(role.name)
-                    logging.info(f"Deleted role {role.name} ({role.id})")
-                except discord.Forbidden:
-                    reason = "insufficient permissions / role above bot"
-                    if bot_top_pos is not None:
-                        reason += f" (role_pos={role.position}, bot_top_pos={bot_top_pos})"
-                    skipped_roles.append((role.name, reason))
-                    logging.warning(f"Insufficient permissions to delete role {role.name} ({role.id})")
-                except Exception as e:
-                    skipped_roles.append((role.name, f"error: {e}"))
-                    logging.error(f"Error deleting role {role.name} ({role.id}): {e}")
-
-            # Delete Discord entities using correct names from database.py
-            await safe_delete(config['dkp_channel_id'], guild.get_channel, "channel")
-            await safe_delete(config['raid_channel_id'], guild.get_channel, "channel")
-            await safe_delete(config['dkp_category_id'], guild.get_channel, "category")
+            # Only delete the active category if it looks like the DKP category.
+            dkp_category = guild.get_channel(config.get('dkp_category_id')) if config.get('dkp_category_id') else None
+            if _is_category_channel(dkp_category):
+                if (getattr(dkp_category, "name", "") or "").lower() in {"dkp-active-raids", "dkp-system"}:
+                    await dkp_category.delete(reason="DKP Bot Reset")
+                    logging.info(
+                        f"Deleted category {getattr(dkp_category, 'name', '')} ({getattr(dkp_category, 'id', None)})"
+                    )
             # Officer role is preserved intentionally (role object and assignments)
-            await safe_delete(config['raider_role_id'], guild.get_role, "role")
+            await safe_delete(config.get('raider_role_id'), guild.get_role, "role")
+            if config.get('raider_role_id'):
+                deleted_roles.append("Raider")
             # Also try to delete raid leader role by ID if present
-            if 'raid_leader_role_id' in config:
-                await safe_delete(config['raid_leader_role_id'], guild.get_role, "role")
-            await safe_delete(config['raid_vc_template_id'], guild.get_channel, "channel")
+            if config.get('raid_leader_role_id'):
+                await safe_delete(config.get('raid_leader_role_id'), guild.get_role, "role")
+                deleted_roles.append("Raid-Leader")
 
-            # Additionally, clean up any legacy "Raid-Template" voice channels that might not
-            # be referenced by the current guild config. Older versions of the bot created
-            # this template; the current design no longer uses it.
-            for vc in list(guild.voice_channels):
-                if vc.name.lower() == "raid-template":
-                    try:
+            # Only delete the legacy template VC if it is inside the DKP category.
+            raid_vc_template_id = config.get('raid_vc_template_id') if isinstance(config, dict) else None
+            if raid_vc_template_id:
+                vc = guild.get_channel(raid_vc_template_id)
+                if isinstance(vc, discord.VoiceChannel):
+                    if _channel_in_category(vc, config.get('dkp_category_id')) and (vc.name or "").lower() == "raid-template":
                         await vc.delete(reason="DKP Bot Reset: remove legacy Raid-Template voice channel")
                         logging.info(f"Deleted legacy Raid-Template voice channel {vc.name} ({vc.id})")
-                    except discord.Forbidden:
-                        logging.warning("Failed to delete legacy Raid-Template voice channel due to permissions.")
-                    except Exception as e:
-                        logging.warning(f"Error deleting legacy Raid-Template voice channel: {e}")
 
             # Delete from all database tables for a full, clean reset.
             logging.info(f"Deleting database entries for guild {guild.id}")
@@ -296,6 +369,7 @@ class ResetCog(commands.Cog):
                 f"Reset complete. Deleted roles: {len(deleted_roles)}. "
                 f"Skipped roles: {len(skipped_roles)}.\n"
             )
+            summary += f"Backup saved as backup_id={reset_timestamp}.\n"
             if bot_top_pos is not None:
                 summary += f"Bot top role position: {bot_top_pos}.\n"
             if skipped_roles:
@@ -333,7 +407,7 @@ class ResetCog(commands.Cog):
                 logging.warning("Could not send reset error message because the interaction is no longer valid.")
 
     @app_commands.command(name="list_backups", description="Lists database backup IDs (timestamps) for this server.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def list_backups(self, interaction: discord.Interaction):
         guild = interaction.guild
 
@@ -393,7 +467,7 @@ class ResetCog(commands.Cog):
             await interaction.response.send_message("Failed to list backups. Please check the logs.", ephemeral=True)
 
     @app_commands.command(name="restore_backup", description="Restores the database from a backup ID (timestamp) for this server.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(is_admin)
     async def restore_backup(self, interaction: discord.Interaction, backup_id: str, confirm: bool):
         guild = interaction.guild
 
