@@ -1,6 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
+import discord
+
 from discord_bot.ui.views import WelcomeView
 
 # Mock objects for testing
@@ -13,6 +15,7 @@ class MockUser(MagicMock):
     def __init__(self, id=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.id = id
+        self.bot = False
 
 class MockInteraction(MagicMock):
     def __init__(self, guild, user, *args, **kwargs):
@@ -115,7 +118,7 @@ async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_admin, moc
     # Assert
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
     mock_is_admin.assert_called_once_with(mock_interaction)
-    mock_interaction.followup.send.assert_called_once_with("You must be a server admin to use this.", ephemeral=True)
+    mock_interaction.followup.send.assert_called_once_with("You must be a bot admin to use this.", ephemeral=True)
 
 
 # Tests for RaidControlView
@@ -137,15 +140,19 @@ class TestRaidControlView:
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
-        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"vc_id": 12345})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
 
         mock_vc = MagicMock()
         member1 = MagicMock()
         member1.bot = False
+        member1.id = 1
         member2 = MagicMock()
         member2.bot = False
+        member2.id = 2
         mock_vc.members = [member1, member2]
         mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
+        mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member1 if uid == 1 else (member2 if uid == 2 else None)
 
         # Patch discord.VoiceChannel in the views module so our MagicMock
         # instance passes the isinstance check inside _show_dkp_adjustment_view.
@@ -165,13 +172,16 @@ class TestRaidControlView:
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
-        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"vc_id": 12345})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}])
 
         mock_vc = MagicMock()
         member = MagicMock()
         member.bot = False
+        member.id = 1
         mock_vc.members = [member]
         mock_raid_control_interaction.guild.get_channel.return_value = mock_vc
+        mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member if uid == 1 else None
 
         # Patch discord.VoiceChannel so our mocked VC passes the isinstance
         # guard inside _show_dkp_adjustment_view.
@@ -193,6 +203,7 @@ class TestRaidControlView:
         mock_bot.db = MagicMock()
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
         mock_bot.db.get_active_auction = AsyncMock(return_value=None)
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 456}])
 
         mock_vc = MagicMock()
         member = MagicMock()
@@ -214,12 +225,14 @@ class TestRaidControlView:
         assert modal_sent.auction_cog == mock_auction_cog
 
     async def test_start_auction_button_blocks_when_vc_empty(self, mock_bot, mock_raid_control_interaction):
-        """Tests that 'Start Auction' shows an error when the raid VC has no members."""
+        """Tests that 'Start Auction' shows an error when no eligible raid members exist."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
         mock_bot.db.get_active_auction = AsyncMock(return_value=None)
+
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[])
 
         mock_vc = MagicMock()
         mock_vc.members = []  # Empty voice channel
@@ -230,38 +243,48 @@ class TestRaidControlView:
 
         # Assert: error message is sent and modal is not opened
         mock_raid_control_interaction.response.send_message.assert_called_once_with(
-            "Raid voice channel is empty. Cannot start auction.",
+            "No eligible raid members were found. Cannot start auction.",
             ephemeral=True,
         )
         mock_raid_control_interaction.response.send_modal.assert_not_called()
 
     async def test_join_raid_button_adds_user_and_handles_duplicate(self, mock_bot, mock_raid_control_interaction):
-        """Tests that 'Join Raid' records the user and prevents duplicate joins."""
+        """Tests that 'Join Raid' submits a pending join request and prevents duplicates."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
-        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
-        mock_bot.db.get_raid_members = AsyncMock(return_value=[])  # No members yet
-        mock_bot.db.add_raid_member = AsyncMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345, "leader_id": 999})
+        mock_bot.db.is_raid_member = AsyncMock(return_value=False)
+        mock_bot.db.get_raid_join_request = AsyncMock(side_effect=[None, {"status": "pending"}])
+        mock_bot.db.upsert_raid_join_request = AsyncMock()
 
-        # Act: first join
+        mock_thread = MagicMock(spec=discord.Thread)
+        mock_thread.send = AsyncMock()
+        mock_raid_control_interaction.channel = mock_thread
+        mock_raid_control_interaction.user.bot = False
+
+        # Act: first click submits request
         await view.join_raid.callback(mock_raid_control_interaction)
 
-        # Assert: user is added and confirmation is sent
-        mock_bot.db.add_raid_member.assert_called_once_with(1, mock_raid_control_interaction.user.id)
-        mock_raid_control_interaction.followup.send.assert_called_with("You have been added to the raid.", ephemeral=True)
+        # Assert: join request is created and user sees pending message
+        mock_bot.db.upsert_raid_join_request.assert_called_once_with(1, mock_raid_control_interaction.user.id, source="button")
+        mock_raid_control_interaction.followup.send.assert_called_with(
+            "Join request sent to the raid leader for approval.",
+            ephemeral=True,
+        )
 
-        # Arrange for duplicate attempt: update the mock to return the user as already joined
-        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": mock_raid_control_interaction.user.id}])
         # Reset only the followup.send mock to check the new message; keep add_raid_member calls intact
         mock_raid_control_interaction.followup.send.reset_mock()
 
-        # Act: duplicate join
+        # Act: second click sees pending
         await view.join_raid.callback(mock_raid_control_interaction)
 
-        # Assert: duplicate is rejected, no new add_raid_member call (still only one call total)
-        mock_bot.db.add_raid_member.assert_called_once()  # Still only one call from the first join
-        mock_raid_control_interaction.followup.send.assert_called_with("You are already part of this raid.", ephemeral=True)
+        # Assert: duplicate is rejected, no new upsert
+        assert mock_bot.db.upsert_raid_join_request.call_count == 1
+        mock_raid_control_interaction.followup.send.assert_called_with(
+            "Your join request is already pending approval.",
+            ephemeral=True,
+        )
 
     async def test_rename_thread_button_success_and_unauthorized(self, mock_bot, mock_raid_control_interaction):
         """Tests that 'Rename Thread' opens modal for leaders and rejects non-leaders."""
