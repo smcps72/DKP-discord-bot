@@ -147,60 +147,41 @@ class DkpBot(commands.Bot):
         if after.channel is None:
             return
 
-        # Prefer normal association by voice channel.
-        raid = None
-        try:
-            raid = await self.db.get_raid_by_vc(after.channel.id)
-        except Exception as e:
-            logging.error(f"Error fetching raid for voice channel {after.channel.id}: {e}")
-            raid = None
+        # Ignore voice state changes that don't involve connecting/moving
+        # channels (mute/deafen/stream/video toggles) to prevent duplicate
+        # join bookkeeping and join announcements.
+        if before.channel is not None and after.channel is not None:
+            if getattr(before.channel, "id", None) == getattr(after.channel, "id", None):
+                return
 
-        # If no raid is tied to this VC yet, allow the raid leader's first join
-        # to attach their active raid to this voice channel (for raids started
-        # without being in voice).
-        if raid is None:
-            try:
-                if member.guild is not None:
-                    leader_raid = await self.db.get_active_raid_by_leader(member.guild.id, member.id)
-                else:
-                    leader_raid = None
-            except Exception as e:
-                logging.error(f"Error fetching active raid for leader {member.id}: {e}")
-                leader_raid = None
-
-            if leader_raid is not None:
-                try:
-                    if not leader_raid["vc_id"]:
-                        await self.db.execute(
-                            "UPDATE raids SET vc_id = ? WHERE id = ?",
-                            (after.channel.id, leader_raid["id"]),
-                        )
-                        raid = dict(leader_raid)
-                        raid["vc_id"] = after.channel.id
-                except Exception as e:
-                    logging.error(f"Error attaching raid {getattr(leader_raid, 'id', None)} to VC: {e}")
-                    raid = None
-
-        if not raid:
+        if getattr(member, "bot", False):
             return
 
-        # Record the joining member, and also snapshot any current VC members
-        # so the roster is correct even if the leader joins after others.
+        # Option B: voice-channel activity should not affect raid membership.
+        # We only use the raid leader's voice joins to associate their active
+        # raid with a voice channel (vc_id) if needed.
         try:
-            await self.db.add_raid_member(raid["id"], member.id)
+            if member.guild is not None:
+                leader_raid = await self.db.get_active_raid_by_leader(member.guild.id, member.id)
+            else:
+                leader_raid = None
         except Exception as e:
-            logging.error(f"Error recording raid member {member.id} for raid {raid.get('id')}: {e}")
+            logging.error(f"Error fetching active raid for leader {member.id}: {e}")
+            leader_raid = None
+
+        if leader_raid is None:
+            return
 
         try:
-            for m in getattr(after.channel, "members", []) or []:
-                if getattr(m, "bot", False):
-                    continue
-                try:
-                    await self.db.add_raid_member(raid["id"], m.id)
-                except Exception:
-                    continue
-        except Exception:
-            pass
+            current_vc_id = leader_raid["vc_id"]
+            if not current_vc_id or int(current_vc_id) != int(after.channel.id):
+                await self.db.execute(
+                    "UPDATE raids SET vc_id = ? WHERE id = ?",
+                    (after.channel.id, leader_raid["id"]),
+                )
+        except Exception as e:
+            logging.error(f"Error updating raid vc_id for raid {leader_raid.get('id')}: {e}")
+            return
 
     async def close(self):
         await super().close()
