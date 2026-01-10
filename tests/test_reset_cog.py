@@ -1,6 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
+
 from discord_bot.cogs.reset_cog import ResetCog
 from discord_bot.database import Database
 
@@ -51,9 +53,12 @@ async def test_reset_command():
 
     mock_guild = MockGuild(guild_id)
     mock_guild.name = "Test Guild"
-    mock_category = MockChannel(id=category_id, name='dkp-category')
-    mock_dkp_channel = MockChannel(id=dkp_channel_id, name='dkp')
-    mock_raid_channel = MockChannel(id=raid_channel_id, name='raids')
+    mock_category = MagicMock(spec=discord.CategoryChannel)
+    mock_category.id = category_id
+    mock_category.name = "DKP-active-raids"
+    mock_category.delete = AsyncMock()
+    mock_dkp_channel = MockChannel(id=dkp_channel_id, name='dkp-system')
+    mock_raid_channel = MockChannel(id=raid_channel_id, name='active-raids')
     mock_officer_role = MockRole(id=officer_role_id, name='Officer')
     mock_raider_role = MockRole(id=raider_role_id, name='Raider')
 
@@ -83,6 +88,7 @@ async def test_reset_command():
     # helpers to no-op versions.
     cog._backup_database = AsyncMock(return_value="dummy-backup.db")
     cog._export_raid_threads_for_guild = AsyncMock()
+    cog._post_backup_record_to_archive = AsyncMock()
 
     # -- Populate database with fake config --
     await db.execute(

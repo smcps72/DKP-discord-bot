@@ -41,6 +41,52 @@ async def test_is_officer_with_role():
 
     assert await utils.is_officer(mock_interaction) is True
 
+
+@pytest.mark.asyncio
+async def test_is_admin_server_admin_true():
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.user = MagicMock(spec=discord.Member)
+    mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
+    mock_interaction.user.guild_permissions.administrator = True
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+
+    assert await utils.is_admin(mock_interaction) is True
+
+
+@pytest.mark.asyncio
+async def test_is_admin_with_configured_role():
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.user = MagicMock(spec=discord.Member)
+    mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
+    mock_interaction.user.guild_permissions.administrator = False
+
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 999
+    mock_interaction.user.roles = [mock_role]
+
+    mock_interaction.client = MagicMock()
+    mock_interaction.client.db = MagicMock()
+    mock_interaction.client.db.get_guild_config = AsyncMock(return_value={'admin_role_id': 999})
+
+    assert await utils.is_admin(mock_interaction) is True
+
+
+@pytest.mark.asyncio
+async def test_is_admin_without_permission_or_role():
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.user = MagicMock(spec=discord.Member)
+    mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
+    mock_interaction.user.guild_permissions.administrator = False
+    mock_interaction.user.roles = []
+
+    mock_interaction.client = MagicMock()
+    mock_interaction.client.db = MagicMock()
+    mock_interaction.client.db.get_guild_config = AsyncMock(return_value={'admin_role_id': 999})
+
+    assert await utils.is_admin(mock_interaction) is False
+
 def test_create_info_embed():
     title = "Test Info"
     description = "This is an informational message."

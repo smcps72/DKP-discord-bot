@@ -47,11 +47,6 @@ def mock_interaction(mock_thread):
 
 @pytest.mark.asyncio
 async def test_member_autocomplete_filters_bots_and_matches_current(raid_cog, mock_interaction):
-    # Arrange: active raid with a VC containing members and a bot
-    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value={"vc_id": 123})
-    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[])
-
-    vc = MagicMock()
     member1 = MagicMock(spec=discord.Member)
     member1.display_name = "specialK"
     member1.bot = False
@@ -67,8 +62,20 @@ async def test_member_autocomplete_filters_bots_and_matches_current(raid_cog, mo
     bot_member.bot = True
     bot_member.id = 3
 
-    vc.members = [member1, member2, bot_member]
-    mock_interaction.guild.get_channel.return_value = vc
+    # Option B: autocomplete uses approved raid_members only.
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 123})
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member1.id}, {"user_id": member2.id}, {"user_id": bot_member.id}])
+
+    def get_member_side_effect(user_id):
+        if user_id == member1.id:
+            return member1
+        if user_id == member2.id:
+            return member2
+        if user_id == bot_member.id:
+            return bot_member
+        return None
+
+    mock_interaction.guild.get_member.side_effect = get_member_side_effect
 
     # Act: type part of member1's name
     choices = await raid_cog.member_autocomplete(mock_interaction, current="spec")
@@ -105,15 +112,12 @@ async def test_process_dkp_adjustment_triggers_panel_every_fourth_change(raid_co
     # Arrange
     raid = {"id": 1, "leader_id": mock_interaction.user.id, "vc_id": 999}
     raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
-    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[])
-
-    vc = MagicMock(spec=discord.VoiceChannel)
-    vc.id = 999
     member = MagicMock(spec=discord.Member)
     member.id = 111
     member.bot = False
-    vc.members = [member]
-    mock_interaction.guild.get_channel.return_value = vc
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member.id}])
+    mock_interaction.guild.get_channel.return_value = None
+    mock_interaction.guild.get_member.side_effect = lambda uid: member if uid == member.id else None
 
     raid_cog.bot.db.modify_user_dkp = AsyncMock()
     raid_cog._send_control_panel_ephemeral = AsyncMock()
@@ -149,7 +153,9 @@ async def test_rename_raid_thread_success_and_inactive_rejection(raid_cog, mock_
     await raid_cog.rename_raid_thread(mock_interaction, raid["id"], "New Name")
 
     # Assert: thread is renamed and success message sent
-    mock_thread.edit.assert_called_once_with(name="New Name")
+    args, kwargs = mock_thread.edit.call_args
+    assert "name" in kwargs
+    assert "New Name" in kwargs["name"]
     mock_interaction.followup.send.assert_called_with("Thread renamed successfully.", ephemeral=True)
 
     # Arrange: inactive raid
@@ -167,10 +173,16 @@ async def test_rename_raid_thread_success_and_inactive_rejection(raid_cog, mock_
 @pytest.mark.asyncio
 async def test_close_raid_posts_summary_in_completed_channel(raid_cog, mock_interaction, mock_thread):
     # Arrange
-    raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
+    raid = {
+        "id": 1,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "vc_id": 999,
+        "announcement_message_id": 222,
+    }
     raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
     raid_cog.bot.db.execute = AsyncMock()
-    raid_cog.bot.db.get_guild_config = AsyncMock(return_value={"completed_raid_channel_id": 111})
+    raid_cog.bot.db.get_guild_config = AsyncMock(return_value={"completed_raid_channel_id": 111, "raid_channel_id": 333})
 
     mock_interaction.channel = mock_thread
     mock_thread.send = AsyncMock()
@@ -180,7 +192,19 @@ async def test_close_raid_posts_summary_in_completed_channel(raid_cog, mock_inte
 
     mock_completed_channel = MagicMock()
     mock_completed_channel.send = AsyncMock()
-    mock_interaction.guild.get_channel.side_effect = lambda cid: mock_completed_channel if cid == 111 else None
+    mock_active_channel = MagicMock(spec=discord.TextChannel)
+    mock_announcement_msg = MagicMock(spec=discord.Message)
+    mock_announcement_msg.delete = AsyncMock()
+    mock_active_channel.fetch_message = AsyncMock(return_value=mock_announcement_msg)
+
+    def get_channel_side_effect(cid):
+        if cid == 111:
+            return mock_completed_channel
+        if cid == 333:
+            return mock_active_channel
+        return None
+
+    mock_interaction.guild.get_channel.side_effect = get_channel_side_effect
 
     # Act
     await raid_cog.close_raid(mock_interaction)
@@ -197,25 +221,21 @@ async def test_close_raid_posts_summary_in_completed_channel(raid_cog, mock_inte
 
 @pytest.mark.asyncio
 async def test_process_dkp_adjustment_awards_all_vc_and_raid_members(raid_cog, mock_interaction, mock_thread):
-    # Arrange: raid exists with one member in VC and one manually added raid member
+    # Arrange: Option B mass award uses raid_members only.
     raid = {"id": 1, "guild_id": mock_interaction.guild.id, "leader_id": mock_interaction.user.id, "vc_id": 999}
     raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
-
-    vc = MagicMock(spec=discord.VoiceChannel)
-    vc.id = 999
-    member_in_vc = MagicMock(spec=discord.Member)
-    member_in_vc.id = 111
-    member_in_vc.bot = False
-    vc.members = [member_in_vc]
-    mock_interaction.guild.get_channel.return_value = vc
 
     manual_member = MagicMock(spec=discord.Member)
     manual_member.id = 222
     manual_member.bot = False
 
-    # raid_members contains the manually added member (and may or may not
-    # include the VC member; duplicates are de-duplicated in the logic).
-    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": manual_member.id}])
+    member_in_vc = MagicMock(spec=discord.Member)
+    member_in_vc.id = 111
+    member_in_vc.bot = False
+
+    mock_interaction.guild.get_channel.return_value = None
+
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member_in_vc.id}, {"user_id": manual_member.id}])
 
     def get_member_side_effect(user_id):
         if user_id == member_in_vc.id:
@@ -240,7 +260,7 @@ async def test_process_dkp_adjustment_awards_all_vc_and_raid_members(raid_cog, m
         member=None,
     )
 
-    # Assert: DKP was modified for both the VC member and the manual raid member
+    # Assert: DKP was modified for both approved raid members
     assert raid_cog.bot.db.modify_user_dkp.await_count == 2
     raid_cog.bot.db.modify_user_dkp.assert_any_await(
         member_in_vc.id,

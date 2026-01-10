@@ -256,9 +256,12 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
 
         self.bot.db.fetchall.assert_called_once_with("SELECT vc_id FROM raids WHERE is_active = 1")
         self.bot.get_channel.assert_called_once_with(mock_vc.id)
-        mock_vc.delete.assert_called_once_with(reason="Automatic cleanup of empty raid channel.")
-        # Raids remain active after VC cleanup; no DB update should be made here.
-        self.bot.db.execute.assert_not_called()
+        mock_vc.delete.assert_not_called()
+        # Raids remain active; we simply clear vc_id when the VC is empty.
+        self.bot.db.execute.assert_called_once_with(
+            "UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1",
+            (mock_vc.id,),
+        )
 
     async def test_cleanup_channels_vc_with_members_not_deleted(self):
         # Mock an active raid with a VC that has members
@@ -289,8 +292,11 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
         await self.cog.cleanup_channels()
 
         self.bot.get_channel.assert_called_once_with(9999)
-        # No delete call on a None object, no error should be raised by the cog
-        self.bot.db.execute.assert_not_called() # DB entry should not be updated
+        # When a VC can't be resolved, clear vc_id so the raid isn't tied to a stale channel.
+        self.bot.db.execute.assert_called_once_with(
+            "UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1",
+            (9999,),
+        )
 
     async def test_cleanup_channels_not_a_voice_channel(self):
         # Mock a raid where the channel ID resolves to a TextChannel
