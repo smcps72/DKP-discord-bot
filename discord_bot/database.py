@@ -45,6 +45,7 @@ class Database:
                 "completed_raid_channel_id",
                 "ALTER TABLE guilds ADD COLUMN completed_raid_channel_id INTEGER",
             ),
+            ("admin_role_id", "ALTER TABLE guilds ADD COLUMN admin_role_id INTEGER"),
             ("officer_role_id", "ALTER TABLE guilds ADD COLUMN officer_role_id INTEGER"),
             ("raider_role_id", "ALTER TABLE guilds ADD COLUMN raider_role_id INTEGER"),
             (
@@ -59,10 +60,33 @@ class Database:
                 "default_dkp_award",
                 "ALTER TABLE guilds ADD COLUMN default_dkp_award INTEGER DEFAULT 5",
             ),
+            (
+                "archive_category_id",
+                "ALTER TABLE guilds ADD COLUMN archive_category_id INTEGER",
+            ),
         ]
 
         for col, sql in migrations:
             if col in existing:
+                continue
+            try:
+                await self.pool.execute(sql)
+            except aiosqlite.OperationalError:
+                continue
+
+        async with self.pool.execute("PRAGMA table_info(raids)") as cursor:
+            raid_rows = await cursor.fetchall()
+        raid_existing = {row[1] for row in raid_rows}
+
+        raid_migrations: list[tuple[str, str]] = [
+            (
+                "announcement_message_id",
+                "ALTER TABLE raids ADD COLUMN announcement_message_id INTEGER",
+            ),
+        ]
+
+        for col, sql in raid_migrations:
+            if col in raid_existing:
                 continue
             try:
                 await self.pool.execute(sql)
@@ -79,9 +103,11 @@ class Database:
                     license_status TEXT DEFAULT 'unknown',
                     warning_sent INTEGER DEFAULT 0,
                     dkp_category_id INTEGER,
+                    archive_category_id INTEGER,
                     dkp_channel_id INTEGER,
                     raid_channel_id INTEGER,
                     completed_raid_channel_id INTEGER,
+                    admin_role_id INTEGER,
                     officer_role_id INTEGER,
                     raider_role_id INTEGER,
                     raid_leader_role_id INTEGER,
@@ -104,6 +130,7 @@ class Database:
                     leader_id INTEGER,
                     vc_id INTEGER,
                     thread_id INTEGER UNIQUE,
+                    announcement_message_id INTEGER,
                     is_active INTEGER DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     rules TEXT
@@ -113,6 +140,19 @@ class Database:
                 CREATE TABLE IF NOT EXISTS raid_members (
                     raid_id INTEGER,
                     user_id INTEGER,
+                    PRIMARY KEY (raid_id, user_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_join_requests (
+                    raid_id INTEGER,
+                    user_id INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    source TEXT,
+                    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    decided_at TIMESTAMP,
+                    decided_by INTEGER,
                     PRIMARY KEY (raid_id, user_id),
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
@@ -172,6 +212,72 @@ class Database:
                 )
                 await asyncio.sleep(delay)
                 delay *= 2
+
+    async def remove_raid_member(self, raid_id: int, user_id: int) -> bool:
+        attempts = 3
+        delay = 0.2
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(
+                    "DELETE FROM raid_members WHERE raid_id = ? AND user_id = ?",
+                    (raid_id, user_id),
+                ) as cursor:
+                    await self.pool.commit()
+                    try:
+                        return int(cursor.rowcount) > 0
+                    except Exception:
+                        return False
+            except (aiosqlite.OperationalError, OSError) as e:
+                if attempt == attempts - 1:
+                    logging.error("DB remove_raid_member failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB remove_raid_member error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
+
+    async def get_raid_join_request(self, raid_id: int, user_id: int):
+        return await self.fetchone(
+            "SELECT * FROM raid_join_requests WHERE raid_id = ? AND user_id = ?",
+            (raid_id, user_id),
+        )
+
+    async def delete_raid_join_request(self, raid_id: int, user_id: int):
+        await self.execute(
+            "DELETE FROM raid_join_requests WHERE raid_id = ? AND user_id = ?",
+            (raid_id, user_id),
+        )
+
+    async def upsert_raid_join_request(self, raid_id: int, user_id: int, source: str | None = None):
+        await self.execute(
+            """
+            INSERT INTO raid_join_requests (raid_id, user_id, status, source)
+            VALUES (?, ?, 'pending', ?)
+            ON CONFLICT(raid_id, user_id)
+            DO UPDATE SET status = 'pending', source = excluded.source, requested_at = CURRENT_TIMESTAMP, decided_at = NULL, decided_by = NULL
+            """,
+            (raid_id, user_id, source),
+        )
+
+    async def set_raid_join_request_status(
+        self,
+        raid_id: int,
+        user_id: int,
+        status: str,
+        decided_by: int | None = None,
+    ):
+        await self.execute(
+            """
+            UPDATE raid_join_requests
+            SET status = ?, decided_at = CURRENT_TIMESTAMP, decided_by = ?
+            WHERE raid_id = ? AND user_id = ?
+            """,
+            (status, decided_by, raid_id, user_id),
+        )
 
     async def execute_insert(self, sql, params=()):
         """Execute an insert statement and return the last row id."""
@@ -276,16 +382,44 @@ class Database:
         )
 
     async def add_raid_member(self, raid_id: int, user_id: int):
-        await self.execute(
-            "INSERT OR IGNORE INTO raid_members (raid_id, user_id) VALUES (?, ?)",
-            (raid_id, user_id),
-        )
+        attempts = 3
+        delay = 0.2
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(
+                    "INSERT OR IGNORE INTO raid_members (raid_id, user_id) VALUES (?, ?)",
+                    (raid_id, user_id),
+                ) as cursor:
+                    await self.pool.commit()
+                    try:
+                        return int(cursor.rowcount) > 0
+                    except Exception:
+                        return False
+            except (aiosqlite.OperationalError, OSError) as e:
+                if attempt == attempts - 1:
+                    logging.error("DB add_raid_member failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB add_raid_member error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
 
     async def get_raid_members(self, raid_id: int):
         return await self.fetchall(
             "SELECT user_id FROM raid_members WHERE raid_id = ?",
             (raid_id,),
         )
+
+    async def is_raid_member(self, raid_id: int, user_id: int) -> bool:
+        row = await self.fetchone(
+            "SELECT 1 FROM raid_members WHERE raid_id = ? AND user_id = ?",
+            (raid_id, user_id),
+        )
+        return row is not None
 
     async def get_active_auction(self, raid_id):
         return await self.fetchone("SELECT * FROM auctions WHERE raid_id = ? AND is_active = 1", (raid_id,))
