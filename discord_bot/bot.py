@@ -79,7 +79,7 @@ class DkpBot(commands.Bot):
         intents.members = True  # Required for member info and voice state
         intents.voice_states = True # Required for seeing who is in a VC
         intents.messages = True
-        intents.message_content = True # Required for potential future prefix commands
+        intents.message_content = False # Required for potential future prefix commands
 
         super().__init__(command_prefix="!", intents=intents, tree_cls=DkpCommandTree)
         self.db = Database(DB_FILE)
