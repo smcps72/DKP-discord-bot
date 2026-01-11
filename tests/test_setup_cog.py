@@ -226,12 +226,13 @@ async def test_run_setup_discord_forbidden_error(setup_cog: SetupCog, mock_bot: 
 
     # 3. Verify owner was DMed
     mock_guild.owner.send.assert_called_once_with(
-        "I tried to set up my channels and roles in your server but I'm missing the 'Manage Channels' or 'Manage Roles' permission. Please grant them and re-invite me."
+        "I tried to set up my channels and roles in your server but I'm missing required permissions. Please ensure I have at least: 'Manage Channels', 'Manage Roles', and permission to 'View Channels' and 'Send Messages' in the DKP channels/categories, then re-invite me."
     )
 
     # 4. Verify interaction followup with error message
     mock_interaction.followup.send.assert_called_once_with(
-        "Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True
+        "Missing permissions to complete setup. Please grant 'Manage Channels', 'Manage Roles', and ensure I can 'View Channels' and 'Send Messages' in the DKP channels/categories, then try again.",
+        ephemeral=True,
     )
 
     # 5. Verify no DB execute call was made
@@ -260,7 +261,8 @@ async def test_run_setup_discord_forbidden_owner_dm_fails(setup_cog: SetupCog, m
     mock_guild.create_category.assert_called_once()
     mock_guild.owner.send.assert_called_once() # Attempted
     mock_interaction.followup.send.assert_called_once_with(
-        "Missing permissions to set up channels or roles. Please grant 'Manage Channels' and 'Manage Roles' and try again.", ephemeral=True
+        "Missing permissions to complete setup. Please grant 'Manage Channels', 'Manage Roles', and ensure I can 'View Channels' and 'Send Messages' in the DKP channels/categories, then try again.",
+        ephemeral=True,
     )
     mock_bot.db.execute.assert_not_called()
 
