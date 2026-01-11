@@ -177,6 +177,8 @@ class OfficerRoleSelect(discord.ui.Select):
                 r for r in interaction.guild.roles
                 if not r.is_default() and not r.managed
             ]
+            # Sort roles alphabetically by name
+            roles.sort(key=lambda role: role.name.lower())
             options = [
                 discord.SelectOption(label=role.name[:100], value=str(role.id))
                 for role in roles[:25]
@@ -249,6 +251,8 @@ class AdminRoleSelect(discord.ui.Select):
                 r for r in interaction.guild.roles
                 if not r.is_default() and not r.managed
             ]
+            # Sort roles alphabetically by name
+            roles.sort(key=lambda role: role.name.lower())
             options = [
                 discord.SelectOption(label=role.name[:100], value=str(role.id))
                 for role in roles[:25]
@@ -325,6 +329,8 @@ class AdminPanelView(discord.ui.View):
                 break
 
         if select:
+            # Sort roles alphabetically by name
+            roles.sort(key=lambda role: role.name.lower())
             options = [
                 discord.SelectOption(label=role.name[:100], value=str(role.id))
                 for role in roles[:25]
@@ -358,6 +364,8 @@ class AdminPanelView(discord.ui.View):
                 break
 
         if select:
+            # Sort roles alphabetically by name
+            roles.sort(key=lambda role: role.name.lower())
             options = [
                 discord.SelectOption(label=role.name[:100], value=str(role.id))
                 for role in roles[:25]
