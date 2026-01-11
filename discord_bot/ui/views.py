@@ -164,7 +164,12 @@ class OfficerRoleSelect(discord.ui.RoleSelect):
 
     async def callback(self, interaction: discord.Interaction):
         role = self.values[0]
-        if not role or role.is_default() or role.managed:
+        if not isinstance(role, discord.Role):
+            return await interaction.response.edit_message(
+                content="Please select a role (not a category).",
+                view=self.view,
+            )
+        if role.is_default() or role.managed:
             return await interaction.response.edit_message(
                 content="Please select a non-managed role.",
                 view=self.view,
@@ -196,48 +201,6 @@ class OfficerRoleAssignView(discord.ui.View):
         self.add_item(OfficerRoleSelect(bot))
 
 
-class AdminRoleSelect(discord.ui.RoleSelect):
-    def __init__(self, bot: discord.Client):
-        self.bot = bot
-
-        super().__init__(
-            placeholder="Type to search for a role to use as Bot Admins...",
-            min_values=1,
-            max_values=1,
-            row=0,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        role = self.values[0]
-        if not role or role.is_default() or role.managed:
-            return await interaction.response.edit_message(
-                content="Please select a non-managed role.",
-                view=self.view,
-            )
-
-        admin_cog = self.view.bot.get_cog("AdminCog") if hasattr(self.view, "bot") else None
-        if not admin_cog:
-            return await interaction.response.edit_message(
-                content="Admin module is currently offline. Please try again later.",
-                view=None,
-            )
-
-        await admin_cog.set_role(interaction, "Admin", role)
-
-        await send_admin_confirmation(
-            interaction,
-            panel_text=f"Bot Admin role set to {role.mention}.",
-            ephemeral_text=f"Bot Admin role has been updated to {role.mention}.",
-        )
-
-
-class AdminRoleAssignView(discord.ui.View):
-    def __init__(self, bot):
-        super().__init__(timeout=180)
-        self.bot = bot
-        self.add_item(AdminRoleSelect(bot))
-
-
 class AdminPanelView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=180)
@@ -251,15 +214,7 @@ class AdminPanelView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Assign Bot Admin Role", style=discord.ButtonStyle.primary, row=0)
-    async def assign_bot_admin_role(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = AdminRoleAssignView(self.bot)
-        await interaction.response.edit_message(
-            content="Type to search for a role to use as the Bot Admin role:",
-            view=view,
-        )
-
-    @discord.ui.button(label="Assign Officers Role Name", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="Assign Officers Role Name", style=discord.ButtonStyle.primary, row=0)
     async def assign_officers_role_name(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = OfficerRoleAssignView(self.bot)
         await interaction.response.edit_message(

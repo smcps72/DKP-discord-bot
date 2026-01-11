@@ -26,13 +26,19 @@ class SetupCog(commands.Cog):
                 bot_member = None
 
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False)
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=True,
+                read_message_history=True,
+                send_messages=False,
+            )
         }
         if bot_member is not None:
             overwrites[bot_member] = discord.PermissionOverwrite(
-                read_messages=True,
+                view_channel=True,
+                read_message_history=True,
                 send_messages=True,
                 manage_messages=True,
+                manage_channels=True,
             )
 
         def _is_category_channel(ch) -> bool:
@@ -84,6 +90,28 @@ class SetupCog(commands.Cog):
                 raid_channel = guild.get_channel(raid_channel_id) if raid_channel_id else None
 
                 changed = False
+
+                admin_role_id = config['admin_role_id'] if 'admin_role_id' in config.keys() else None
+                admin_role = guild.get_role(admin_role_id) if admin_role_id else None
+                if admin_role is None:
+                    try:
+                        admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+                        if admin_role is None:
+                            admin_role = await guild.create_role(
+                                name="DKP-Admin",
+                                permissions=discord.Permissions.none(),
+                                hoist=True,
+                                mentionable=True,
+                            )
+                        await self.bot.db.execute(
+                            "UPDATE guilds SET admin_role_id = ? WHERE guild_id = ?",
+                            (admin_role.id, guild.id),
+                        )
+                        changed = True
+                    except discord.Forbidden:
+                        pass
+                    except Exception:
+                        pass
 
                 if not raid_channel:
                     # Try to locate an existing "active-raids" channel under the DKP category,
@@ -282,6 +310,15 @@ class SetupCog(commands.Cog):
             # (Legacy) Raid voice channel template is no longer used; store NULL for compatibility.
             vc_template_id = None
             # Create or reuse roles
+            admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+            if admin_role is None:
+                admin_role = await guild.create_role(
+                    name="DKP-Admin",
+                    permissions=discord.Permissions.none(),
+                    hoist=True,
+                    mentionable=True,
+                )
+
             officer_role = discord.utils.get(guild.roles, name="Officer")
             if officer_role is None:
                 officer_role = await guild.create_role(
@@ -311,8 +348,8 @@ class SetupCog(commands.Cog):
 
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (guild.id, category.id, archive_category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guild.id, category.id, archive_category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, admin_role.id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
             )
             # Send welcome panel
             embed = create_info_embed(

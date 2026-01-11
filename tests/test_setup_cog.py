@@ -100,6 +100,7 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     overwrite = first_kwargs["overwrites"][mock_guild.default_role]
     assert overwrite.read_messages is True
     assert overwrite.send_messages is False
+    assert overwrite.read_message_history is True
 
     second_args, second_kwargs = mock_guild.create_category.call_args_list[1]
     assert second_args[0] == "DKP-archive"

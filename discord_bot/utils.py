@@ -31,6 +31,10 @@ async def is_officer(interaction: discord.Interaction) -> bool:
     if user.guild_permissions.administrator:
         return True
 
+    dkp_admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+    if dkp_admin_role and discord.utils.get(user.roles, id=dkp_admin_role.id):
+        return True
+
     config = await interaction.client.db.get_guild_config(guild.id)
     admin_role_id = None
     if config and ("admin_role_id" in getattr(config, "keys", lambda: [])()):
@@ -54,6 +58,10 @@ async def is_admin(interaction: discord.Interaction) -> bool:
 
     # Always allow true server admins as a backstop (e.g. initial setup).
     if bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator):
+        return True
+
+    dkp_admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+    if dkp_admin_role and discord.utils.get(user.roles, id=dkp_admin_role.id):
         return True
 
     # Otherwise, allow users who have the configured bot-admin role.

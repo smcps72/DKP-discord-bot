@@ -7,6 +7,8 @@ from discord_bot import utils
 @pytest.mark.asyncio
 async def test_is_officer_admin():
     mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.roles = []
     mock_interaction.user = MagicMock(spec=discord.Member)
     mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
     mock_interaction.user.guild_permissions.administrator = True
@@ -16,6 +18,8 @@ async def test_is_officer_admin():
 @pytest.mark.asyncio
 async def test_is_officer_not_admin():
     mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.roles = []
     mock_interaction.user = MagicMock(spec=discord.Member)
     mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
     mock_interaction.user.guild_permissions.administrator = False
@@ -29,6 +33,8 @@ async def test_is_officer_not_admin():
 @pytest.mark.asyncio
 async def test_is_officer_with_role():
     mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.roles = []
     mock_interaction.user = MagicMock(spec=discord.Member)
     mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
     mock_interaction.user.guild_permissions.administrator = False
@@ -45,6 +51,8 @@ async def test_is_officer_with_role():
 @pytest.mark.asyncio
 async def test_is_admin_server_admin_true():
     mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.roles = []
     mock_interaction.user = MagicMock(spec=discord.Member)
     mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
     mock_interaction.user.guild_permissions.administrator = True
@@ -57,6 +65,7 @@ async def test_is_admin_server_admin_true():
 async def test_is_admin_with_configured_role():
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.roles = []
     mock_interaction.user = MagicMock(spec=discord.Member)
     mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
     mock_interaction.user.guild_permissions.administrator = False
@@ -76,6 +85,7 @@ async def test_is_admin_with_configured_role():
 async def test_is_admin_without_permission_or_role():
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.roles = []
     mock_interaction.user = MagicMock(spec=discord.Member)
     mock_interaction.user.guild_permissions = MagicMock(spec=discord.Permissions)
     mock_interaction.user.guild_permissions.administrator = False
