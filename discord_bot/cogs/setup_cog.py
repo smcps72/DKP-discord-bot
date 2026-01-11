@@ -95,10 +95,10 @@ class SetupCog(commands.Cog):
                 admin_role = guild.get_role(admin_role_id) if admin_role_id else None
                 if admin_role is None:
                     try:
-                        admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+                        admin_role = discord.utils.get(guild.roles, name="DKP Admin")
                         if admin_role is None:
                             admin_role = await guild.create_role(
-                                name="DKP-Admin",
+                                name="DKP Admin",
                                 permissions=discord.Permissions.none(),
                                 hoist=True,
                                 mentionable=True,
@@ -310,10 +310,10 @@ class SetupCog(commands.Cog):
             # (Legacy) Raid voice channel template is no longer used; store NULL for compatibility.
             vc_template_id = None
             # Create or reuse roles
-            admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+            admin_role = discord.utils.get(guild.roles, name="DKP Admin")
             if admin_role is None:
                 admin_role = await guild.create_role(
-                    name="DKP-Admin",
+                    name="DKP Admin",
                     permissions=discord.Permissions.none(),
                     hoist=True,
                     mentionable=True,

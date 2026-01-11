@@ -238,7 +238,7 @@ class RaidCog(commands.Cog):
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 pass
 
-        # Allow either officers or bot admins (DKP-Admin / server admins) to create raids.
+        # Allow either officers or bot admins (DKP Admin / server admins) to create raids.
         admin_ok = await is_admin(interaction)
         officer_ok = await is_officer(interaction)
         if not (admin_ok or officer_ok):

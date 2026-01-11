@@ -31,7 +31,7 @@ async def is_officer(interaction: discord.Interaction) -> bool:
     if user.guild_permissions.administrator:
         return True
 
-    dkp_admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+    dkp_admin_role = discord.utils.get(guild.roles, name="DKP Admin")
     if dkp_admin_role and discord.utils.get(user.roles, id=dkp_admin_role.id):
         return True
 
@@ -60,7 +60,7 @@ async def is_admin(interaction: discord.Interaction) -> bool:
     if bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator):
         return True
 
-    dkp_admin_role = discord.utils.get(guild.roles, name="DKP-Admin")
+    dkp_admin_role = discord.utils.get(guild.roles, name="DKP Admin")
     if dkp_admin_role and discord.utils.get(user.roles, id=dkp_admin_role.id):
         return True
 
