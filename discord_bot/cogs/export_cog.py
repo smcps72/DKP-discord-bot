@@ -187,6 +187,8 @@ class ExportCog(commands.Cog):
     @app_commands.command(name="export_thread", description="Export this thread to a ZIP (Markdown + CSV + attachments).")
     @app_commands.check(is_admin)
     async def export_thread_cmd(self, interaction: discord.Interaction, thread: discord.Thread | None = None):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         target = thread if thread else interaction.channel
@@ -246,6 +248,8 @@ class ExportCog(commands.Cog):
         For each thread, writes a ZIP with the same structure as /export_thread into
         backups/<TIMESTAMP>/thread_export_guild_<guild>_thread_<id>_<TIMESTAMP>.zip.
         """
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
@@ -365,6 +369,8 @@ class ExportCog(commands.Cog):
     @app_commands.command(name="export_channel", description="Export a text channel to a ZIP (Markdown + CSV + attachments).")
     @app_commands.check(is_admin)
     async def export_channel_cmd(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
@@ -423,6 +429,8 @@ class ExportCog(commands.Cog):
     @app_commands.command(name="export_test", description="Test command to verify export cog slash commands are synced.")
     @app_commands.check(is_admin)
     async def export_test_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         await interaction.followup.send("/export_test is working.", ephemeral=True)
@@ -529,6 +537,8 @@ class ExportCog(commands.Cog):
     @app_commands.check(is_admin)
     @app_commands.describe(archive="The exported ZIP file created by /export_thread", name_override="Optional new thread name")
     async def import_thread_cmd(self, interaction: discord.Interaction, archive: discord.Attachment, name_override: str | None = None):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         # Basic validation
@@ -630,6 +640,8 @@ class ExportCog(commands.Cog):
     @app_commands.check(is_admin)
     @app_commands.describe(archive="The exported ZIP file created by /export_channel")
     async def import_channel_cmd(self, interaction: discord.Interaction, archive: discord.Attachment):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
@@ -716,6 +728,8 @@ class ExportCog(commands.Cog):
         backup_id: str | None = None,
         parent_channel: discord.TextChannel | None = None,
     ):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 

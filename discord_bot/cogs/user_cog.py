@@ -43,23 +43,15 @@ class UserCog(commands.Cog):
 
     @app_commands.command(name="my_dkp", description="Check your DKP balance.")
     async def my_dkp_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         await self.show_my_dkp(interaction)
 
     @app_commands.command(name="my_bid", description="Check your bid in the active raid auction (if any).")
     async def my_bid_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         guild = getattr(interaction, "guild", None)
-        if not guild:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            return
 
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
@@ -101,19 +93,9 @@ class UserCog(commands.Cog):
     @app_commands.command(name="my_history", description="View your recent DKP history.")
     @app_commands.describe(limit="How many transactions to show (1-25)")
     async def my_history_cmd(self, interaction: discord.Interaction, limit: int = 10):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         guild = getattr(interaction, "guild", None)
-        if not guild:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            return
 
         limit = max(1, min(int(limit), 25))
 
@@ -144,20 +126,10 @@ class UserCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def show_auction_help(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         # Ensure this command is used in a guild context
         guild = getattr(interaction, "guild", None)
-        if not guild:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            return
 
         # Ensure we've acknowledged the interaction before using followups
         if not interaction.response.is_done():
@@ -174,6 +146,8 @@ class UserCog(commands.Cog):
 
     @app_commands.command(name="auction_help", description="Explains how the auction system works.")
     async def auction_help_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         await self.show_auction_help(interaction)
 
 async def setup(bot: commands.Bot):

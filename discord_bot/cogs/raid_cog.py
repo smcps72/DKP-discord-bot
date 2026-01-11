@@ -382,10 +382,14 @@ class RaidCog(commands.Cog):
     @app_commands.command(name="raid_create", description="Creates a new raid channel and control thread.")
     @app_commands.check(is_admin)
     async def raid_create_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         await self.create_raid_from_interaction(interaction)
 
     @app_commands.command(name="raid_end", description="Ends and closes the current raid.")
     async def raid_end_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer or admin to end a raid.", ephemeral=True)
         await self.close_raid(interaction)
@@ -394,11 +398,8 @@ class RaidCog(commands.Cog):
     @app_commands.check(is_admin)
     @app_commands.describe(member="The member to add as a participant in this raid.")
     async def raid_add_member_cmd(self, interaction: discord.Interaction, member: discord.Member):
-        if not interaction.guild:
-            return await interaction.response.send_message(
-                "This command can only be used inside a server.",
-                ephemeral=True,
-            )
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
@@ -451,6 +452,8 @@ class RaidCog(commands.Cog):
     @app_commands.autocomplete(member=member_autocomplete)
     @app_commands.describe(member="(Optional) The member to award DKP to. Leave blank to award to the entire raid.")
     async def award_cmd(self, interaction: discord.Interaction, member: str | None = None):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
         target_member = await self._get_member_from_str(interaction, member)
@@ -461,6 +464,8 @@ class RaidCog(commands.Cog):
     @app_commands.autocomplete(member=member_autocomplete)
     @app_commands.describe(member="(Optional) The member to deduct DKP from. Leave blank to deduct from the entire raid.")
     async def deduct_cmd(self, interaction: discord.Interaction, member: str | None = None):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
         target_member = await self._get_member_from_str(interaction, member)

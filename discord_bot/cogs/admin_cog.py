@@ -26,6 +26,8 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="status", description="Check the bot's operational status.")
     @app_commands.check(is_admin)
     async def status_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         embed = await self._create_status_embed(interaction.guild.id)
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -33,6 +35,8 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="history", description="Downloads a CSV of the last 30 days of DKP transactions.")
     @app_commands.check(is_admin)
     async def history_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         now = datetime.utcnow().timestamp()
         guild_id = interaction.guild.id
         last = self._history_cooldowns.get(guild_id, 0)
@@ -166,19 +170,8 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="raid_status", description="Show status of the current raid and any active auction.")
     @app_commands.check(is_admin)
     async def raid_status_cmd(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            return
-
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -267,26 +260,16 @@ class AdminCog(commands.Cog):
     @app_commands.check(is_admin)
     @app_commands.describe(member="The member whose DKP will be adjusted.")
     async def admin_adjust_dkp_cmd(self, interaction: discord.Interaction, member: discord.Member):
-        # Ensure this command is used in a guild context
-        if not interaction.guild:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "This command can only be used inside a server.",
-                    ephemeral=True,
-                )
-            return
-
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         modal = AdminDKPAdjustModal(self, member)
         await interaction.response.send_modal(modal)
 
     @app_commands.command(name="list_members", description="List members who participated in this raid log thread.")
     @app_commands.check(is_admin)
     async def list_members(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         # This command is intended to be used inside a raid log thread under
         # the Active Raids channel. It lists unique, non-bot users who have
         # ever joined the raid's voice channel, for both active and closed raids.
@@ -351,6 +334,8 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="debug_config", description="Show DKP configuration for this server.")
     @app_commands.check(is_admin)
     async def debug_config(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
 
         config = await self.bot.db.get_guild_config(interaction.guild.id)

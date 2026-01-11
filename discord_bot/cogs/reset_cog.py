@@ -188,6 +188,8 @@ class ResetCog(commands.Cog):
     @app_commands.check(is_admin)
     async def reset(self, interaction: discord.Interaction):
         """Allows an admin to wipe the bot's configuration and channels."""
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         guild = interaction.guild
 
         # Access the database instance from the bot object.
@@ -409,6 +411,8 @@ class ResetCog(commands.Cog):
     @app_commands.command(name="list_backups", description="Lists database backup IDs (timestamps) for this server.")
     @app_commands.check(is_admin)
     async def list_backups(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         guild = interaction.guild
 
         if not hasattr(self.bot, "db"):
@@ -469,6 +473,8 @@ class ResetCog(commands.Cog):
     @app_commands.command(name="restore_backup", description="Restores the database from a backup ID (timestamp) for this server.")
     @app_commands.check(is_admin)
     async def restore_backup(self, interaction: discord.Interaction, backup_id: str, confirm: bool):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         guild = interaction.guild
 
         if not hasattr(self.bot, "db"):

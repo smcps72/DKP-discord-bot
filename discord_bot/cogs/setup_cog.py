@@ -357,6 +357,8 @@ class SetupCog(commands.Cog):
     @app_commands.check(is_admin)
     async def setup_dkp(self, interaction: discord.Interaction):
         """Manually (re)run the DKP system setup."""
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         # We need to defer here because the setup can take a moment
         try:
             await interaction.response.defer(ephemeral=True)
