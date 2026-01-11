@@ -155,15 +155,11 @@ class OfficerRoleSelect(discord.ui.Select):
     def __init__(self, bot: discord.Client):
         self.bot = bot
 
+        # Start with empty options to enable Discord's built-in search
         options: list[discord.SelectOption] = []
-        # The guild will be available on the interaction, not here, so we
-        # build a placeholder; options are filled dynamically in callback
-        # using interaction.guild.roles. Discord requires at least 1 option,
-        # so we start with a dummy that will be replaced.
-        options.append(discord.SelectOption(label="Loading roles...", value="dummy"))
 
         super().__init__(
-            placeholder="Select an existing role to use as Officers",
+            placeholder="Type to search for a role to use as Officers...",
             min_values=1,
             max_values=1,
             options=options,
@@ -171,31 +167,20 @@ class OfficerRoleSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        # If this is still the dummy option, rebuild options from guild roles
-        if self.values[0] == "dummy":
-            roles = [
-                r for r in interaction.guild.roles
-                if not r.is_default() and not r.managed
-            ]
-            # Sort roles alphabetically by name
-            roles.sort(key=lambda role: role.name.lower())
-            options = [
-                discord.SelectOption(label=role.name[:100], value=str(role.id))
-                for role in roles[:25]
-            ]
-            if not options:
-                return await interaction.response.edit_message(
-                    content="No configurable roles found. Please create a role in Server Settings first.",
-                    view=None,
-                )
-
-            self.options = options
-            # Ask the user to pick again now that real options are loaded.
+        # Get all available roles and sort them alphabetically
+        all_roles = [
+            r for r in interaction.guild.roles
+            if not r.is_default() and not r.managed
+        ]
+        all_roles.sort(key=lambda role: role.name.lower())
+        
+        # Get the selected role ID from the interaction
+        if not self.values:
             return await interaction.response.edit_message(
-                content="Select an existing role to use as the Officers role:",
-                view=self.view,
+                content="No role selected. Please try again.",
+                view=None,
             )
-
+            
         role_id = int(self.values[0])
         role = interaction.guild.get_role(role_id)
         if not role:
@@ -234,11 +219,11 @@ class AdminRoleSelect(discord.ui.Select):
     def __init__(self, bot: discord.Client):
         self.bot = bot
 
+        # Start with empty options to enable Discord's built-in search
         options: list[discord.SelectOption] = []
-        options.append(discord.SelectOption(label="Loading roles...", value="dummy"))
 
         super().__init__(
-            placeholder="Select an existing role to use as Bot Admins",
+            placeholder="Type to search for a role to use as Bot Admins...",
             min_values=1,
             max_values=1,
             options=options,
@@ -246,29 +231,20 @@ class AdminRoleSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "dummy":
-            roles = [
-                r for r in interaction.guild.roles
-                if not r.is_default() and not r.managed
-            ]
-            # Sort roles alphabetically by name
-            roles.sort(key=lambda role: role.name.lower())
-            options = [
-                discord.SelectOption(label=role.name[:100], value=str(role.id))
-                for role in roles[:25]
-            ]
-            if not options:
-                return await interaction.response.edit_message(
-                    content="No configurable roles found. Please create a role in Server Settings first.",
-                    view=None,
-                )
-
-            self.options = options
+        # Get all available roles and sort them alphabetically
+        all_roles = [
+            r for r in interaction.guild.roles
+            if not r.is_default() and not r.managed
+        ]
+        all_roles.sort(key=lambda role: role.name.lower())
+        
+        # Get the selected role ID from the interaction
+        if not self.values:
             return await interaction.response.edit_message(
-                content="Select an existing role to use as the Bot Admin role:",
-                view=self.view,
+                content="No role selected. Please try again.",
+                view=None,
             )
-
+            
         role_id = int(self.values[0])
         role = interaction.guild.get_role(role_id)
         if not role:
@@ -316,71 +292,16 @@ class AdminPanelView(discord.ui.View):
     @discord.ui.button(label="Assign Bot Admin Role", style=discord.ButtonStyle.primary, row=0)
     async def assign_bot_admin_role(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = AdminRoleAssignView(self.bot)
-
-        roles = [
-            r for r in interaction.guild.roles
-            if not r.is_default() and not r.managed
-        ]
-
-        select: AdminRoleSelect | None = None
-        for child in view.children:
-            if isinstance(child, AdminRoleSelect):
-                select = child
-                break
-
-        if select:
-            # Sort roles alphabetically by name
-            roles.sort(key=lambda role: role.name.lower())
-            options = [
-                discord.SelectOption(label=role.name[:100], value=str(role.id))
-                for role in roles[:25]
-            ]
-            if options:
-                select.options = options
-            else:
-                return await interaction.response.send_message(
-                    "No configurable roles found. Please create a role in Server Settings first.",
-                    ephemeral=True,
-                )
-
         await interaction.response.edit_message(
-            content="Select an existing role to use as the Bot Admin role:",
+            content="Type to search for a role to use as the Bot Admin role:",
             view=view,
         )
 
     @discord.ui.button(label="Assign Officers Role Name", style=discord.ButtonStyle.primary, row=1)
     async def assign_officers_role_name(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = OfficerRoleAssignView(self.bot)
-
-        # Build initial options list from existing guild roles.
-        roles = [
-            r for r in interaction.guild.roles
-            if not r.is_default() and not r.managed
-        ]
-        select: OfficerRoleSelect | None = None
-        for child in view.children:
-            if isinstance(child, OfficerRoleSelect):
-                select = child
-                break
-
-        if select:
-            # Sort roles alphabetically by name
-            roles.sort(key=lambda role: role.name.lower())
-            options = [
-                discord.SelectOption(label=role.name[:100], value=str(role.id))
-                for role in roles[:25]
-            ]
-            if options:
-                select.options = options
-            else:
-                # No roles available; send a simple message instead.
-                return await interaction.response.send_message(
-                    "No configurable roles found. Please create a role in Server Settings first.",
-                    ephemeral=True,
-                )
-
         await interaction.response.edit_message(
-            content="Select an existing role to use as the Officers role:",
+            content="Type to search for a role to use as the Officers role:",
             view=view,
         )
 
