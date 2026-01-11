@@ -238,15 +238,19 @@ class RaidCog(commands.Cog):
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 pass
 
-        if not await is_officer(interaction):
+        # Allow either officers or bot admins (DKP-Admin / server admins) to create raids.
+        admin_ok = await is_admin(interaction)
+        officer_ok = await is_officer(interaction)
+        if not (admin_ok or officer_ok):
             try:
+                message = "You must be an officer or bot admin to create a raid."
                 if interaction.response.is_done():
                     return await interaction.followup.send(
-                        "You must be an officer to create a raid.",
+                        message,
                         ephemeral=True,
                     )
                 return await interaction.response.send_message(
-                    "You must be an officer to create a raid.",
+                    message,
                     ephemeral=True,
                 )
             except Exception:
