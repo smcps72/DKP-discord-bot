@@ -54,6 +54,78 @@ class MemberSelect(Select):
         await interaction.response.send_modal(modal)
 
 
+class RaidMemberRemoveSelect(Select):
+    def __init__(self, bot, members: list[discord.Member]):
+        self.bot = bot
+        self._allowed_member_ids = {m.id for m in members}
+
+        options = [
+            discord.SelectOption(label=m.display_name[:100], value=str(m.id))
+            for m in members
+        ][:25]
+
+        super().__init__(
+            placeholder="Select a member to remove from the raid...",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not interaction.channel:
+            return await interaction.response.send_message("This is not a raid thread.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        try:
+            selected_id = int(self.values[0])
+        except (ValueError, TypeError):
+            return await interaction.response.send_message("Invalid selection.", ephemeral=True)
+
+        if selected_id not in self._allowed_member_ids:
+            return await interaction.response.send_message("That member is not a raid member.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+
+        try:
+            removed = await self.bot.db.remove_raid_member(raid_id, selected_id)
+        except Exception:
+            removed = False
+
+        try:
+            await self.bot.db.add_raid_member_exclusion(raid_id, selected_id)
+        except Exception:
+            pass
+
+        try:
+            await self.bot.db.delete_raid_join_request(raid_id, selected_id)
+        except Exception:
+            pass
+
+        member = interaction.guild.get_member(selected_id) if interaction.guild else None
+        mention = member.mention if member else f"<@{selected_id}>"
+
+        if not removed:
+            return await interaction.response.send_message(f"{mention} is not part of this raid.", ephemeral=True)
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(f"{mention} was removed from the raid.")
+        except Exception:
+            logging.exception("Failed to send removal message to raid thread")
+
+        return await interaction.response.send_message(f"Removed {mention} from the raid.", ephemeral=True)
+
+
+class RaidMemberRemoveView(discord.ui.View):
+    def __init__(self, bot, members: list[discord.Member]):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.add_item(RaidMemberRemoveSelect(bot, members))
+
+
 class DKPAdjustmentView(discord.ui.View):
     def __init__(self, bot, action: str, members: list[discord.Member]):
         super().__init__(timeout=180)
@@ -237,6 +309,7 @@ class RaidControlView(discord.ui.View):
                 "raid_award_dkp",
                 "raid_deduct_dkp",
                 "raid_update_team",
+                "raid_remove_raider",
                 "raid_start_auction",
                 "raid_end_auction",
                 "raid_close_raid",
@@ -275,7 +348,7 @@ class RaidControlView(discord.ui.View):
                 # "Update Team" should be a public message so raiders can see
                 # the current team list. Defer non-ephemerally for that button
                 # while keeping other raid controls ephemeral.
-                ephemeral = custom_id != "raid_update_team"
+                ephemeral = custom_id not in ("raid_update_team", "raid_voice_roster")
                 try:
                     await interaction.response.defer(ephemeral=ephemeral)
                 except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
@@ -283,7 +356,14 @@ class RaidControlView(discord.ui.View):
                     pass
 
         # Allow everyone to use the raid "My DKP" button and view rules.
-        if custom_id in ("raid_my_dkp", "raid_view_rules", "raid_join_raid", "raid_leave_raid"):
+        if custom_id in (
+            "raid_my_dkp",
+            "raid_view_rules",
+            "raid_join_raid",
+            "raid_leave_raid",
+            "raid_show_groups",
+            "raid_voice_roster",
+        ):
             return True
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -342,6 +422,10 @@ class RaidControlView(discord.ui.View):
                 inserted = False
             if not inserted:
                 return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
+            try:
+                await self.bot.db.remove_raid_member_exclusion(raid_id, user_id)
+            except Exception:
+                pass
             try:
                 if isinstance(interaction.channel, discord.Thread):
                     await interaction.channel.send(f"{interaction.user.mention} joined the raid.")
@@ -527,6 +611,13 @@ class RaidControlView(discord.ui.View):
             return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
         await raid_cog.update_team_from_voice_channel(interaction)
 
+    @discord.ui.button(label="🎙️ Voice Roster", style=discord.ButtonStyle.secondary, custom_id="raid_voice_roster", row=2)
+    async def voice_roster(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        await raid_cog.show_voice_roster(interaction)
+
     @discord.ui.button(label="End Auction", style=discord.ButtonStyle.primary, custom_id="raid_end_auction", row=1)
     async def end_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
         auction_cog = self.bot.get_cog("AuctionCog")
@@ -555,6 +646,11 @@ class RaidControlView(discord.ui.View):
             removed = False
 
         try:
+            await self.bot.db.add_raid_member_exclusion(raid_id, user_id)
+        except Exception:
+            pass
+
+        try:
             await self.bot.db.delete_raid_join_request(raid_id, user_id)
         except Exception:
             pass
@@ -562,7 +658,47 @@ class RaidControlView(discord.ui.View):
         if not removed:
             return await interaction.followup.send("You are not part of this raid.", ephemeral=True)
 
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(f"{interaction.user.mention} left the raid.")
+        except Exception:
+            logging.exception("Failed to send leave message to raid thread")
+
         return await interaction.followup.send("You have left the raid.", ephemeral=True)
+
+    @discord.ui.button(label="Remove Raider", style=discord.ButtonStyle.danger, custom_id="raid_remove_raider", row=2)
+    async def remove_raider(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        members_by_id: dict[int, discord.Member] = {}
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        members = list(members_by_id.values())
+        if not members:
+            return await interaction.followup.send("No raid members were found.", ephemeral=True)
+
+        view = RaidMemberRemoveView(self.bot, members)
+        await interaction.followup.send("Who do you want to remove from the raid?", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Groups", style=discord.ButtonStyle.secondary, custom_id="raid_show_groups", row=2)
+    async def show_groups(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        await raid_cog.show_raid_groups(interaction)
 
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -701,6 +837,11 @@ class RaidJoinApprovalView(discord.ui.View):
             inserted = await self.bot.db.add_raid_member(self.raid_id, self.user_id)
         except Exception:
             inserted = False
+
+        try:
+            await self.bot.db.remove_raid_member_exclusion(self.raid_id, self.user_id)
+        except Exception:
+            pass
 
         await self.bot.db.set_raid_join_request_status(
             self.raid_id,

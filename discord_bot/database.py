@@ -158,6 +158,24 @@ class Database:
                 )
             """)
             await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_member_exclusions (
+                    raid_id INTEGER,
+                    user_id INTEGER,
+                    excluded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (raid_id, user_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_member_groups (
+                    raid_id INTEGER,
+                    user_id INTEGER,
+                    group_number INTEGER,
+                    PRIMARY KEY (raid_id, user_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS auctions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     raid_id INTEGER,
@@ -212,6 +230,48 @@ class Database:
                 )
                 await asyncio.sleep(delay)
                 delay *= 2
+
+    async def add_raid_member_exclusion(self, raid_id: int, user_id: int):
+        await self.execute(
+            "INSERT OR IGNORE INTO raid_member_exclusions (raid_id, user_id) VALUES (?, ?)",
+            (raid_id, user_id),
+        )
+
+    async def remove_raid_member_exclusion(self, raid_id: int, user_id: int):
+        await self.execute(
+            "DELETE FROM raid_member_exclusions WHERE raid_id = ? AND user_id = ?",
+            (raid_id, user_id),
+        )
+
+    async def is_raid_member_excluded(self, raid_id: int, user_id: int) -> bool:
+        row = await self.fetchone(
+            "SELECT 1 FROM raid_member_exclusions WHERE raid_id = ? AND user_id = ?",
+            (raid_id, user_id),
+        )
+        return row is not None
+
+    async def set_raid_member_group(self, raid_id: int, user_id: int, group_number: int | None):
+        if group_number is None:
+            await self.execute(
+                "DELETE FROM raid_member_groups WHERE raid_id = ? AND user_id = ?",
+                (raid_id, user_id),
+            )
+            return
+        await self.execute(
+            """
+            INSERT INTO raid_member_groups (raid_id, user_id, group_number)
+            VALUES (?, ?, ?)
+            ON CONFLICT(raid_id, user_id)
+            DO UPDATE SET group_number = excluded.group_number
+            """,
+            (raid_id, user_id, int(group_number)),
+        )
+
+    async def get_raid_member_groups(self, raid_id: int):
+        return await self.fetchall(
+            "SELECT user_id, group_number FROM raid_member_groups WHERE raid_id = ?",
+            (raid_id,),
+        )
 
     async def remove_raid_member(self, raid_id: int, user_id: int) -> bool:
         attempts = 3

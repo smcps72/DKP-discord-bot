@@ -420,10 +420,125 @@ class RaidCog(commands.Cog):
 
         await self.bot.db.add_raid_member(raid["id"], member.id)
 
+        try:
+            await self.bot.db.remove_raid_member_exclusion(int(raid["id"]), int(member.id))
+        except Exception:
+            pass
+
         await interaction.response.send_message(
             f"{member.mention} has been added to this raid. They can now receive DKP adjustments and participate as a raid member even if they are not in the voice channel.",
             ephemeral=True,
         )
+
+    @app_commands.command(name="raid_remove_member", description="Remove a member from the current raid (prevents them from receiving raid DKP).")
+    @app_commands.describe(member="The member to remove from this raid.")
+    async def raid_remove_member_cmd(self, interaction: discord.Interaction, member: discord.Member):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        if not await is_officer(interaction):
+            return await interaction.response.send_message(
+                "You must be an officer or admin to remove raid members.",
+                ephemeral=True,
+            )
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message(
+                "This channel is not associated with an active raid.",
+                ephemeral=True,
+            )
+
+        if member.bot:
+            return await interaction.response.send_message("Bots cannot be raid members.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+
+        try:
+            removed = await self.bot.db.remove_raid_member(raid_id, int(member.id))
+        except Exception:
+            removed = False
+
+        try:
+            await self.bot.db.add_raid_member_exclusion(raid_id, int(member.id))
+        except Exception:
+            pass
+
+        try:
+            await self.bot.db.delete_raid_join_request(raid_id, int(member.id))
+        except Exception:
+            pass
+
+        if not removed:
+            return await interaction.response.send_message(
+                f"{member.mention} is not part of this raid.",
+                ephemeral=True,
+            )
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(f"{member.mention} was removed from the raid.")
+        except Exception:
+            logging.exception("Failed to send removal message to raid thread")
+
+        return await interaction.response.send_message(
+            f"Removed {member.mention} from the raid.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="raid_set_group", description="Assign a raid member to a group number.")
+    @app_commands.describe(member="The member to assign.", group_number="Group number (e.g. 1, 2, 3)")
+    async def raid_set_group_cmd(self, interaction: discord.Interaction, member: discord.Member, group_number: int):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        if not await is_officer(interaction):
+            return await interaction.response.send_message(
+                "You must be an officer or admin to manage raid groups.",
+                ephemeral=True,
+            )
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        if group_number < 1:
+            return await interaction.response.send_message("Group number must be 1 or higher.", ephemeral=True)
+
+        if member.bot:
+            return await interaction.response.send_message("Bots cannot be assigned to groups.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+        if not await self.bot.db.is_raid_member(raid_id, int(member.id)):
+            return await interaction.response.send_message(
+                "That member is not currently part of this raid.",
+                ephemeral=True,
+            )
+
+        await self.bot.db.set_raid_member_group(raid_id, int(member.id), int(group_number))
+        await interaction.response.send_message(
+            f"Assigned {member.mention} to group **{group_number}**.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="raid_clear_group", description="Remove a raid member from any group.")
+    @app_commands.describe(member="The member to clear.")
+    async def raid_clear_group_cmd(self, interaction: discord.Interaction, member: discord.Member):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        if not await is_officer(interaction):
+            return await interaction.response.send_message(
+                "You must be an officer or admin to manage raid groups.",
+                ephemeral=True,
+            )
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        await self.bot.db.set_raid_member_group(int(raid["id"]), int(member.id), None)
+        await interaction.response.send_message(f"Cleared group assignment for {member.mention}.", ephemeral=True)
 
     async def member_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         raid = await self.bot.db.get_raid_by_thread(interaction.channel_id)
@@ -539,6 +654,11 @@ class RaidCog(commands.Cog):
             if getattr(member, "bot", False):
                 continue
             try:
+                if await self.bot.db.is_raid_member_excluded(int(raid["id"]), int(member.id)):
+                    continue
+            except Exception:
+                pass
+            try:
                 inserted = await self.bot.db.add_raid_member(int(raid["id"]), int(member.id))
             except Exception:
                 inserted = False
@@ -551,6 +671,78 @@ class RaidCog(commands.Cog):
             )
 
         await self.update_team_list(interaction)
+
+    async def show_voice_roster(self, interaction: discord.Interaction):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
+        if not isinstance(vc, discord.VoiceChannel):
+            return await interaction.followup.send(
+                "This raid is not currently associated with a voice channel.",
+                ephemeral=True,
+            )
+
+        members = [m for m in list(getattr(vc, "members", []) or []) if not getattr(m, "bot", False)]
+        if not members:
+            return await interaction.followup.send(
+                f"No players are currently in {vc.mention}.",
+            )
+
+        mentions = ", ".join([m.mention for m in members])
+        embed = create_info_embed(
+            "Voice Channel Roster",
+            f"Voice channel: {vc.mention}\nPlayers (**{len(members)}**): {mentions}",
+        )
+        await interaction.followup.send(embed=embed)
+
+    async def show_raid_groups(self, interaction: discord.Interaction):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        members_by_id: dict[int, discord.Member] = {}
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        if not members_by_id:
+            return await interaction.followup.send("No raid members were found.", ephemeral=True)
+
+        try:
+            group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
+        except Exception:
+            group_rows = []
+
+        member_to_group: dict[int, int] = {}
+        for row in group_rows:
+            try:
+                member_to_group[int(row["user_id"])] = int(row["group_number"])
+            except Exception:
+                continue
+
+        groups: dict[str, list[str]] = {}
+        for uid, member in members_by_id.items():
+            grp = member_to_group.get(uid)
+            key = f"Group {grp}" if grp is not None else "Ungrouped"
+            groups.setdefault(key, []).append(member.mention)
+
+        lines: list[str] = []
+        for key in sorted(groups.keys(), key=lambda k: (k == "Ungrouped", k)):
+            lines.append(f"**{key}**: {', '.join(groups[key])}")
+
+        embed = create_info_embed("Raid Groups", "\n".join(lines))
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def update_team_list(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -726,14 +918,16 @@ class RaidCog(commands.Cog):
         if member:
             description = f"**{abs(amount)} DKP** {action_word.lower()} to {member.mention} for: *{reason}*."
         else:
-            description = (
-                f"**{abs(amount)} DKP** {action_word.lower()} to **{len(targets)}** players for: *{reason}*."
-            )
+            mentions = ", ".join([m.mention for m in targets])
+            description = f"**{abs(amount)} DKP** {action_word.lower()} to **{len(targets)}** players for: *{reason}*.\n{mentions}"
 
-        embed = create_success_embed(
-            f"DKP {action_word}!",
-            description,
-        )
+        if len(description) > 4096:
+            description = description[:4090] + "..."
+
+        if action == "Deduct":
+            embed = create_error_embed(f"DKP {action_word}!", description)
+        else:
+            embed = create_success_embed(f"DKP {action_word}!", description)
         await interaction.followup.send(embed=embed)
 
         await self.maybe_send_control_panel_ephemeral(interaction, raid=raid)

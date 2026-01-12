@@ -115,6 +115,7 @@ async def test_process_dkp_adjustment_triggers_panel_every_fourth_change(raid_co
     member = MagicMock(spec=discord.Member)
     member.id = 111
     member.bot = False
+    member.mention = f"<@{member.id}>"
     raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member.id}])
     mock_interaction.guild.get_channel.return_value = None
     mock_interaction.guild.get_member.side_effect = lambda uid: member if uid == member.id else None
@@ -228,10 +229,12 @@ async def test_process_dkp_adjustment_awards_all_vc_and_raid_members(raid_cog, m
     manual_member = MagicMock(spec=discord.Member)
     manual_member.id = 222
     manual_member.bot = False
+    manual_member.mention = f"<@{manual_member.id}>"
 
     member_in_vc = MagicMock(spec=discord.Member)
     member_in_vc.id = 111
     member_in_vc.bot = False
+    member_in_vc.mention = f"<@{member_in_vc.id}>"
 
     mock_interaction.guild.get_channel.return_value = None
 
