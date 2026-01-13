@@ -24,14 +24,26 @@ from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelV
 from discord_bot.utils import ensure_allowed_guild
 
 # --- Environment Variable Loading ---
-# The bot will look for the .env file in the project root.
-dotenv_path = project_root / ".env"
+# The bot will look for secrets/.env.local first (recommended when using git-crypt
+# or gocryptfs), then .env.local, and then fall back to .env.
+dotenv_paths = [
+    project_root / "secrets" / ".env.local",
+    project_root / ".env.local",
+    project_root / ".env",
+]
 
-if dotenv_path.exists():
-    print(f"INFO: Loading environment from {dotenv_path}")
-    load_dotenv(dotenv_path=dotenv_path, override=False)
-else:
-    print("WARNING: No .env file found. Relying on system environment variables.")
+loaded = False
+for dotenv_path in dotenv_paths:
+    if dotenv_path.exists():
+        print(f"INFO: Loading environment from {dotenv_path}")
+        load_dotenv(dotenv_path=dotenv_path, override=False)
+        loaded = True
+        break
+
+if not loaded:
+    print(
+        "WARNING: No secrets/.env.local, .env.local, or .env file found. Relying on system environment variables."
+    )
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
