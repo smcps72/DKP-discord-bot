@@ -24,8 +24,7 @@ from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelV
 from discord_bot.utils import ensure_allowed_guild
 
 # --- Environment Variable Loading ---
-# The bot will look for secrets/.env.local first (recommended when using git-crypt
-# or gocryptfs), then .env.local, and then fall back to .env.
+# The bot will look for the .env file in the project root.
 dotenv_paths = [
     project_root / "secrets" / ".env.local",
     project_root / ".env.local",
