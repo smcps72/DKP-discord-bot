@@ -1,17 +1,22 @@
-.env
-.env.local
-.env.backup
+/.env
+/.env.local
+/.env.backup
 venv/
 __pycache__/
 *.pyc
 *.pyo
 *.db
+*.log
 .DS_Store
 bash.exe.stackdump
-.env.backup
 dkp_bot.db
 js-e2e/node_modules
+js-e2e/discord-auth.json
+js-e2e/test-results/
 backups
+test-results/
+.pytest_cache/
+bandit-report.json
+audit-report.json
 Documentation/dont_commit/
 # Local notes / scratch files
-

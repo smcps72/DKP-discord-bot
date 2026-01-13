@@ -50,6 +50,12 @@ Sensitive information (like status checks and history exports) is often sent as 
 - The Discord bot token is read from environment variables (configuration outside the code).  
 - This avoids putting secrets directly in the source code.
 
+### Optional: keep encrypted secrets in git
+
+- The bot will also load environment variables from `secrets/.env.local` (preferred when using an encrypted secrets workflow), or `.env.local`, and finally `.env`.
+- For a lightweight single-developer workflow where encrypted files can be committed to git, consider **git-crypt**.
+- For a workflow where the on-disk backing directory is always encrypted and you work from a decrypted mountpoint, consider **gocryptfs**.
+
 ## Startup safety checks
 
 - If the bot token is missing, the bot refuses to start instead of running in a broken or unsafe state.  

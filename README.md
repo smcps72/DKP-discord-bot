@@ -37,7 +37,8 @@ This project contains a fully functional Discord DKP Bot as specified.
 
     - Create a copy of `.env.example` and rename it to `.env.local`.
     - Open the `.env.local` file and fill in the required values.
-    - The bot is configured to automatically load this file, keeping your secrets safe.
+    - The bot is configured to automatically load `secrets/.env.local` (if present), then `.env.local`, then `.env`.
+    - For storing secrets in git safely, consider using **git-crypt** (encrypts selected files transparently) or **gocryptfs** (encrypted backing dir + decrypted mountpoint).
 
     **Required Variables:**
 

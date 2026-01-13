@@ -17,9 +17,15 @@ expect = playwright_sync_api.expect
 
 
 project_root = Path(__file__).resolve().parents[1]
-dotenv_path = project_root / ".env"
-if dotenv_path.exists():
-    load_dotenv(dotenv_path=dotenv_path, override=True)
+dotenv_paths = [
+    project_root / "secrets" / ".env.local",
+    project_root / ".env.local",
+    project_root / ".env",
+]
+for dotenv_path in dotenv_paths:
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path, override=True)
+        break
 
 # Environment variables for the test Discord user and target guild/channel.
 # Make sure these are set in your shell before running the test:
