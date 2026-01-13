@@ -75,7 +75,13 @@ class AdminCog(commands.Cog):
 
     @app_commands.command(name="raid_points", description="Show DKP for all members in the current raid.")
     @app_commands.describe(member="(Optional) Show DKP for a single member in this raid.")
-    async def raid_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
+    @app_commands.describe(public="Post the results publicly in this channel.")
+    async def raid_points_cmd(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member | None = None,
+        public: bool = False,
+    ):
         # Ensure this command is used in a guild context
         if not interaction.guild:
             if not interaction.response.is_done():
@@ -90,11 +96,12 @@ class AdminCog(commands.Cog):
                 )
             return
 
-        await interaction.response.defer(ephemeral=True)
+        ephemeral = not public
+        await interaction.response.defer(ephemeral=ephemeral)
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
-            return await interaction.followup.send("This channel is not associated with an active raid.", ephemeral=True)
+            return await interaction.followup.send("This channel is not associated with an active raid.", ephemeral=ephemeral)
 
         # Determine raid participants from the raid_members table so that
         # manually added raiders (and anyone who has joined the raid VC) are
@@ -103,7 +110,7 @@ class AdminCog(commands.Cog):
         if not member_rows:
             return await interaction.followup.send(
                 "No raid members were recorded for this raid.",
-                ephemeral=True,
+                ephemeral=ephemeral,
             )
 
         # Build a mapping of user_id -> (member_obj_or_None, is_bot_flag)
@@ -120,20 +127,20 @@ class AdminCog(commands.Cog):
             if member.bot:
                 return await interaction.followup.send(
                     "Bots do not have DKP in raids.",
-                    ephemeral=True,
+                    ephemeral=ephemeral,
                 )
 
             in_raid = any(user_id == member.id for (user_id, _gm, _is_bot) in participants)
             if not in_raid:
                 return await interaction.followup.send(
                     "That member is not recorded as a participant in this raid.",
-                    ephemeral=True,
+                    ephemeral=ephemeral,
                 )
 
             dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id)
             description = f"{member.mention}  **{dkp} DKP**"
             embed = create_info_embed("Raid DKP (Member)", description)
-            return await interaction.followup.send(embed=embed, ephemeral=True)
+            return await interaction.followup.send(embed=embed, ephemeral=ephemeral)
 
         # Otherwise, list DKP for all recorded raid members, skipping bots
         dkp_entries: list[tuple[str, str, int]] = []
@@ -155,7 +162,7 @@ class AdminCog(commands.Cog):
         if not dkp_entries:
             return await interaction.followup.send(
                 "No eligible (non-bot) raid members were found for this raid.",
-                ephemeral=True,
+                ephemeral=ephemeral,
             )
 
         # Sort by DKP descending
@@ -165,7 +172,7 @@ class AdminCog(commands.Cog):
         description = "\n".join(lines)
 
         embed = create_info_embed("Raid DKP", description)
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral)
 
     @app_commands.command(name="raid_status", description="Show status of the current raid and any active auction.")
     @app_commands.check(is_admin)

@@ -464,6 +464,7 @@ class RaidControlView(discord.ui.View):
 
         try:
             if isinstance(interaction.channel, discord.Thread):
+                posted_in_thread = False
                 # Send the approval request as a DM to the raid leader only
                 leader_member = interaction.guild.get_member(leader_id)
                 if leader_member:
@@ -478,12 +479,22 @@ class RaidControlView(discord.ui.View):
                             f"{leader_mention} approve join request from {interaction.user.mention}?",
                             view=RaidJoinApprovalView(self.bot, raid_id, user_id),
                         )
+                        posted_in_thread = True
                 else:
                     # Leader not found, fall back to thread message
                     await interaction.channel.send(
                         f"{leader_mention} approve join request from {interaction.user.mention}?",
                         view=RaidJoinApprovalView(self.bot, raid_id, user_id),
                     )
+                    posted_in_thread = True
+                try:
+                    if not posted_in_thread:
+                        await interaction.channel.send(
+                            f"{leader_mention} approve join request from {interaction.user.mention}?",
+                            view=RaidJoinApprovalView(self.bot, raid_id, user_id),
+                        )
+                except Exception:
+                    logging.exception("Failed to post join approval request in raid thread")
         except Exception:
             logging.exception("Failed to send join approval request")
 
@@ -771,9 +782,66 @@ class RaidJoinApprovalView(discord.ui.View):
 
     async def _get_raid_row(self):
         return await self.bot.db.fetchone(
-            "SELECT id, leader_id, is_active, thread_id FROM raids WHERE id = ?",
+            "SELECT id, guild_id, leader_id, is_active, thread_id FROM raids WHERE id = ?",
             (self.raid_id,),
         )
+
+    async def _resolve_guild_and_thread(self, raid_row):
+        if raid_row is None:
+            return None, None
+
+        try:
+            guild_id = int(raid_row["guild_id"])
+        except Exception:
+            guild_id = None
+        try:
+            thread_id = int(raid_row["thread_id"])
+        except Exception:
+            thread_id = None
+
+        guild = self.bot.get_guild(guild_id) if guild_id else None
+        if guild is None and guild_id:
+            try:
+                guild = await self.bot.fetch_guild(guild_id)
+            except Exception:
+                guild = None
+
+        thread = None
+        if thread_id:
+            if guild is not None:
+                try:
+                    thread = guild.get_thread(thread_id)
+                except Exception:
+                    thread = None
+            if thread is None:
+                try:
+                    resolved = self.bot.get_channel(thread_id)
+                    if resolved is None:
+                        resolved = await self.bot.fetch_channel(thread_id)
+                    if isinstance(resolved, discord.Thread):
+                        thread = resolved
+                except Exception:
+                    thread = None
+
+        return guild, thread
+
+    async def _notify_requester(self, approved: bool, thread: discord.Thread | None):
+        try:
+            user = self.bot.get_user(self.user_id)
+            if user is None:
+                user = await self.bot.fetch_user(self.user_id)
+        except Exception:
+            user = None
+
+        if user is None:
+            return
+
+        try:
+            target = thread.mention if thread else "the raid"
+            verb = "approved" if approved else "denied"
+            await user.send(f"Your request to join {target} was {verb}.")
+        except Exception:
+            logging.info("Failed to DM join request outcome to user_id=%s", self.user_id)
 
     async def _authorize(self, interaction: discord.Interaction, raid_row) -> bool:
         if raid_row is None:
@@ -853,18 +921,18 @@ class RaidJoinApprovalView(discord.ui.View):
         try:
             # Send approval result to the raid thread
             raid_row = await self._get_raid_row()
-            if raid_row:
-                # Get the thread ID from the raids table
-                thread_id = raid_row.get("thread_id")
-                if thread_id and interaction.guild:
-                    thread = interaction.guild.get_thread(thread_id)
-                    if thread:
-                        member = interaction.guild.get_member(self.user_id)
-                        mention = member.mention if member else f"<@{self.user_id}>"
-                        if inserted:
-                            await thread.send(f"{mention} joined the raid.")
-                        else:
-                            await thread.send(f"{mention} is already part of the raid.")
+            guild, thread = await self._resolve_guild_and_thread(raid_row)
+            mention = f"<@{self.user_id}>"
+            if guild is not None:
+                member = guild.get_member(self.user_id)
+                if member is not None:
+                    mention = member.mention
+            if thread:
+                if inserted:
+                    await thread.send(f"{mention} joined the raid.")
+                else:
+                    await thread.send(f"{mention} is already part of the raid.")
+            await self._notify_requester(True, thread)
         except Exception:
             logging.exception("Failed to send approval result to raid thread")
 
@@ -889,15 +957,15 @@ class RaidJoinApprovalView(discord.ui.View):
         try:
             # Send denial result to the raid thread
             raid_row = await self._get_raid_row()
-            if raid_row:
-                # Get the thread ID from the raids table
-                thread_id = raid_row.get("thread_id")
-                if thread_id and interaction.guild:
-                    thread = interaction.guild.get_thread(thread_id)
-                    if thread:
-                        member = interaction.guild.get_member(self.user_id)
-                        mention = member.mention if member else f"<@{self.user_id}>"
-                        await thread.send(f"Join request denied for {mention}.")
+            guild, thread = await self._resolve_guild_and_thread(raid_row)
+            mention = f"<@{self.user_id}>"
+            if guild is not None:
+                member = guild.get_member(self.user_id)
+                if member is not None:
+                    mention = member.mention
+            if thread:
+                await thread.send(f"Join request denied for {mention}.")
+            await self._notify_requester(False, thread)
         except Exception:
             logging.exception("Failed to send denial result to raid thread")
 
