@@ -309,6 +309,7 @@ class RaidControlView(discord.ui.View):
                 "raid_award_dkp",
                 "raid_deduct_dkp",
                 "raid_update_team",
+                "raid_sync_voice",
                 "raid_remove_raider",
                 "raid_start_auction",
                 "raid_end_auction",
@@ -348,7 +349,7 @@ class RaidControlView(discord.ui.View):
                 # "Update Team" should be a public message so raiders can see
                 # the current team list. Defer non-ephemerally for that button
                 # while keeping other raid controls ephemeral.
-                ephemeral = custom_id not in ("raid_update_team", "raid_voice_roster")
+                ephemeral = custom_id not in ("raid_update_team", "raid_voice_roster", "raid_sync_voice")
                 try:
                     await interaction.response.defer(ephemeral=ephemeral)
                 except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
@@ -361,6 +362,7 @@ class RaidControlView(discord.ui.View):
             "raid_view_rules",
             "raid_join_raid",
             "raid_leave_raid",
+            "raid_help",
             "raid_show_groups",
             "raid_voice_roster",
         ):
@@ -622,6 +624,13 @@ class RaidControlView(discord.ui.View):
             return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
         await raid_cog.update_team_from_voice_channel(interaction)
 
+    @discord.ui.button(label="🔁 Sync Voice", style=discord.ButtonStyle.secondary, custom_id="raid_sync_voice", row=2)
+    async def sync_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        await raid_cog.sync_raid_with_voice_channels(interaction, remove_missing=False, confirm=False)
+
     @discord.ui.button(label="🎙️ Voice Roster", style=discord.ButtonStyle.secondary, custom_id="raid_voice_roster", row=2)
     async def voice_roster(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
@@ -743,6 +752,45 @@ class RaidControlView(discord.ui.View):
                 await interaction.followup.send("Please try again.", ephemeral=True)
             except Exception:
                 pass
+
+    @discord.ui.button(label="❓ Help", style=discord.ButtonStyle.secondary, custom_id="raid_help", row=1)
+    async def raid_help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        description = "\n".join(
+            [
+                "This panel is used to manage the current raid. Some buttons may be hidden unless you are the raid leader/admin.",
+                "",
+                "**Join Raid**: Adds you to the raid. If you are not the leader/admin, this sends a join request for approval.",
+                "**Leave Raid**: Removes you from the raid and prevents automatic re-adding during sync.",
+                "**My DKP 💰**: Shows your current DKP.",
+                "",
+                "**Award DKP / Deduct DKP** (leader/admin): Pick a raid member, then enter the DKP amount + reason.",
+                "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Update Team** or have people **Join Raid** first).",
+                "**End Auction** (leader/admin): Ends the current auction for this raid.",
+                "**Close Raid** (leader/admin): Closes out the raid when finished.",
+                "",
+                "**🔄 Update Team** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes/auctions.",
+                "**🔁 Sync Voice** (leader/admin): Syncs the raid roster with the configured voice channels. Use if people moved channels after the raid started.",
+                "**🎙️ Voice Roster**: Shows who is currently in the raid voice channels.",
+                "**Remove Raider** (leader/admin): Removes a member from the raid roster.",
+                "**Groups**: Shows the current raid groups (if your guild uses grouping features).",
+                "",
+                "**Rename Thread** (leader/officer/admin): Renames the raid log thread.",
+            ]
+        )
+
+        embed = discord.Embed(
+            title="Raid Panel Help",
+            description=description,
+            color=discord.Color.blurple(),
+        )
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.HTTPException:
+            return
 
     # The View Rules button is temporarily disabled. To re-enable in the future,
     # uncomment the decorator and method below.
