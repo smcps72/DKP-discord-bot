@@ -65,28 +65,90 @@ class TasksCog(commands.Cog):
     @tasks.loop(minutes=5)
     async def cleanup_channels(self):
         logging.info("Running cleanup task for empty raid VCs.")
-        raids = await self.bot.db.fetchall("SELECT vc_id FROM raids WHERE is_active = 1")
-        for raid in raids:
-            vc_id = None
+        raids = await self.bot.db.fetchall("SELECT id, vc_id FROM raids WHERE is_active = 1")
+        for raid in list(raids or []):
+            raid_id = None
+            primary_vc_id = None
             try:
-                vc_id = raid["vc_id"]
+                raid_id = int(raid["id"])
             except Exception:
-                vc_id = None
+                raid_id = None
+            try:
+                primary_vc_id = raid["vc_id"]
+            except Exception:
+                primary_vc_id = None
 
-            if not vc_id:
+            # Backward compatibility for tests/mocks (or older code paths)
+            # that only provide vc_id.
+            if raid_id is None:
+                if not primary_vc_id:
+                    continue
+
+                channel = self.bot.get_channel(int(primary_vc_id))
+                # vc_id is often the raid leader's *existing* voice channel (e.g. General),
+                # so it must never be auto-deleted. Instead, when a VC is gone or empty,
+                # we simply stop associating the raid with that channel.
+                try:
+                    if channel is None:
+                        await self.bot.db.execute(
+                            "UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1",
+                            (int(primary_vc_id),),
+                        )
+                    elif isinstance(channel, discord.VoiceChannel) and not channel.members:
+                        await self.bot.db.execute(
+                            "UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1",
+                            (int(primary_vc_id),),
+                        )
+                except Exception:
+                    logging.exception("Failed to clear stale raid vc_id during cleanup")
                 continue
 
-            channel = self.bot.get_channel(vc_id)
-            # vc_id is often the raid leader's *existing* voice channel (e.g. General),
-            # so it must never be auto-deleted. Instead, when a VC is gone or empty,
-            # we simply stop associating the raid with that channel.
+            vc_ids: set[int] = set()
+            if primary_vc_id:
+                try:
+                    vc_ids.add(int(primary_vc_id))
+                except Exception:
+                    pass
+
             try:
-                if channel is None:
-                    await self.bot.db.execute("UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1", (vc_id,))
-                elif isinstance(channel, discord.VoiceChannel) and not channel.members:
-                    await self.bot.db.execute("UPDATE raids SET vc_id = NULL WHERE vc_id = ? AND is_active = 1", (vc_id,))
+                linked_rows = await self.bot.db.get_raid_voice_channels(raid_id)
             except Exception:
-                logging.exception("Failed to clear stale raid vc_id during cleanup")
+                linked_rows = []
+            for row in list(linked_rows or []):
+                try:
+                    vc_ids.add(int(row["vc_id"]))
+                except Exception:
+                    continue
+
+            for vc_id in list(vc_ids):
+                channel = self.bot.get_channel(int(vc_id))
+
+                # vc_id is often the raid leader's *existing* voice channel (e.g. General),
+                # so it must never be auto-deleted. Instead, when a VC is gone or empty,
+                # we simply stop associating the raid with that channel.
+                try:
+                    if channel is None:
+                        try:
+                            await self.bot.db.remove_raid_voice_channel(raid_id, int(vc_id))
+                        except Exception:
+                            pass
+                        if primary_vc_id and int(primary_vc_id) == int(vc_id):
+                            await self.bot.db.execute(
+                                "UPDATE raids SET vc_id = NULL WHERE id = ? AND is_active = 1",
+                                (raid_id,),
+                            )
+                    elif (
+                        primary_vc_id
+                        and int(primary_vc_id) == int(vc_id)
+                        and isinstance(channel, discord.VoiceChannel)
+                        and not channel.members
+                    ):
+                        await self.bot.db.execute(
+                            "UPDATE raids SET vc_id = NULL WHERE id = ? AND is_active = 1",
+                            (raid_id,),
+                        )
+                except Exception:
+                    logging.exception("Failed to clear stale raid vc_id during cleanup")
 
     @cleanup_channels.before_loop
     async def before_cleanup(self):

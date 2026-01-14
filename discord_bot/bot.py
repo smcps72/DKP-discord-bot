@@ -190,6 +190,10 @@ class DkpBot(commands.Bot):
                     "UPDATE raids SET vc_id = ? WHERE id = ?",
                     (after.channel.id, leader_raid["id"]),
                 )
+            try:
+                await self.db.add_raid_voice_channel(int(leader_raid["id"]), int(after.channel.id))
+            except Exception:
+                pass
         except Exception as e:
             logging.error(f"Error updating raid vc_id for raid {leader_raid.get('id')}: {e}")
             return

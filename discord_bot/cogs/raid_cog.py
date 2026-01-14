@@ -332,6 +332,11 @@ class RaidCog(commands.Cog):
 
             try:
                 raid_row = await self.bot.db.fetchone("SELECT * FROM raids WHERE thread_id = ?", (thread.id,))
+                if raid_row and raid_vc_id:
+                    try:
+                        await self.bot.db.add_raid_voice_channel(int(raid_row["id"]), int(raid_vc_id))
+                    except Exception:
+                        pass
                 if raid_row:
                     await self.ensure_raid_thread_name(thread, raid_row)
             except Exception:
@@ -600,6 +605,43 @@ class RaidCog(commands.Cog):
         except (ValueError, TypeError):
             return None
 
+    async def _get_linked_voice_channels(self, guild: discord.Guild, raid: dict) -> list[discord.VoiceChannel]:
+        vc_ids: set[int] = set()
+
+        primary = None
+        try:
+            primary = raid["vc_id"]
+        except Exception:
+            try:
+                primary = raid.get("vc_id") if isinstance(raid, dict) else None
+            except Exception:
+                primary = None
+
+        if primary:
+            try:
+                vc_ids.add(int(primary))
+            except Exception:
+                pass
+
+        try:
+            rows = await self.bot.db.get_raid_voice_channels(int(raid["id"]))
+        except Exception:
+            rows = []
+
+        for row in list(rows or []):
+            try:
+                vc_ids.add(int(row["vc_id"]))
+            except Exception:
+                continue
+
+        channels: list[discord.VoiceChannel] = []
+        for vc_id in vc_ids:
+            ch = guild.get_channel(int(vc_id))
+            if isinstance(ch, discord.VoiceChannel):
+                channels.append(ch)
+
+        return channels
+
     async def update_team_from_voice_channel(self, interaction: discord.Interaction):
         if not interaction.guild:
             return await interaction.followup.send(
@@ -641,33 +683,53 @@ class RaidCog(commands.Cog):
                 ephemeral=True,
             )
 
+        raid_id = int(raid["id"])
+
         try:
             await self.bot.db.execute(
                 "UPDATE raids SET vc_id = ? WHERE id = ?",
-                (vc.id, int(raid["id"])),
+                (vc.id, raid_id),
             )
         except Exception:
             pass
 
+        try:
+            await self.bot.db.add_raid_voice_channel(raid_id, int(vc.id))
+        except Exception:
+            pass
+
+        linked_vcs = await self._get_linked_voice_channels(interaction.guild, raid)
+        if not linked_vcs:
+            return await interaction.followup.send(
+                "This raid is not currently associated with any voice channels.",
+                ephemeral=True,
+            )
+
+        voice_members_by_id: dict[int, discord.Member] = {}
+        for linked_vc in linked_vcs:
+            for member in list(getattr(linked_vc, "members", []) or []):
+                if getattr(member, "bot", False):
+                    continue
+                voice_members_by_id[int(member.id)] = member
+
         added = 0
-        for member in list(getattr(vc, "members", []) or []):
-            if getattr(member, "bot", False):
-                continue
+        for member in list(voice_members_by_id.values()):
             try:
-                if await self.bot.db.is_raid_member_excluded(int(raid["id"]), int(member.id)):
+                if await self.bot.db.is_raid_member_excluded(raid_id, int(member.id)):
                     continue
             except Exception:
                 pass
             try:
-                inserted = await self.bot.db.add_raid_member(int(raid["id"]), int(member.id))
+                inserted = await self.bot.db.add_raid_member(raid_id, int(member.id))
             except Exception:
                 inserted = False
             if inserted:
                 added += 1
 
         if added:
+            vc_mentions = ", ".join([v.mention for v in linked_vcs])
             await interaction.followup.send(
-                f"Added **{added}** member(s) from {vc.mention} to the raid.",
+                f"Added **{added}** member(s) from linked voice channels to the raid: {vc_mentions}",
             )
 
         await self.update_team_list(interaction)
@@ -677,25 +739,253 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
-        if not isinstance(vc, discord.VoiceChannel):
+        if not interaction.guild:
+            return await interaction.followup.send("This command can only be used inside a server.", ephemeral=True)
+
+        linked_vcs = await self._get_linked_voice_channels(interaction.guild, raid)
+        if not linked_vcs:
             return await interaction.followup.send(
-                "This raid is not currently associated with a voice channel.",
+                "This raid is not currently associated with any voice channels.",
                 ephemeral=True,
             )
 
-        members = [m for m in list(getattr(vc, "members", []) or []) if not getattr(m, "bot", False)]
-        if not members:
+        per_vc: list[tuple[discord.VoiceChannel, list[discord.Member]]] = []
+        all_members_by_id: dict[int, discord.Member] = {}
+        for vc in linked_vcs:
+            members = [m for m in list(getattr(vc, "members", []) or []) if not getattr(m, "bot", False)]
+            per_vc.append((vc, members))
+            for m in members:
+                all_members_by_id[int(m.id)] = m
+
+        if not all_members_by_id:
+            vc_mentions = ", ".join([v.mention for v in linked_vcs])
             return await interaction.followup.send(
-                f"No players are currently in {vc.mention}.",
+                f"No players are currently in linked raid voice channels: {vc_mentions}.",
             )
 
-        mentions = ", ".join([m.mention for m in members])
-        embed = create_info_embed(
-            "Voice Channel Roster",
-            f"Voice channel: {vc.mention}\nPlayers (**{len(members)}**): {mentions}",
-        )
+        vc_mentions = ", ".join([v.mention for v in linked_vcs])
+        lines: list[str] = [f"Voice channels: {vc_mentions}", f"Total players in voice (**{len(all_members_by_id)}**):"]
+
+        for vc, members in per_vc:
+            if not members:
+                continue
+            mentions = ", ".join([m.mention for m in members])
+            lines.append(f"**{vc.mention}** (**{len(members)}**): {mentions}")
+
+        description = "\n".join(lines)
+        if len(description) > 4096:
+            description = description[:4090] + "..."
+
+        embed = create_info_embed("Voice Channel Roster", description)
         await interaction.followup.send(embed=embed)
+
+    async def sync_raid_with_voice_channels(
+        self,
+        interaction: discord.Interaction,
+        remove_missing: bool = False,
+        confirm: bool = False,
+    ):
+        if not interaction.guild:
+            return await interaction.followup.send(
+                "This command can only be used inside a server.",
+                ephemeral=True,
+            )
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=False)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        officer_ok = await is_officer(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
+            return await interaction.followup.send(
+                "You must be the raid leader, an officer, or a bot admin to sync raid members.",
+                ephemeral=True,
+            )
+
+        raid_id = int(raid["id"])
+
+        linked_vcs = await self._get_linked_voice_channels(interaction.guild, raid)
+        if not linked_vcs:
+            return await interaction.followup.send(
+                "This raid is not currently associated with any voice channels.",
+                ephemeral=True,
+            )
+
+        voice_members_by_id: dict[int, discord.Member] = {}
+        for vc in linked_vcs:
+            for member in list(getattr(vc, "members", []) or []):
+                if getattr(member, "bot", False):
+                    continue
+                voice_members_by_id[int(member.id)] = member
+
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid_id)
+        except Exception:
+            member_rows = []
+
+        raid_member_ids: set[int] = set()
+        for row in list(member_rows or []):
+            try:
+                raid_member_ids.add(int(row["user_id"]))
+            except Exception:
+                continue
+
+        added = 0
+        for member in list(voice_members_by_id.values()):
+            try:
+                if await self.bot.db.is_raid_member_excluded(raid_id, int(member.id)):
+                    continue
+            except Exception:
+                pass
+            try:
+                inserted = await self.bot.db.add_raid_member(raid_id, int(member.id))
+            except Exception:
+                inserted = False
+            if inserted:
+                added += 1
+
+        missing_from_voice: list[int] = []
+        if remove_missing:
+            for uid in sorted(raid_member_ids):
+                if uid in voice_members_by_id:
+                    continue
+                # Don't auto-remove excluded users here; exclusion is for preventing
+                # re-add. If they're still present in raid_members, that's already
+                # an inconsistency and should be handled explicitly.
+                missing_from_voice.append(uid)
+
+        if remove_missing and missing_from_voice and not confirm:
+            preview_mentions = ", ".join([f"<@{uid}>" for uid in missing_from_voice[:20]])
+            if len(missing_from_voice) > 20:
+                preview_mentions += f" … and {len(missing_from_voice) - 20} more"
+            vc_mentions = ", ".join([v.mention for v in linked_vcs])
+            return await interaction.followup.send(
+                "Sync preview:\n"
+                f"- Linked voice channels: {vc_mentions}\n"
+                f"- Would remove **{len(missing_from_voice)}** raid member(s) not in those channels.\n"
+                f"- Preview: {preview_mentions}\n\n"
+                "Re-run with `confirm: true` to remove them.",
+                ephemeral=True,
+            )
+
+        removed = 0
+        if remove_missing and missing_from_voice and confirm:
+            for uid in missing_from_voice:
+                try:
+                    did_remove = await self.bot.db.remove_raid_member(raid_id, int(uid))
+                except Exception:
+                    did_remove = False
+                if did_remove:
+                    removed += 1
+
+        vc_mentions = ", ".join([v.mention for v in linked_vcs])
+        summary_parts: list[str] = [f"Linked voice channels: {vc_mentions}"]
+        summary_parts.append(f"Added: **{added}**")
+        if remove_missing:
+            summary_parts.append(f"Removed: **{removed}**")
+        await interaction.followup.send("Sync Voice complete. " + " | ".join(summary_parts))
+
+        await self.update_team_list(interaction)
+
+    @app_commands.command(name="raid_sync_voice", description="Sync raid membership with linked voice channels.")
+    @app_commands.describe(remove_missing="Also remove raid members who are not in linked voice channels.")
+    @app_commands.describe(confirm="Required when remove_missing is true (safety confirmation).")
+    async def raid_sync_voice_cmd(
+        self,
+        interaction: discord.Interaction,
+        remove_missing: bool = False,
+        confirm: bool = False,
+    ):
+        await self.sync_raid_with_voice_channels(interaction, remove_missing=remove_missing, confirm=confirm)
+
+    @app_commands.command(name="raid_add_voice_channel", description="Link an additional voice channel to the current raid.")
+    @app_commands.describe(channel="The voice channel to link to this raid.")
+    async def raid_add_voice_channel_cmd(self, interaction: discord.Interaction, channel: discord.VoiceChannel):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        officer_ok = await is_officer(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
+            return await interaction.response.send_message(
+                "You must be the raid leader, an officer, or a bot admin to link voice channels.",
+                ephemeral=True,
+            )
+
+        raid_id = int(raid["id"])
+        await self.bot.db.add_raid_voice_channel(raid_id, int(channel.id))
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(f"Linked voice channel {channel.mention} to this raid.")
+        except Exception:
+            logging.exception("Failed to announce linked voice channel")
+
+        return await interaction.response.send_message(
+            f"Linked voice channel {channel.mention} to this raid.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="raid_remove_voice_channel", description="Unlink a voice channel from the current raid.")
+    @app_commands.describe(channel="The voice channel to unlink from this raid.")
+    async def raid_remove_voice_channel_cmd(self, interaction: discord.Interaction, channel: discord.VoiceChannel):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        officer_ok = await is_officer(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
+            return await interaction.response.send_message(
+                "You must be the raid leader, an officer, or a bot admin to unlink voice channels.",
+                ephemeral=True,
+            )
+
+        raid_id = int(raid["id"])
+        await self.bot.db.remove_raid_voice_channel(raid_id, int(channel.id))
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(f"Unlinked voice channel {channel.mention} from this raid.")
+        except Exception:
+            logging.exception("Failed to announce unlinked voice channel")
+
+        return await interaction.response.send_message(
+            f"Unlinked voice channel {channel.mention} from this raid.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="raid_list_voice_channels", description="List voice channels linked to the current raid.")
+    async def raid_list_voice_channels_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        linked_vcs = await self._get_linked_voice_channels(interaction.guild, raid)
+        if not linked_vcs:
+            return await interaction.followup.send("No voice channels are currently linked to this raid.", ephemeral=True)
+
+        vc_mentions = "\n".join([f"- {vc.mention} (`{vc.id}`)" for vc in linked_vcs])
+        embed = create_info_embed("Linked Raid Voice Channels", vc_mentions)
+        return await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def show_raid_groups(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -765,6 +1055,7 @@ class RaidCog(commands.Cog):
                 members_by_id[user_id] = gm
 
         members = list(members_by_id.values())
+        members.sort(key=lambda m: (m.display_name or "").lower())
         if not members:
             return await interaction.followup.send("No raid members were found for this raid.")
 

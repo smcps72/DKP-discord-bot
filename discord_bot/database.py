@@ -14,7 +14,35 @@ class Database:
         self.db_file = db_file
         self.pool = None
 
+    def _should_reconnect(self, err: Exception) -> bool:
+        msg = str(err).lower()
+        return (
+            "attempt to write a readonly database" in msg
+            or "readonly database" in msg
+            or "unable to open database file" in msg
+            or "disk i/o error" in msg
+        )
+
+    async def close(self):
+        if getattr(self, "pool", None) is None:
+            return
+        try:
+            await self.pool.close()
+        finally:
+            self.pool = None
+
+    async def reconnect(self):
+        await self.close()
+        await self.connect()
+
     async def connect(self):
+        if getattr(self, "pool", None) is not None:
+            try:
+                await self.pool.close()
+            except Exception:
+                pass
+            self.pool = None
+
         self.pool = await aiosqlite.connect(self.db_file)
         # The connection object from aiosqlite.connect can be used like a pool of size 1.
         # For more complex scenarios, a dedicated pool object might be used, but for a single
@@ -137,6 +165,14 @@ class Database:
                 )
             """)
             await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_voice_channels (
+                    raid_id INTEGER,
+                    vc_id INTEGER,
+                    PRIMARY KEY (raid_id, vc_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS raid_members (
                     raid_id INTEGER,
                     user_id INTEGER,
@@ -213,12 +249,21 @@ class Database:
     async def execute(self, sql, params=()):
         attempts = 3
         delay = 0.2
+        did_reconnect = False
         for attempt in range(attempts):
             try:
                 async with self.pool.execute(sql, params) as cursor:
                     await self.pool.commit()
                 return
             except (aiosqlite.OperationalError, OSError) as e:
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning("DB execute error suggests stale/readonly connection; reconnecting: %s", e)
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
                 if attempt == attempts - 1:
                     logging.error("DB execute failed after %s attempts: %s", attempts, e)
                     raise
@@ -276,6 +321,7 @@ class Database:
     async def remove_raid_member(self, raid_id: int, user_id: int) -> bool:
         attempts = 3
         delay = 0.2
+        did_reconnect = False
         for attempt in range(attempts):
             try:
                 async with self.pool.execute(
@@ -288,6 +334,17 @@ class Database:
                     except Exception:
                         return False
             except (aiosqlite.OperationalError, OSError) as e:
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning(
+                        "DB remove_raid_member error suggests stale/readonly connection; reconnecting: %s",
+                        e,
+                    )
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
                 if attempt == attempts - 1:
                     logging.error("DB remove_raid_member failed after %s attempts: %s", attempts, e)
                     raise
@@ -344,6 +401,7 @@ class Database:
         attempts = 3
         delay = 0.2
         last_error: Exception | None = None
+        did_reconnect = False
         for attempt in range(attempts):
             try:
                 async with self.pool.execute(sql, params) as cursor:
@@ -351,6 +409,14 @@ class Database:
                     return cursor.lastrowid
             except (aiosqlite.OperationalError, OSError) as e:
                 last_error = e
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning("DB insert error suggests stale/readonly connection; reconnecting: %s", e)
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
                 if attempt == attempts - 1:
                     logging.error("DB insert failed after %s attempts: %s", attempts, e)
                     raise
@@ -366,11 +432,20 @@ class Database:
     async def fetchone(self, sql, params=()):
         attempts = 3
         delay = 0.2
+        did_reconnect = False
         for attempt in range(attempts):
             try:
                 async with self.pool.execute(sql, params) as cursor:
                     return await cursor.fetchone()
             except (aiosqlite.OperationalError, OSError) as e:
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning("DB fetchone error suggests stale/readonly connection; reconnecting: %s", e)
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
                 if attempt == attempts - 1:
                     logging.error("DB fetchone failed after %s attempts: %s", attempts, e)
                     raise
@@ -386,11 +461,20 @@ class Database:
     async def fetchall(self, sql, params=()):
         attempts = 3
         delay = 0.2
+        did_reconnect = False
         for attempt in range(attempts):
             try:
                 async with self.pool.execute(sql, params) as cursor:
                     return await cursor.fetchall()
             except (aiosqlite.OperationalError, OSError) as e:
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning("DB fetchall error suggests stale/readonly connection; reconnecting: %s", e)
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
                 if attempt == attempts - 1:
                     logging.error("DB fetchall failed after %s attempts: %s", attempts, e)
                     raise
@@ -433,7 +517,24 @@ class Database:
         return await self.fetchone("SELECT * FROM raids WHERE thread_id = ? AND is_active = 1", (thread_id,))
 
     async def get_raid_by_vc(self, vc_id):
-        return await self.fetchone("SELECT * FROM raids WHERE vc_id = ? AND is_active = 1", (vc_id,))
+        return await self.fetchone(
+            """
+            SELECT r.*
+            FROM raids r
+            WHERE r.is_active = 1
+              AND (
+                r.vc_id = ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM raid_voice_channels rvc
+                    WHERE rvc.raid_id = r.id AND rvc.vc_id = ?
+                )
+              )
+            ORDER BY r.created_at DESC
+            LIMIT 1
+            """,
+            (vc_id, vc_id),
+        )
 
     async def get_active_raid_by_leader(self, guild_id: int, leader_id: int):
         return await self.fetchone(
@@ -444,6 +545,7 @@ class Database:
     async def add_raid_member(self, raid_id: int, user_id: int):
         attempts = 3
         delay = 0.2
+        did_reconnect = False
         for attempt in range(attempts):
             try:
                 async with self.pool.execute(
@@ -456,6 +558,17 @@ class Database:
                     except Exception:
                         return False
             except (aiosqlite.OperationalError, OSError) as e:
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning(
+                        "DB add_raid_member error suggests stale/readonly connection; reconnecting: %s",
+                        e,
+                    )
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
                 if attempt == attempts - 1:
                     logging.error("DB add_raid_member failed after %s attempts: %s", attempts, e)
                     raise
@@ -506,4 +619,22 @@ class Database:
         await self.execute(
             "INSERT OR IGNORE INTO auction_bids (auction_id, user_id, amount) VALUES (?, ?, ?)",
             (auction_id, user_id, amount),
+        )
+
+    async def add_raid_voice_channel(self, raid_id: int, vc_id: int):
+        await self.execute(
+            "INSERT OR IGNORE INTO raid_voice_channels (raid_id, vc_id) VALUES (?, ?)",
+            (int(raid_id), int(vc_id)),
+        )
+
+    async def remove_raid_voice_channel(self, raid_id: int, vc_id: int):
+        await self.execute(
+            "DELETE FROM raid_voice_channels WHERE raid_id = ? AND vc_id = ?",
+            (int(raid_id), int(vc_id)),
+        )
+
+    async def get_raid_voice_channels(self, raid_id: int):
+        return await self.fetchall(
+            "SELECT vc_id FROM raid_voice_channels WHERE raid_id = ?",
+            (int(raid_id),),
         )
