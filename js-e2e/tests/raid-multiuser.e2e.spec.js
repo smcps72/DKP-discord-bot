@@ -39,12 +39,16 @@ async function ensureDkpSetup(page) {
   const setupRepaired = page.getByText('Setup repaired', { exact: false }).first();
   const setupExists = page.getByText('Setup already exists', { exact: false }).first();
   const setupMissingPerms = page.getByText('Missing permissions', { exact: false }).first();
+  const setupNoPerms = page.getByText("You don't have permission to use this command.", { exact: false }).first();
+  const setupGenericError = page.getByText('An error occurred while processing that command.', { exact: false }).first();
 
   await Promise.race([
     setupComplete.waitFor({ state: 'visible', timeout: 45000 }),
     setupRepaired.waitFor({ state: 'visible', timeout: 45000 }),
     setupExists.waitFor({ state: 'visible', timeout: 45000 }),
     setupMissingPerms.waitFor({ state: 'visible', timeout: 45000 }),
+    setupNoPerms.waitFor({ state: 'visible', timeout: 45000 }),
+    setupGenericError.waitFor({ state: 'visible', timeout: 45000 }),
   ]);
 }
 

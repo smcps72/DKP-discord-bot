@@ -12,6 +12,7 @@ bash.exe.stackdump
 dkp_bot.db
 js-e2e/node_modules
 js-e2e/discord-auth.json
+js-e2e/discord-auth*.json
 js-e2e/test-results/
 backups
 test-results/
