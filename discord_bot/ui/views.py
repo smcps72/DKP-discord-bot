@@ -1,8 +1,162 @@
 import discord
 import logging
+import re
+from pathlib import Path
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
 from discord.ui import UserSelect, Select
-from ..utils import is_admin, is_officer, ensure_allowed_guild
+from .. import __version__ as bot_version
+from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embed
+
+
+CHANGELOG_PATH = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
+
+FALLBACK_CHANGELOG_ENTRIES: dict[str, str] = {
+    "Unreleased": "No changelog file was found.",
+}
+
+_CHANGELOG_CACHE: dict[str, object] = {
+    "mtime": None,
+    "versions": [],
+    "entries": {},
+}
+
+
+def _parse_changelog_markdown(raw: str) -> tuple[list[str], dict[str, str]]:
+    versions: list[str] = []
+    entries: dict[str, str] = {}
+    current_version: str | None = None
+    buffer: list[str] = []
+
+    for line in raw.splitlines():
+        m = re.match(r"^##\s+(.+?)\s*$", line)
+        if m:
+            if current_version is not None:
+                entries[current_version] = ("\n".join(buffer).strip() or "No details provided.")
+                versions.append(current_version)
+            header = m.group(1).strip()
+            m2 = re.match(r"^\[(?P<version>[^\]]+)\]\([^\)]+\)(?:\s+\(.*\))?\s*$", header)
+            current_version = (m2.group("version").strip() if m2 else header)
+            buffer = []
+            continue
+
+        if current_version is not None:
+            buffer.append(line.rstrip())
+
+    if current_version is not None:
+        entries[current_version] = ("\n".join(buffer).strip() or "No details provided.")
+        versions.append(current_version)
+
+    return versions, entries
+
+
+def _load_changelog() -> tuple[list[str], dict[str, str]]:
+    try:
+        stat = CHANGELOG_PATH.stat()
+    except OSError:
+        return list(FALLBACK_CHANGELOG_ENTRIES.keys()), dict(FALLBACK_CHANGELOG_ENTRIES)
+
+    mtime = float(stat.st_mtime)
+    cached_mtime = _CHANGELOG_CACHE.get("mtime")
+    if cached_mtime == mtime:
+        return (
+            list(_CHANGELOG_CACHE.get("versions") or []),
+            dict(_CHANGELOG_CACHE.get("entries") or {}),
+        )
+
+    try:
+        raw = CHANGELOG_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return list(FALLBACK_CHANGELOG_ENTRIES.keys()), dict(FALLBACK_CHANGELOG_ENTRIES)
+
+    versions, entries = _parse_changelog_markdown(raw)
+    if not versions or not entries:
+        versions = list(FALLBACK_CHANGELOG_ENTRIES.keys())
+        entries = dict(FALLBACK_CHANGELOG_ENTRIES)
+
+    _CHANGELOG_CACHE["mtime"] = mtime
+    _CHANGELOG_CACHE["versions"] = list(versions)
+    _CHANGELOG_CACHE["entries"] = dict(entries)
+    return versions, entries
+
+
+def _get_default_changelog_version() -> str:
+    versions, _entries = _load_changelog()
+    if bot_version in versions:
+        return bot_version
+    if versions:
+        return versions[0]
+    return bot_version
+
+
+def _create_changelog_embed(version: str, entries: dict[str, str]) -> discord.Embed:
+    notes = entries.get(version)
+    if not notes:
+        notes = "No changelog entry is available for this version."
+
+    title = f"Changelog – v{version}" if version != "Unreleased" else "Changelog – Unreleased"
+    embed = create_info_embed(
+        title,
+        notes,
+    )
+    embed.set_footer(text=f"Current bot version: v{bot_version}")
+    if embed.description and len(embed.description) > 4096:
+        embed.description = embed.description[:4093] + "..."
+    return embed
+
+
+class ChangelogVersionSelect(Select):
+    def __init__(self, versions: list[str], default_version: str):
+        options = [
+            discord.SelectOption(
+                label=v[:100],
+                value=v,
+                default=(v == default_version),
+            )
+            for v in versions
+        ][:25]
+
+        super().__init__(
+            placeholder="Select a version...",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_version = self.values[0]
+
+        view = self.view
+        if not isinstance(view, ChangelogView):
+            return await interaction.response.edit_message(view=None)
+
+        if selected_version not in view.allowed_versions:
+            return await interaction.response.send_message(
+                "You don't have permission to view that changelog.",
+                ephemeral=True,
+            )
+
+        embed = view.create_embed(selected_version)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class ChangelogView(discord.ui.View):
+    def __init__(
+        self,
+        versions: list[str],
+        entries: dict[str, str],
+        default_version: str,
+    ):
+        super().__init__(timeout=180)
+        self.allowed_versions = set(versions)
+        self._entries = dict(entries)
+        self.add_item(ChangelogVersionSelect(versions, default_version))
+
+    def create_embed(self, version: str) -> discord.Embed:
+        return _create_changelog_embed(version, self._entries)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, row=1)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
 
 class MemberSelect(Select):
     def __init__(self, bot, action: str, members: list[discord.Member]):
@@ -198,6 +352,40 @@ class WelcomeView(discord.ui.View):
 
         view = AdminPanelView(self.bot)
         await interaction.followup.send("Welcome to the Admin Panel.", view=view, ephemeral=True)
+
+    @discord.ui.button(
+        label="Change Log 🔒",
+        style=discord.ButtonStyle.secondary,
+        custom_id="welcome_change_log",
+        row=1,
+    )
+    async def change_log(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        versions, entries = _load_changelog()
+        can_view_unreleased = await is_officer(interaction)
+        allowed_versions = versions if can_view_unreleased else [v for v in versions if v != "Unreleased"]
+
+        content = None
+        if not can_view_unreleased and "Unreleased" in versions:
+            content = "Showing public changelog entries. (Unreleased is officers-only.)"
+
+        if not allowed_versions:
+            return await interaction.followup.send(
+                "No public changelog entries are available.",
+                ephemeral=True,
+            )
+
+        default_version = bot_version if bot_version in allowed_versions else allowed_versions[0]
+        view = ChangelogView(allowed_versions, entries, default_version)
+        embed = view.create_embed(default_version)
+        if content:
+            await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 # -- ADMIN VIEWS --

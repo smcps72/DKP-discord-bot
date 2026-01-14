@@ -1,0 +1,19 @@
+{
+  "release-type": "simple",
+  "pull-request-title-pattern": "chore: release${component} ${version}",
+  "packages": {
+    ".": {
+      "package-name": "dkp-discord-bot",
+      "include-component-in-tag": false,
+      "versioning": "prerelease",
+      "prerelease": true,
+      "prerelease-type": "alpha",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "discord_bot/VERSION"
+        }
+      ]
+    }
+  }
+}
