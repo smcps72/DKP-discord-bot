@@ -1,6 +1,7 @@
 /.env
 /.env.local
 /.env.backup
+/secrets/.env.local
 venv/
 __pycache__/
 *.pyc

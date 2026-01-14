@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from typing import Literal
+from .. import __version__
 from ..utils import is_admin, is_officer, create_info_embed
 from ..ui.modals import AdminDKPAdjustModal
 import csv
@@ -19,6 +20,7 @@ class AdminCog(commands.Cog):
         active_raids_count = await self.bot.db.fetchone("SELECT COUNT(*) as count FROM raids WHERE guild_id = ? AND is_active = 1", (guild_id,))
         return create_info_embed(
             "Bot Status",
+            f"• **Version:** `{__version__}`\n"
             f"• **Discord API:** {self.bot.latency*1000:.2f}ms\n"
             f"• **Subscription:** `{license_status}`\n"
             f"• **Active Raids:** {active_raids_count['count']}"

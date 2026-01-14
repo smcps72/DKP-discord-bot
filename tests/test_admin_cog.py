@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import io
 
 from discord_bot.cogs.admin_cog import AdminCog
+import discord_bot.cogs.admin_cog as admin_cog_module
 from discord_bot.utils import create_info_embed # Used by the cog
 
 # Basic scaffolding for the test file
@@ -56,6 +57,7 @@ async def test_create_status_embed_with_config_and_raids(admin_cog: AdminCog, mo
     )
 
     assert embed.title == "Bot Status"
+    assert f"• **Version:** `{admin_cog_module.__version__}`" in embed.description
     assert f"• **Discord API:** {expected_latency_ms:.2f}ms" in embed.description
     assert "• **Subscription:** `Active`" in embed.description # Capitalized by the method
     assert "• **Active Raids:** 5" in embed.description
@@ -79,6 +81,7 @@ async def test_create_status_embed_no_config_no_raids(admin_cog: AdminCog, mock_
     )
 
     assert embed.title == "Bot Status"
+    assert f"• **Version:** `{admin_cog_module.__version__}`" in embed.description
     assert f"• **Discord API:** {expected_latency_ms:.2f}ms" in embed.description
     assert "• **Subscription:** `Unknown`" in embed.description # Default when no config
     assert "• **Active Raids:** 0" in embed.description

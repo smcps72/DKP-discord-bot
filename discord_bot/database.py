@@ -92,6 +92,10 @@ class Database:
                 "archive_category_id",
                 "ALTER TABLE guilds ADD COLUMN archive_category_id INTEGER",
             ),
+            (
+                "last_announced_version",
+                "ALTER TABLE guilds ADD COLUMN last_announced_version TEXT",
+            ),
         ]
 
         for col, sql in migrations:
@@ -140,7 +144,8 @@ class Database:
                     raider_role_id INTEGER,
                     raid_leader_role_id INTEGER,
                     raid_vc_template_id INTEGER,
-                    default_dkp_award INTEGER DEFAULT 5
+                    default_dkp_award INTEGER DEFAULT 5,
+                    last_announced_version TEXT
                 )
             """)
             await cursor.execute("""

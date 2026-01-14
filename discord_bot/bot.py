@@ -21,7 +21,8 @@ sys.path.insert(0, str(project_root))
 
 from discord_bot.database import Database, DB_FILE
 from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelView
-from discord_bot.utils import ensure_allowed_guild
+from discord_bot.utils import ensure_allowed_guild, create_info_embed
+from discord_bot import __version__
 
 # --- Environment Variable Loading ---
 # The bot will look for the .env file in the project root.
@@ -31,17 +32,25 @@ dotenv_paths = [
     project_root / ".env",
 ]
 
-loaded = False
-for dotenv_path in dotenv_paths:
-    if dotenv_path.exists():
-        print(f"INFO: Loading environment from {dotenv_path}")
-        load_dotenv(dotenv_path=dotenv_path, override=False)
-        loaded = True
-        break
+dotenv_loaded = False
+if os.getenv("DISCORD_BOT_TOKEN"):
+    print("INFO: DISCORD_BOT_TOKEN is set in the environment; skipping dotenv file loading.")
+else:
+    for dotenv_path in dotenv_paths:
+        if dotenv_path.exists():
+            print(f"INFO: Loading environment from {dotenv_path}")
+            try:
+                load_dotenv(dotenv_path=dotenv_path, override=False)
+                dotenv_loaded = True
+                break
+            except Exception as e:
+                print(
+                    f"WARNING: Failed to load environment from {dotenv_path}: {e}. Relying on system environment variables."
+                )
 
-if not loaded:
+if not os.getenv("DISCORD_BOT_TOKEN") and not dotenv_loaded:
     print(
-        "WARNING: No secrets/.env.local, .env.local, or .env file found. Relying on system environment variables."
+        "WARNING: No secrets/.env.local, .env.local, or .env file found (or they failed to load). Relying on system environment variables."
     )
 
 # --- Logging Setup ---
@@ -98,6 +107,59 @@ class DkpBot(commands.Bot):
         self.license_server_url = LICENSE_SERVER_URL
         self.license_check_enabled = LICENSE_CHECK_ENABLED
         
+    def _cfg_get(self, config, key: str, default=None):
+        if not config:
+            return default
+        try:
+            keys = config.keys() if hasattr(config, "keys") else None
+            if keys is not None and key in keys:
+                return config[key]
+        except Exception:
+            pass
+        try:
+            return config.get(key, default)
+        except Exception:
+            return default
+
+    async def _announce_version_updates(self):
+        for guild in list(getattr(self, "guilds", []) or []):
+            try:
+                config = await self.db.get_guild_config(guild.id)
+            except Exception:
+                logging.exception("Failed to load guild config for update announcement")
+                continue
+
+            dkp_channel_id = self._cfg_get(config, "dkp_channel_id")
+            if not dkp_channel_id:
+                continue
+
+            last_announced = self._cfg_get(config, "last_announced_version")
+            if last_announced == __version__:
+                continue
+
+            channel = self.get_channel(int(dkp_channel_id))
+            if channel is None:
+                try:
+                    channel = await guild.fetch_channel(int(dkp_channel_id))
+                except Exception:
+                    channel = None
+
+            if channel is None or not hasattr(channel, "send"):
+                continue
+
+            try:
+                embed = create_info_embed(
+                    "DKP Bot Updated",
+                    f"Now running version: `{__version__}`",
+                )
+                await channel.send(embed=embed)
+                await self.db.execute(
+                    "UPDATE guilds SET last_announced_version = ? WHERE guild_id = ?",
+                    (__version__, int(guild.id)),
+                )
+            except Exception:
+                logging.exception("Failed to post update announcement for guild_id=%s", getattr(guild, "id", None))
+        
     async def setup_hook(self):
         # This is called before the bot logs in
         await self.db.connect()
@@ -139,6 +201,11 @@ class DkpBot(commands.Bot):
                 logging.info(f"Synced {len(synced)} global slash commands.")
         except Exception as e:
             logging.error(f"Error syncing application commands: {e}")
+
+        try:
+            await self._announce_version_updates()
+        except Exception:
+            logging.exception("Failed during version update announcements")
 
     async def on_voice_state_update(
         self,
