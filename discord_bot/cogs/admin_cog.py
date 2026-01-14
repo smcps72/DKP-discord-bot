@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+from typing import Literal
 from ..utils import is_admin, is_officer, create_info_embed
 from ..ui.modals import AdminDKPAdjustModal
 import csv
@@ -76,11 +77,13 @@ class AdminCog(commands.Cog):
     @app_commands.command(name="raid_points", description="Show DKP for all members in the current raid.")
     @app_commands.describe(member="(Optional) Show DKP for a single member in this raid.")
     @app_commands.describe(public="Post the results publicly in this channel.")
+    @app_commands.describe(sort="Sort order for the list (dkp or name).")
     async def raid_points_cmd(
         self,
         interaction: discord.Interaction,
         member: discord.Member | None = None,
         public: bool = False,
+        sort: Literal["dkp", "name"] = "dkp",
     ):
         # Ensure this command is used in a guild context
         if not interaction.guild:
@@ -165,8 +168,10 @@ class AdminCog(commands.Cog):
                 ephemeral=ephemeral,
             )
 
-        # Sort by DKP descending
-        dkp_entries.sort(key=lambda x: x[2], reverse=True)
+        if sort == "name":
+            dkp_entries.sort(key=lambda x: (x[1] or "").lower())
+        else:
+            dkp_entries.sort(key=lambda x: x[2], reverse=True)
 
         lines = [f"{mention}  **{dkp} DKP**" for (mention, _name, dkp) in dkp_entries]
         description = "\n".join(lines)
