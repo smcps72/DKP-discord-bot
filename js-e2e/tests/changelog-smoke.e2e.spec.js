@@ -68,10 +68,16 @@ async function openVersionDropdown(page) {
 }
 
 async function pickOption(page, label) {
+  // Discord closes the dropdown after a selection, so always reopen it.
+  const { listbox } = await openVersionDropdown(page);
+
   const escaped = label.replace(/[-/\\.^$*+?()|[\]{}]/g, '\\$&');
-  const option = page.getByRole('option', { name: new RegExp(`^${escaped}$`, 'i') }).first();
+  const option = listbox.getByRole('option', { name: new RegExp(`^${escaped}$`, 'i') }).first();
   await option.waitFor({ state: 'visible', timeout: 15000 });
   await option.click({ timeout: 15000 });
+
+  // Give Discord a moment to apply the selection and edit the ephemeral message.
+  await page.waitForTimeout(300);
 }
 
 test('Staging changelog smoke test', async ({ page }) => {
