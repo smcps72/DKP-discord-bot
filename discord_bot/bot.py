@@ -20,7 +20,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from discord_bot.database import Database, DB_FILE
-from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelView
+from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelView, RaidOpenPanelView
 from discord_bot.utils import ensure_allowed_guild, create_info_embed
 from discord_bot.analytics import Analytics
 from discord_bot import __version__
@@ -214,6 +214,7 @@ class DkpBot(commands.Bot):
         self.add_view(WelcomeView(self))
         self.add_view(RaidControlView(self))
         self.add_view(AuctionOpenPanelView(self))
+        self.add_view(RaidOpenPanelView(self))
         
         # Sync slash commands
         # In a production bot, you might want to sync only once or on command

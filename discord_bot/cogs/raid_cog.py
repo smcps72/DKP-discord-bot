@@ -6,7 +6,7 @@ import logging
 import re
 import io
 from ..utils import create_info_embed, create_error_embed, create_success_embed, is_admin, is_officer, send_dkp_change_dm
-from ..ui.views import RaidControlView
+from ..ui.views import RaidControlView, RaidOpenPanelView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
 
 MAX_DKP_ADJUSTMENT = 100000
@@ -179,11 +179,10 @@ class RaidCog(commands.Cog):
         admin_ok = await is_admin(interaction)
         can_manage = is_leader or admin_ok
 
-        title = (
-            f"Raid Control Panel for {interaction.user.display_name}"
-            if can_manage
-            else "Raid Panel"
-        )
+        officer_ok = await is_officer(interaction)
+        can_rename_thread = can_manage or officer_ok
+
+        title = f"Raid Control Panel for {interaction.user.display_name}"
         description = (
             "Use the buttons below to manage your raid. This panel is only visible to you."
             if can_manage
@@ -191,7 +190,11 @@ class RaidCog(commands.Cog):
         )
 
         embed = create_info_embed(title, description)
-        view = RaidControlView(self.bot, show_leader_buttons=can_manage)
+        view = RaidControlView(
+            self.bot,
+            show_leader_buttons=can_manage,
+            show_rename_thread_button=can_rename_thread,
+        )
 
         # If the original interaction has not been responded to yet, send via
         # the initial response; otherwise use a followup.
@@ -363,12 +366,13 @@ class RaidCog(commands.Cog):
                 # creation; users can reach the thread via the channel UI.
                 pass
 
-            # First control panel is public in the raid log thread
+            # Keep the raid log thread clean: show only a single public button
+            # that opens an ephemeral, per-user control panel.
             control_embed = create_info_embed(
-                f"Raid Control Panel for {interaction.user.display_name}",
-                "Use the buttons below to manage your raid.",
+                "Raid Control Panel",
+                "Click the button below to open your control panel (ephemeral).",
             )
-            view = RaidControlView(self.bot)
+            view = RaidOpenPanelView(self.bot)
             await thread.send(embed=control_embed, view=view)
 
             # Also send a short ephemeral confirmation back to the raid leader

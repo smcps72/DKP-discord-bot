@@ -135,6 +135,9 @@ class ChangelogVersionSelect(Select):
                 ephemeral=True,
             )
 
+        for option in self.options:
+            option.default = option.value == selected_version
+
         embed = view.create_embed(selected_version)
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -484,7 +487,7 @@ class AdminPanelView(discord.ui.View):
 
 
 class RaidControlView(discord.ui.View):
-    def __init__(self, bot, show_leader_buttons: bool = True):
+    def __init__(self, bot, show_leader_buttons: bool = True, show_rename_thread_button: bool = True):
         super().__init__(timeout=None)
         self.bot = bot
 
@@ -492,8 +495,11 @@ class RaidControlView(discord.ui.View):
         # The public thread panel can still show all buttons while access is
         # enforced via interaction_check.
         self.show_leader_buttons = show_leader_buttons
+        self.show_rename_thread_button = show_rename_thread_button
+
+        hide_ids: set[str] = set()
         if not self.show_leader_buttons:
-            leader_only_ids = {
+            hide_ids |= {
                 "raid_award_dkp",
                 "raid_deduct_dkp",
                 "raid_update_team",
@@ -503,9 +509,13 @@ class RaidControlView(discord.ui.View):
                 "raid_end_auction",
                 "raid_close_raid",
             }
+        if not self.show_rename_thread_button:
+            hide_ids.add("raid_rename_thread")
+
+        if hide_ids:
             to_remove: list[discord.ui.Item] = []
             for child in self.children:
-                if isinstance(child, discord.ui.Button) and child.custom_id in leader_only_ids:
+                if isinstance(child, discord.ui.Button) and child.custom_id in hide_ids:
                     to_remove.append(child)
             for child in to_remove:
                 self.remove_item(child)
@@ -1254,3 +1264,25 @@ class AuctionOpenPanelView(discord.ui.View):
             return await interaction.followup.send("This auction has ended.", ephemeral=True)
 
         await auction_cog.send_bid_panel(interaction, int(auction["id"]))
+
+
+class RaidOpenPanelView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    @discord.ui.button(
+        label="Open Raid Control Panel",
+        style=discord.ButtonStyle.primary,
+        custom_id="raid_open_panel",
+    )
+    async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.response.send_message(
+                "Raid module is currently offline.",
+                ephemeral=True,
+            )
+        await raid_cog.send_ephemeral_raid_panel(interaction)

@@ -124,6 +124,7 @@ async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_admin, moc
 # Tests for RaidControlView
 from discord_bot.ui.views import RaidControlView, DKPAdjustmentView
 from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal
+from discord_bot.ui.views import RaidOpenPanelView
 
 @pytest.fixture
 def mock_raid_control_interaction(mock_interaction): # Use the existing mock_interaction
@@ -315,6 +316,21 @@ class TestRaidControlView:
         # Assert: modal is not sent; error followup is sent
         mock_raid_control_interaction.response.send_modal.assert_not_called()
         mock_raid_control_interaction.followup.send.assert_called_with("You don't have permission to rename this thread.", ephemeral=True)
+
+
+@patch('discord_bot.ui.views.ensure_allowed_guild', new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_raid_open_panel_view_delegates_to_raid_cog(mock_ensure_allowed_guild, mock_bot, mock_interaction):
+    mock_ensure_allowed_guild.return_value = True
+
+    mock_raid_cog = MagicMock()
+    mock_raid_cog.send_ephemeral_raid_panel = AsyncMock()
+    mock_bot.get_cog.return_value = mock_raid_cog
+
+    view = RaidOpenPanelView(bot=mock_bot)
+    await view.open_panel.callback(mock_interaction)
+
+    mock_raid_cog.send_ephemeral_raid_panel.assert_called_once_with(mock_interaction)
 
 # Tests for AuctionBidView
 from discord_bot.ui.views import AuctionBidView
