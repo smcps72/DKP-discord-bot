@@ -1,0 +1,36 @@
+site_name: DKP Bot Documentation
+site_description: End-user documentation and tutorials for the DKP Discord bot
+
+docs_dir: Documentation
+site_dir: site
+
+exclude_docs: |
+  loot modes.md
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Commands: commands.md
+  - Player Guide: Player-Help.md
+  - Officer/Admin Guide: Officer-Admin-Help.md
+  - PostHog (Railway Proxy): posthog-proxy-railway.md
+  - Security: security.md

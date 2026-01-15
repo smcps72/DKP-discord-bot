@@ -195,3 +195,15 @@ python -m pip_audit --format json --output audit-report.json
 - **Roles**: The bot creates `Officer`, `Raider`, and `Raid-Leader` roles. Only assign `Officer` to trusted users.
 - **Channels**: The bot creates channels under a `DKP-System` category with read-only permissions for the default role.
 - **Commands**: Sensitive commands (`/setup_dkp`, `/reset_dkp`) are restricted to users with `Administrator` permission or the `Officer` role.
+
+## User Documentation Site (MkDocs)
+
+The repo includes an end-user documentation site powered by MkDocs (Material theme). The docs source files live in `Documentation/`.
+
+```bash
+python3 -m venv .venv-docs
+source .venv-docs/bin/activate
+python -m pip install -r requirements-docs.txt
+python3 scripts/generate_commands_docs.py
+python -m mkdocs serve
+```
