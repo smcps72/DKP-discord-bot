@@ -22,6 +22,7 @@ sys.path.insert(0, str(project_root))
 from discord_bot.database import Database, DB_FILE
 from discord_bot.ui.views import WelcomeView, RaidControlView, AuctionOpenPanelView
 from discord_bot.utils import ensure_allowed_guild, create_info_embed
+from discord_bot.analytics import Analytics
 from discord_bot import __version__
 
 # --- Environment Variable Loading ---
@@ -89,7 +90,39 @@ if LICENSE_CHECK_ENABLED and not all([LICENSE_KEY, LICENSE_SERVER_URL]):
 # --- Bot Class ---
 class DkpCommandTree(app_commands.CommandTree):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await ensure_allowed_guild(interaction)
+        allowed = await ensure_allowed_guild(interaction)
+        if not allowed:
+            return False
+
+        try:
+            client = getattr(interaction, "client", None)
+            analytics = getattr(client, "analytics", None)
+            if analytics is not None and getattr(analytics, "enabled", False):
+                cmd_name = None
+                data = getattr(interaction, "data", None)
+                if isinstance(data, dict):
+                    cmd_name = data.get("name")
+                if not cmd_name:
+                    cmd = getattr(interaction, "command", None)
+                    cmd_name = getattr(cmd, "qualified_name", None) or getattr(cmd, "name", None)
+
+                guild = getattr(interaction, "guild", None)
+                groups = {"guild": str(guild.id)} if guild is not None else None
+
+                analytics.capture(
+                    "discord_interaction",
+                    distinct_id=str(getattr(interaction.user, "id", "unknown")),
+                    properties={
+                        "command": cmd_name,
+                        "guild_id": getattr(guild, "id", None),
+                        "channel_id": getattr(getattr(interaction, "channel", None), "id", None),
+                    },
+                    groups=groups,
+                )
+        except Exception:
+            logging.exception("Failed to capture analytics event for interaction")
+
+        return True
 
 
 class DkpBot(commands.Bot):
@@ -106,6 +139,7 @@ class DkpBot(commands.Bot):
         self.license_key = LICENSE_KEY
         self.license_server_url = LICENSE_SERVER_URL
         self.license_check_enabled = LICENSE_CHECK_ENABLED
+        self.analytics = Analytics(__version__)
         
     def _cfg_get(self, config, key: str, default=None):
         if not config:
@@ -188,6 +222,20 @@ class DkpBot(commands.Bot):
     async def on_ready(self):
         logging.info(f'Logged in as {self.user} (ID: {self.user.id})')
         logging.info('------')
+
+        try:
+            if getattr(self, "analytics", None) is not None and getattr(self.analytics, "enabled", False):
+                self.analytics.capture(
+                    "discord_bot_ready",
+                    distinct_id=str(getattr(getattr(self, "user", None), "id", "unknown")),
+                    properties={
+                        "guild_count": len(getattr(self, "guilds", []) or []),
+                        "license_check_enabled": bool(getattr(self, "license_check_enabled", False)),
+                    },
+                )
+        except Exception:
+            logging.exception("Failed to capture analytics event for on_ready")
+
         # Sync slash commands after ready, ensures guild objects are cached.
         try:
             if TEST_GUILD_ID is not None:
@@ -272,11 +320,46 @@ class DkpBot(commands.Bot):
         if hasattr(self, "db") and getattr(self.db, "pool", None):
             await self.db.pool.close()
 
+        try:
+            if getattr(self, "analytics", None) is not None:
+                self.analytics.shutdown()
+        except Exception:
+            logging.exception("Failed to shutdown analytics")
+
 # --- Run the Bot ---
 bot = DkpBot()
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     logging.error(f"App command error: {type(error).__name__}: {error}")
+
+    try:
+        analytics = getattr(getattr(interaction, "client", None), "analytics", None)
+        if analytics is not None and getattr(analytics, "enabled", False):
+            cmd_name = None
+            data = getattr(interaction, "data", None)
+            if isinstance(data, dict):
+                cmd_name = data.get("name")
+            if not cmd_name:
+                cmd = getattr(interaction, "command", None)
+                cmd_name = getattr(cmd, "qualified_name", None) or getattr(cmd, "name", None)
+
+            guild = getattr(interaction, "guild", None)
+            groups = {"guild": str(guild.id)} if guild is not None else None
+
+            analytics.capture(
+                "discord_app_command_error",
+                distinct_id=str(getattr(interaction.user, "id", "unknown")),
+                properties={
+                    "command": cmd_name,
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                    "guild_id": getattr(guild, "id", None),
+                },
+                groups=groups,
+            )
+    except Exception:
+        logging.exception("Failed to capture analytics event for app command error")
+
     # If the underlying HTTP request failed because the interaction is unknown/expired,
     # just log and return without trying to respond again.
     cause = getattr(error, "__cause__", None)
