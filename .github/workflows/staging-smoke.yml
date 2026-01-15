@@ -37,12 +37,24 @@ jobs:
         working-directory: js-e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Wait for staging deploy
+        env:
+          STAGING_DEPLOY_WAIT_SECONDS: ${{ vars.STAGING_DEPLOY_WAIT_SECONDS }}
+        run: |
+          seconds="${STAGING_DEPLOY_WAIT_SECONDS:-90}"
+          echo "Waiting ${seconds}s to allow Railway staging deploy to restart the bot..."
+          sleep "${seconds}"
+
       - name: Restore Discord auth state
         working-directory: js-e2e
         env:
           DISCORD_AUTH_JSON_B64: ${{ secrets.DISCORD_AUTH_JSON_B64 }}
         run: |
-          test -n "$DISCORD_AUTH_JSON_B64"
+          if [ -z "$DISCORD_AUTH_JSON_B64" ]; then
+            echo "Missing GitHub Actions secret DISCORD_AUTH_JSON_B64."
+            echo "Create it by base64-encoding js-e2e/discord-auth.json and adding it as a repository secret."
+            exit 1
+          fi
           echo "$DISCORD_AUTH_JSON_B64" | base64 -d > discord-auth.json
           node -e "const fs=require('fs'); const p='discord-auth.json'; if(!fs.existsSync(p) || fs.statSync(p).size===0){ process.exit(1);}"
 
