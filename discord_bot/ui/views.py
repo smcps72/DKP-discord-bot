@@ -9,6 +9,7 @@ from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embe
 
 
 CHANGELOG_PATH = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
+CHANGELOG_DIR = Path(__file__).resolve().parents[2] / "changelog"
 
 FALLBACK_CHANGELOG_ENTRIES: dict[str, str] = {
     "Unreleased": "No changelog file was found.",
@@ -19,6 +20,46 @@ _CHANGELOG_CACHE: dict[str, object] = {
     "versions": [],
     "entries": {},
 }
+
+
+def _changelog_sort_key(version: str) -> tuple[int, int, int, int, int, str]:
+    if version == "Unreleased":
+        return (1_000_000, 0, 0, 10, 0, "")
+
+    m = re.match(
+        r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<tag>[0-9A-Za-z]+)\.(?P<num>\d+))?$",
+        version,
+    )
+    if not m:
+        return (0, 0, 0, 0, 0, version)
+
+    major = int(m.group("major"))
+    minor = int(m.group("minor"))
+    patch = int(m.group("patch"))
+    tag = (m.group("tag") or "").lower()
+    num = int(m.group("num") or 0)
+
+    tag_rank_map = {
+        "": 4,
+        "rc": 3,
+        "beta": 2,
+        "b": 2,
+        "alpha": 1,
+        "a": 1,
+    }
+    tag_rank = tag_rank_map.get(tag, 0)
+
+    return (major, minor, patch, tag_rank, num, tag)
+
+
+def _sort_changelog_versions(versions: list[str]) -> list[str]:
+    def key(v: str):
+        if v == "Unreleased":
+            return (-10_000_000, 0, 0, 0, 0, "")
+        k = _changelog_sort_key(v)
+        return (-k[0], -k[1], -k[2], -k[3], -k[4], k[5])
+
+    return sorted(versions, key=key)
 
 
 def _parse_changelog_markdown(raw: str) -> tuple[list[str], dict[str, str]]:
@@ -50,6 +91,43 @@ def _parse_changelog_markdown(raw: str) -> tuple[list[str], dict[str, str]]:
 
 
 def _load_changelog() -> tuple[list[str], dict[str, str]]:
+    if CHANGELOG_DIR.is_dir():
+        try:
+            files = sorted([p for p in CHANGELOG_DIR.glob("*.md") if p.is_file()])
+        except OSError:
+            files = []
+
+        if files:
+            try:
+                sig = tuple(sorted([(p.name, float(p.stat().st_mtime)) for p in files]))
+            except OSError:
+                sig = None
+
+            cached_mtime = _CHANGELOG_CACHE.get("mtime")
+            if cached_mtime == sig:
+                return (
+                    list(_CHANGELOG_CACHE.get("versions") or []),
+                    dict(_CHANGELOG_CACHE.get("entries") or {}),
+                )
+
+            entries: dict[str, str] = {}
+            versions: list[str] = []
+            for path in files:
+                version = path.stem
+                try:
+                    body = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                versions.append(version)
+                entries[version] = body.strip() or "No details provided."
+
+            versions = _sort_changelog_versions(versions)
+
+            _CHANGELOG_CACHE["mtime"] = sig
+            _CHANGELOG_CACHE["versions"] = list(versions)
+            _CHANGELOG_CACHE["entries"] = dict(entries)
+            return versions, entries
+
     try:
         stat = CHANGELOG_PATH.stat()
     except OSError:
@@ -88,20 +166,27 @@ def _get_default_changelog_version() -> str:
     return bot_version
 
 
-def _create_changelog_embed(version: str, entries: dict[str, str]) -> discord.Embed:
+def _create_changelog_embeds(version: str, entries: dict[str, str]) -> list[discord.Embed]:
     notes = entries.get(version)
     if not notes:
         notes = "No changelog entry is available for this version."
 
-    title = f"Changelog – v{version}" if version != "Unreleased" else "Changelog – Unreleased"
-    embed = create_info_embed(
-        title,
-        notes,
-    )
-    embed.set_footer(text=f"Current bot version: v{bot_version}")
-    if embed.description and len(embed.description) > 4096:
-        embed.description = embed.description[:4093] + "..."
-    return embed
+    base_title = f"Changelog – v{version}" if version != "Unreleased" else "Changelog – Unreleased"
+    chunks: list[str] = []
+    text = notes
+    while text:
+        chunks.append(text[:4000])
+        text = text[4000:]
+
+    embeds: list[discord.Embed] = []
+    total = len(chunks) if chunks else 1
+    for i, chunk in enumerate(chunks or [""], start=1):
+        title = base_title if total == 1 else f"{base_title} ({i}/{total})"
+        embed = create_info_embed(title, chunk)
+        embeds.append(embed)
+
+    embeds[-1].set_footer(text=f"Current bot version: v{bot_version}")
+    return embeds
 
 
 class ChangelogVersionSelect(Select):
@@ -138,8 +223,8 @@ class ChangelogVersionSelect(Select):
         for option in self.options:
             option.default = option.value == selected_version
 
-        embed = view.create_embed(selected_version)
-        await interaction.response.edit_message(embed=embed, view=view)
+        embeds = view.create_embeds(selected_version)
+        await interaction.response.edit_message(embeds=embeds, view=view)
 
 
 class ChangelogView(discord.ui.View):
@@ -154,8 +239,8 @@ class ChangelogView(discord.ui.View):
         self._entries = dict(entries)
         self.add_item(ChangelogVersionSelect(versions, default_version))
 
-    def create_embed(self, version: str) -> discord.Embed:
-        return _create_changelog_embed(version, self._entries)
+    def create_embeds(self, version: str) -> list[discord.Embed]:
+        return _create_changelog_embeds(version, self._entries)
 
     @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, row=1)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -384,11 +469,11 @@ class WelcomeView(discord.ui.View):
 
         default_version = bot_version if bot_version in allowed_versions else allowed_versions[0]
         view = ChangelogView(allowed_versions, entries, default_version)
-        embed = view.create_embed(default_version)
+        embeds = view.create_embeds(default_version)
         if content:
-            await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(content=content, embeds=embeds, view=view, ephemeral=True)
         else:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
 
 
 # -- ADMIN VIEWS --
