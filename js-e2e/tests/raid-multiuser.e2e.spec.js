@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { ai } from '@zerostep/playwright';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 
 // Load the shared .env from the project root, and allow it to override any
@@ -15,6 +16,10 @@ const SERVER = process.env.DISCORD_TEST_SERVER_NAME;
 const CHANNEL = process.env.DISCORD_TEST_CHANNEL_NAME;
 const USERNAME2 = (process.env.DISCORD_TEST_USERNAME_2 || 'sc_dkp2').trim();
 const VOICE_CHANNEL = (process.env.DISCORD_TEST_VOICE_CHANNEL_NAME || 'General').trim();
+const BOT_DM_NAME = (process.env.DISCORD_TEST_BOT_DM_NAME || 'DKP-local').trim();
+const STORAGE_STATE_1 = path.resolve(process.cwd(), 'discord-auth.json');
+const STORAGE_STATE_2 = path.resolve(process.cwd(), 'discord-auth-2.json');
+const REQUIRE_DM_FALLBACK = process.env.DISCORD_TEST_REQUIRE_DM_FALLBACK === '1';
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -24,6 +29,66 @@ function ensureMultiUserEnv() {
   if (!EMAIL1 || !PASSWORD1 || !EMAIL2 || !PASSWORD2 || !SERVER || !CHANNEL) {
     test.skip(true, 'Multi-user tests require DISCORD_TEST_EMAIL, DISCORD_TEST_PASSWORD, DISCORD_TEST_EMAIL_2, DISCORD_TEST_PASSWORD_2, DISCORD_TEST_SERVER_NAME, and DISCORD_TEST_CHANNEL_NAME.');
   }
+}
+
+function ensureSecondAuthState() {
+  if (!fs.existsSync(STORAGE_STATE_2)) {
+    test.skip(
+      true,
+      'discord-auth-2.json not found. Run DISCORD_SETUP_AUTH=1 DISCORD_AUTH_STATE_PATH=discord-auth-2.json npx playwright test tests/setup-discord-auth.spec.js --headed from js-e2e/ to create it (log in as your second test account).',
+    );
+  }
+}
+
+function getUserIdFromStorageState(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const origins = Array.isArray(parsed.origins) ? parsed.origins : [];
+    const discordOrigin = origins.find((o) => o && typeof o.origin === 'string' && /https:\/\/discord\.com/i.test(o.origin));
+    if (!discordOrigin || !Array.isArray(discordOrigin.localStorage)) return null;
+    const entry = discordOrigin.localStorage.find((kv) => kv && kv.name === 'user_id_cache');
+    if (!entry || typeof entry.value !== 'string') return null;
+    try {
+      return JSON.parse(entry.value);
+    } catch {
+      return entry.value.replace(/^"|"$/g, '') || null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function assertDifferentAccountsFromStorageState() {
+  if (!fs.existsSync(STORAGE_STATE_1) || !fs.existsSync(STORAGE_STATE_2)) return;
+  const id1 = getUserIdFromStorageState(STORAGE_STATE_1);
+  const id2 = getUserIdFromStorageState(STORAGE_STATE_2);
+  if (!id1 || !id2) return;
+  if (String(id1) === String(id2)) {
+    throw new Error(
+      'Both Playwright storageState files appear to be for the same Discord account. Regenerate BOTH auth states using fresh contexts.\n\n'
+        + 'User #1: DISCORD_SETUP_AUTH=1 DISCORD_AUTH_STATE_PATH=discord-auth.json npx playwright test tests/setup-discord-auth.spec.js --headed\n'
+        + 'User #2: DISCORD_SETUP_AUTH=1 DISCORD_AUTH_STATE_PATH=discord-auth-2.json npx playwright test tests/setup-discord-auth.spec.js --headed',
+    );
+  }
+}
+
+async function ensureLoggedIn(page) {
+  await page.goto('https://discord.com/app');
+  const loginHeading = page.getByRole('heading', { name: 'Welcome back!' });
+  if (await loginHeading.isVisible({ timeout: 5000 }).catch(() => false)) {
+    throw new Error(
+      'Discord login page detected. Run `DISCORD_SETUP_AUTH=1 npx playwright test tests/setup-discord-auth.spec.js --headed` from js-e2e/ to create discord-auth.json / discord-auth-2.json, then re-run the tests.',
+    );
+  }
+}
+
+async function openBotDm(page) {
+  await page.goto('https://discord.com/channels/@me');
+  const dmLink = page.getByRole('link', { name: new RegExp(escapeRegExp(BOT_DM_NAME), 'i') }).first();
+  await dmLink.waitFor({ state: 'visible', timeout: 45000 });
+  await dmLink.click();
+  await page.waitForTimeout(2000);
 }
 
 async function ensureDkpSetup(page) {
@@ -150,6 +215,8 @@ async function createRaidAndOpenLogThread(page, raidName) {
     const raidCreateOption = page.getByRole('option', { name: /\/raid_create/ }).first();
     await raidCreateOption.click();
     await messageBox.press('Enter');
+    await page.waitForTimeout(250);
+    await messageBox.press('Enter');
 
     try {
       await expect(modal).toBeVisible({ timeout: 15000 });
@@ -229,20 +296,20 @@ async function createRaidAndOpenLogThread(page, raidName) {
 }
 
 test('raid member list shows empty VC message when no one is in raid voice channel', async ({ page }) => {
-	if (!EMAIL1 || !PASSWORD1 || !SERVER || !CHANNEL) {
-		test.skip(true, 'DISCORD_TEST_EMAIL, DISCORD_TEST_PASSWORD, DISCORD_TEST_SERVER_NAME, and DISCORD_TEST_CHANNEL_NAME must be set.');
-	}
+  if (!EMAIL1 || !PASSWORD1 || !SERVER || !CHANNEL) {
+    test.skip(true, 'DISCORD_TEST_EMAIL, DISCORD_TEST_PASSWORD, DISCORD_TEST_SERVER_NAME, and DISCORD_TEST_CHANNEL_NAME must be set.');
+  }
 
-	const raidName = 'Playwright Raid Member Test';
+  const raidName = 'Playwright Raid Member Test';
 
-	await loginAndOpenChannel(page);
-	await createRaidAndOpenLogThread(page, raidName);
+  await loginAndOpenChannel(page);
+  await createRaidAndOpenLogThread(page, raidName);
 
-	// The raid log thread should now use automatic roster tracking and no longer
-	// includes the legacy "Update Team" button.
-	const joinButton = page.getByRole('button', { name: /^Join Raid$/ }).first();
-	await expect(joinButton).toBeVisible({ timeout: 45000 });
-	await expect(page.getByRole('button', { name: 'Update Team' })).toHaveCount(0);
+  // The raid log thread should now use automatic roster tracking and no longer
+  // includes the legacy "Update Team" button.
+  const joinButton = page.getByRole('button', { name: /^Join Raid$/ }).first();
+  await expect(joinButton).toBeVisible({ timeout: 45000 });
+  await expect(page.getByRole('button', { name: 'Update Team' })).toHaveCount(0);
 });
 
 test('award DKP dropdown supports typing and selecting another member', async ({ page }) => {
@@ -300,6 +367,114 @@ test('Join Raid button adds the user to the raid', async ({ page }) => {
 
   // The raid leader/admin is auto-approved; the bot posts a public join message.
   await expect(page.getByText('joined the raid', { exact: false }).first()).toBeVisible({ timeout: 20000 });
+});
+
+test('Join Raid sends approval request to leader via DM', async ({ page, browser }) => {
+  ensureMultiUserEnv();
+  ensureSecondAuthState();
+  assertDifferentAccountsFromStorageState();
+
+  const raidName = `Playwright Join Approval ${Date.now()}`;
+
+  await loginAndOpenChannel(page);
+  await ensureDkpSetup(page);
+  await joinAnyVoiceChannel(page);
+  await createRaidAndOpenLogThread(page, raidName);
+
+  const threadUrl = page.url();
+  const main = page.getByRole('main').first();
+
+  const threadPromptBefore = await main.getByText(/approve join request from/i).count();
+  const approveThreadBefore = await main.locator('button, [role="button"]').filter({ hasText: /^Approve$/i }).count();
+  const denyThreadBefore = await main.locator('button, [role="button"]').filter({ hasText: /^Deny$/i }).count();
+
+  await openBotDm(page);
+  const dmBefore = await page.getByText(/Join request from/i).count();
+
+  const raiderContext = await browser.newContext({ storageState: STORAGE_STATE_2 });
+  const raiderPage = await raiderContext.newPage();
+  await ensureLoggedIn(raiderPage);
+  await raiderPage.goto(threadUrl);
+
+  const openPanel = raiderPage.locator('button, [role="button"]').filter({ hasText: /Open Raid Control Panel/i }).first();
+  await expect(openPanel).toBeVisible({ timeout: 45000 });
+  await openPanel.click();
+
+  const joinButton = raiderPage.locator('button, [role="button"]').filter({ hasText: /^Join Raid$/i }).first();
+  await expect(joinButton).toBeVisible({ timeout: 45000 });
+  await joinButton.click();
+
+  await expect(
+    raiderPage.getByText('Join request sent to the raid leader for approval.', { exact: false }).first(),
+  ).toBeVisible({ timeout: 30000 });
+
+  await openBotDm(page);
+  await expect.poll(async () => page.getByText(/Join request from/i).count(), { timeout: 45000 }).toBeGreaterThan(dmBefore);
+  await expect(page.locator('button, [role="button"]').filter({ hasText: /^Approve$/i }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('button, [role="button"]').filter({ hasText: /^Deny$/i }).first()).toBeVisible({ timeout: 15000 });
+
+  await page.goto(threadUrl);
+  await page.waitForTimeout(4000);
+
+  const mainAfter = page.getByRole('main').first();
+  const threadPromptAfter = await mainAfter.getByText(/approve join request from/i).count();
+  expect(threadPromptAfter).toBe(threadPromptBefore);
+
+  const approveThreadAfter = await mainAfter.locator('button, [role="button"]').filter({ hasText: /^Approve$/i }).count();
+  const denyThreadAfter = await mainAfter.locator('button, [role="button"]').filter({ hasText: /^Deny$/i }).count();
+  expect(approveThreadAfter).toBe(approveThreadBefore);
+  expect(denyThreadAfter).toBe(denyThreadBefore);
+
+  await raiderContext.close();
+});
+
+test('Join Raid falls back to thread when leader DMs are blocked', async ({ page, browser }) => {
+  ensureMultiUserEnv();
+  ensureSecondAuthState();
+  assertDifferentAccountsFromStorageState();
+  if (!REQUIRE_DM_FALLBACK) {
+    test.skip(true, 'Set DISCORD_TEST_REQUIRE_DM_FALLBACK=1 after manually blocking bot DMs to enable this test.');
+  }
+
+  const raidName = `Playwright Join Approval Fallback ${Date.now()}`;
+
+  await loginAndOpenChannel(page);
+  await ensureDkpSetup(page);
+  await joinAnyVoiceChannel(page);
+  await createRaidAndOpenLogThread(page, raidName);
+
+  const threadUrl = page.url();
+  const main = page.getByRole('main').first();
+
+  await openBotDm(page);
+  const dmBefore = await page.getByText(/Join request from/i).count();
+
+  const raiderContext = await browser.newContext({ storageState: STORAGE_STATE_2 });
+  const raiderPage = await raiderContext.newPage();
+  await ensureLoggedIn(raiderPage);
+  await raiderPage.goto(threadUrl);
+
+  const openPanel = raiderPage.locator('button, [role="button"]').filter({ hasText: /Open Raid Control Panel/i }).first();
+  await expect(openPanel).toBeVisible({ timeout: 45000 });
+  await openPanel.click();
+
+  const joinButton = raiderPage.locator('button, [role="button"]').filter({ hasText: /^Join Raid$/i }).first();
+  await expect(joinButton).toBeVisible({ timeout: 45000 });
+  await joinButton.click();
+
+  await expect(
+    raiderPage.getByText('Join request sent to the raid leader for approval.', { exact: false }).first(),
+  ).toBeVisible({ timeout: 30000 });
+
+  await page.goto(threadUrl);
+  await page.waitForTimeout(4000);
+  await expect(page.getByText(/approve join request from/i).first()).toBeVisible({ timeout: 30000 });
+
+  await openBotDm(page);
+  const dmAfter = await page.getByText(/Join request from/i).count();
+  expect(dmAfter).toBe(dmBefore);
+
+  await raiderContext.close();
 });
 
 test('Rename Thread button opens modal and renames the raid log thread', async ({ page }) => {
