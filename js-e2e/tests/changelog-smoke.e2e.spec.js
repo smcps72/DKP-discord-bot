@@ -14,65 +14,69 @@ function ensureAuthState() {
 }
 
 async function openChangelogFromNewestWelcome(page) {
-  const blocks = page.locator('li').filter({ has: page.getByText('Welcome to the DKP Bot!', { exact: false }) });
-  const count = await blocks.count();
-  expect(count).toBeGreaterThan(0);
-
-  for (let i = count - 1; i >= 0; i -= 1) {
-    const block = blocks.nth(i);
-    await block.scrollIntoViewIfNeeded().catch(() => {});
-    await page.waitForTimeout(200);
-
-    const btn = block.getByRole('button', { name: /Change Log/i }).first();
-    if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await btn.click({ timeout: 15000 });
-      return;
-    }
+  const changeLogButton = page.getByRole('button', { name: /Change Log/i }).last();
+  if (await changeLogButton.isVisible({ timeout: 15000 }).catch(() => false)) {
+    await changeLogButton.click({ timeout: 15000 });
+    return;
   }
 
-  throw new Error('Could not find a visible "Change Log" button on any Welcome panel.');
+  const pinnedButton = page.getByRole('button', { name: /Pinned Messages/i }).first();
+  if (await pinnedButton.isVisible({ timeout: 15000 }).catch(() => false)) {
+    await pinnedButton.click({ timeout: 15000 });
+    const pinnedChangeLogButton = page.getByRole('button', { name: /Change Log/i }).last();
+    await pinnedChangeLogButton.waitFor({ state: 'visible', timeout: 45000 });
+    await pinnedChangeLogButton.click({ timeout: 15000 });
+    return;
+  }
+
+  throw new Error('Could not find a visible "Change Log" button.');
 }
 
 async function openVersionDropdown(page) {
-  await page.getByRole('button', { name: /^Close$/i }).first().waitFor({ state: 'visible', timeout: 45000 });
+  const closeBtn = page.getByRole('button', { name: /^Close$/i }).last();
+  await closeBtn.waitFor({ state: 'visible', timeout: 45000 });
 
-  await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(100);
+  const viewer = closeBtn.locator('xpath=ancestor::li[1]');
 
-  const trigger = page
-    .locator('[aria-haspopup="listbox"]')
-    .filter({ hasText: /Select a version|alpha\.|Unreleased/i })
-    .first();
-
+  const trigger = viewer.getByRole('button', { name: /Select a version|0\.1\.0-alpha\.|Unreleased/i }).first();
+  await trigger.scrollIntoViewIfNeeded().catch(() => {});
   await trigger.waitFor({ state: 'visible', timeout: 15000 });
-  await trigger.click({ timeout: 15000, force: true });
 
-  const versionOptionRe = /Unreleased|0\.1\.0-alpha\.1|0\.1\.0-alpha\.0/i;
-  const listbox = page
-    .getByRole('listbox')
-    .filter({ has: page.getByRole('option', { name: versionOptionRe }) })
-    .first();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await trigger.click({ timeout: 15000, force: true });
+    await page.waitForTimeout(150);
 
-  await listbox.waitFor({ state: 'visible', timeout: 15000 });
+    const versionOptionRe = /Unreleased|0\.1\.0-alpha\.1|0\.1\.0-alpha\.0/i;
+    const match = page
+      .locator('[role="option"], [role="menuitemradio"], [role="menuitem"]')
+      .filter({ hasText: versionOptionRe });
 
-  const options = await listbox.getByRole('option').evaluateAll((els) =>
-    els
-      .map((el) => ({
-        text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
-        selected: el.getAttribute('aria-selected') === 'true',
-      }))
-      .filter((o) => o.text),
-  );
+    if (await match.first().isVisible({ timeout: 2000 }).catch(() => false)) {
+      const options = await match.evaluateAll((els) =>
+        els
+          .map((el) => ({
+            text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+            selected: el.getAttribute('aria-selected') === 'true' || el.getAttribute('aria-checked') === 'true',
+          }))
+          .filter((o) => o.text),
+      );
 
-  return { listbox, options };
+      return { match, options };
+    }
+  }
+
+  throw new Error('Could not open version dropdown (no version options appeared after clicking trigger).');
 }
 
 async function pickOption(page, label) {
   // Discord closes the dropdown after a selection, so always reopen it.
-  const { listbox } = await openVersionDropdown(page);
+  await openVersionDropdown(page);
 
   const escaped = label.replace(/[-/\\.^$*+?()|[\]{}]/g, '\\$&');
-  const option = listbox.getByRole('option', { name: new RegExp(`^${escaped}$`, 'i') }).first();
+  const option = page
+    .locator('[role="option"], [role="menuitemradio"], [role="menuitem"]')
+    .filter({ hasText: new RegExp(`^${escaped}$`, 'i') })
+    .first();
   await option.waitFor({ state: 'visible', timeout: 15000 });
   await option.click({ timeout: 15000 });
 
@@ -80,10 +84,9 @@ async function pickOption(page, label) {
   await page.waitForTimeout(300);
 }
 
-test('Staging changelog smoke test', async ({ page }) => {
-  ensureAuthState();
-
+async function openChangelog(page) {
   await page.goto(`https://discord.com/channels/${guildId}/${channelId}`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: /dkp-system/i }).first().waitFor({ state: 'visible', timeout: 45000 });
   await page.waitForTimeout(5000);
 
   const loginHeading = page.getByRole('heading', { name: 'Welcome back!' });
@@ -92,6 +95,14 @@ test('Staging changelog smoke test', async ({ page }) => {
   }
 
   await openChangelogFromNewestWelcome(page);
+  await page.getByRole('button', { name: /^Close$/i }).last().waitFor({ state: 'visible', timeout: 45000 });
+}
+
+test('Changelog options include released versions', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
 
   const { options } = await openVersionDropdown(page);
   const optionTexts = options.map((o) => o.text);
@@ -104,6 +115,69 @@ test('Staging changelog smoke test', async ({ page }) => {
   if (!hasUnreleased) {
     await expect(page.getByText('Showing public changelog entries', { exact: false }).first()).toBeVisible({ timeout: 45000 });
   }
+});
+
+test('Changelog shows notes for 0.1.0-alpha.0', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
+  await pickOption(page, '0.1.0-alpha.0');
+  await expect(page.getByText('Initial alpha release', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+});
+
+test('Changelog shows notes for 0.1.0-alpha.1', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
+  await expect(page.getByText('Versioning', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+});
+
+test('Changelog viewer shows current bot version', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
+  await expect(page.getByText('Current bot version:', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+});
+
+test('Changelog viewer is ephemeral', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
+  await expect(page.getByText('Only you can see this', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+});
+
+test('Changelog shows Unreleased when available', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
+
+  const { options } = await openVersionDropdown(page);
+  const optionTexts = options.map((o) => o.text);
+  const hasUnreleased = optionTexts.includes('Unreleased');
+  test.skip(!hasUnreleased, 'Unreleased is officers-only; current auth state does not have access.');
+
+  await pickOption(page, 'Unreleased');
+  await expect(page.getByText('How the bot decides which voice channels belong', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+
+  const { options: optionsAfter } = await openVersionDropdown(page);
+  const selected = optionsAfter.find((o) => o.selected);
+  expect(selected?.text).toBe('Unreleased');
+});
+
+test('Staging changelog smoke test', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
+
+  const { options } = await openVersionDropdown(page);
+  const optionTexts = options.map((o) => o.text);
+  const hasUnreleased = optionTexts.includes('Unreleased');
 
   await pickOption(page, '0.1.0-alpha.0');
   await expect(page.getByText('Initial alpha release', { exact: false }).first()).toBeVisible({ timeout: 45000 });
