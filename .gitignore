@@ -3,6 +3,7 @@
 /.env.backup
 /secrets/.env.local
 venv/
+.venv-docs/
 __pycache__/
 *.pyc
 *.pyo
@@ -14,6 +15,7 @@ dkp_bot.db
 js-e2e/node_modules
 js-e2e/discord-auth.json
 js-e2e/discord-auth*.json
+js-e2e/.tmp-*.png
 js-e2e/test-results/
 backups
 test-results/
@@ -21,4 +23,5 @@ test-results/
 bandit-report.json
 audit-report.json
 Documentation/dont_commit/
+site/
 # Local notes / scratch files
