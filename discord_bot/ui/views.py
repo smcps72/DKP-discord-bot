@@ -475,6 +475,24 @@ class WelcomeView(discord.ui.View):
         else:
             await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
 
+    @discord.ui.button(
+        label="Docs 📚",
+        style=discord.ButtonStyle.primary,
+        custom_id="welcome_docs",
+        row=1,
+    )
+    async def docs(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        docs_cog = self.bot.get_cog("DocsCog")
+        if docs_cog and hasattr(docs_cog, "show_docs"):
+            await docs_cog.show_docs(interaction)
+        else:
+            await interaction.followup.send("Docs module is currently offline.", ephemeral=True)
+
 
 # -- ADMIN VIEWS --
 
@@ -749,9 +767,13 @@ class RaidControlView(discord.ui.View):
 
         try:
             if isinstance(interaction.channel, discord.Thread):
-                posted_in_thread = False
                 # Send the approval request as a DM to the raid leader only
                 leader_member = interaction.guild.get_member(leader_id)
+                if leader_member is None:
+                    try:
+                        leader_member = await interaction.guild.fetch_member(leader_id)
+                    except Exception:
+                        leader_member = None
                 if leader_member:
                     try:
                         await leader_member.send(
@@ -759,27 +781,18 @@ class RaidControlView(discord.ui.View):
                             view=RaidJoinApprovalView(self.bot, raid_id, user_id),
                         )
                     except discord.Forbidden:
-                        # If DMs are disabled, send in thread but the view will handle authorization
+                        # If DMs are disabled, fall back to posting the approval UI
+                        # in the raid thread.
                         await interaction.channel.send(
                             f"{leader_mention} approve join request from {interaction.user.mention}?",
                             view=RaidJoinApprovalView(self.bot, raid_id, user_id),
                         )
-                        posted_in_thread = True
                 else:
                     # Leader not found, fall back to thread message
                     await interaction.channel.send(
                         f"{leader_mention} approve join request from {interaction.user.mention}?",
                         view=RaidJoinApprovalView(self.bot, raid_id, user_id),
                     )
-                    posted_in_thread = True
-                try:
-                    if not posted_in_thread:
-                        await interaction.channel.send(
-                            f"{leader_mention} approve join request from {interaction.user.mention}?",
-                            view=RaidJoinApprovalView(self.bot, raid_id, user_id),
-                        )
-                except Exception:
-                    logging.exception("Failed to post join approval request in raid thread")
         except Exception:
             logging.exception("Failed to send join approval request")
 
@@ -1188,10 +1201,11 @@ class RaidJoinApprovalView(discord.ui.View):
 
         admin_ok = await is_admin(interaction)
         if int(interaction.user.id) != int(raid_row["leader_id"]) and not admin_ok:
-            await interaction.response.send_message(
-                "Only the raid leader (or a bot admin) can approve join requests.",
-                ephemeral=True,
-            )
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.defer()
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
             return False
 
         return True

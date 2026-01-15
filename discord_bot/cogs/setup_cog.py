@@ -403,5 +403,102 @@ class SetupCog(commands.Cog):
             return
         await self.run_setup(interaction.guild, interaction=interaction)
 
+    @app_commands.command(
+        name="refresh_welcome",
+        description="Refresh the pinned DKP welcome panel message (updates buttons). Admins only.",
+    )
+    @app_commands.check(is_admin)
+    async def refresh_welcome(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.NotFound, discord.HTTPException):
+            return
+
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        dkp_channel_id = None
+        if config and ("dkp_channel_id" in getattr(config, "keys", lambda: [])()):
+            dkp_channel_id = config["dkp_channel_id"]
+
+        if not dkp_channel_id:
+            return await interaction.followup.send(
+                "DKP system is not set up yet. Run `/setup_dkp` first.",
+                ephemeral=True,
+            )
+
+        channel = interaction.guild.get_channel(int(dkp_channel_id))
+        if channel is None:
+            try:
+                channel = await interaction.guild.fetch_channel(int(dkp_channel_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                channel = None
+
+        if channel is None or not hasattr(channel, "send"):
+            return await interaction.followup.send(
+                "Couldn't find the DKP system channel. Try re-running `/setup_dkp`.",
+                ephemeral=True,
+            )
+
+        embed = create_info_embed(
+            "Welcome to the DKP Bot!",
+            "This bot helps you manage your guild's Dragon Kill Points system right here in Discord.\n\n"
+            "**Buttons:**\n"
+            "\t **Create Raid:** Starts a new raid tied to your current voice channel and creates a raid log thread.\n"
+            "\t **My DKP:** Privately check your current DKP balance.\n"
+            "\t **Auction Help:** Get information on how bidding works.\n"
+            "\t **Admin:** (Admins Only) Configure the bot settings.",
+        )
+        view = WelcomeView(self.bot)
+
+        target = None
+        try:
+            pins = await channel.pins()
+        except Exception:
+            pins = []
+
+        for msg in list(pins or []):
+            try:
+                if self.bot.user is None:
+                    continue
+                if msg.author is None or msg.author.id != self.bot.user.id:
+                    continue
+                for emb in list(getattr(msg, "embeds", []) or []):
+                    if (getattr(emb, "title", None) or "").strip() == "Welcome to the DKP Bot!":
+                        target = msg
+                        break
+                if target:
+                    break
+            except Exception:
+                continue
+
+        try:
+            if target is not None:
+                await target.edit(embed=embed, view=view)
+                msg = target
+            else:
+                msg = await channel.send(embed=embed, view=view)
+                try:
+                    await msg.pin()
+                except Exception:
+                    pass
+        except discord.Forbidden:
+            return await interaction.followup.send(
+                "I don't have permission to post or edit the welcome panel in that channel.",
+                ephemeral=True,
+            )
+        except Exception:
+            logging.exception("Failed to refresh welcome panel")
+            return await interaction.followup.send(
+                "Failed to refresh the welcome panel. Check logs.",
+                ephemeral=True,
+            )
+
+        return await interaction.followup.send(
+            f"Welcome panel refreshed: {getattr(msg, 'jump_url', '')}",
+            ephemeral=True,
+        )
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(SetupCog(bot))
