@@ -1,0 +1,54 @@
+name: staging-smoke
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+jobs:
+  staging-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install JS deps
+        working-directory: js-e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: js-e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Restore Discord auth state
+        working-directory: js-e2e
+        env:
+          DISCORD_AUTH_JSON_B64: ${{ secrets.DISCORD_AUTH_JSON_B64 }}
+        run: |
+          test -n "$DISCORD_AUTH_JSON_B64"
+          echo "$DISCORD_AUTH_JSON_B64" | base64 -d > discord-auth.json
+          node -e "const fs=require('fs'); const p='discord-auth.json'; if(!fs.existsSync(p) || fs.statSync(p).size===0){ process.exit(1);}"
+
+      - name: Run Playwright changelog smoke test
+        working-directory: js-e2e
+        env:
+          DISCORD_TEST_GUILD_ID: ${{ vars.DISCORD_TEST_GUILD_ID }}
+          DISCORD_TEST_CHANNEL_ID: ${{ vars.DISCORD_TEST_CHANNEL_ID }}
+        run: npx playwright test tests/changelog-smoke.e2e.spec.js
