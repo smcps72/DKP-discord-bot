@@ -64,4 +64,9 @@ jobs:
         env:
           DISCORD_TEST_GUILD_ID: ${{ vars.DISCORD_TEST_GUILD_ID }}
           DISCORD_TEST_CHANNEL_ID: ${{ vars.DISCORD_TEST_CHANNEL_ID }}
+          QASE_MODE: ${{ secrets.QASE_TESTOPS_API_TOKEN && 'testops' || 'off' }}
+          QASE_TESTOPS_PROJECT: DKP
+          QASE_TESTOPS_API_TOKEN: ${{ secrets.QASE_TESTOPS_API_TOKEN }}
+          QASE_TESTOPS_RUN_TITLE: "staging-smoke #${{ github.run_number }} (${{ github.sha }})"
+          QASE_TESTOPS_RUN_DESCRIPTION: "GitHub Actions run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         run: npx playwright test tests/changelog-smoke.e2e.spec.js

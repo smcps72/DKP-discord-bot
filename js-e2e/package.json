@@ -9,6 +9,7 @@
   "devDependencies": {
     "@playwright/test": "1.57.0",
     "@zerostep/playwright": "latest",
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "playwright-qase-reporter": "2.1.7"
   }
 }
