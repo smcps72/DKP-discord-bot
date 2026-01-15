@@ -90,9 +90,14 @@ test('Staging changelog smoke test', async ({ page }) => {
   const { options } = await openVersionDropdown(page);
   const optionTexts = options.map((o) => o.text);
 
-  expect(optionTexts).toContain('Unreleased');
+  // Unreleased is officers-only; depending on the auth state used in CI,
+  // it may or may not be present.
   expect(optionTexts).toContain('0.1.0-alpha.1');
   expect(optionTexts).toContain('0.1.0-alpha.0');
+  const hasUnreleased = optionTexts.includes('Unreleased');
+  if (!hasUnreleased) {
+    await expect(page.getByText('Showing public changelog entries', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+  }
 
   await pickOption(page, '0.1.0-alpha.0');
   await expect(page.getByText('Initial alpha release', { exact: false }).first()).toBeVisible({ timeout: 45000 });
@@ -100,12 +105,18 @@ test('Staging changelog smoke test', async ({ page }) => {
   await pickOption(page, '0.1.0-alpha.1');
   await expect(page.getByText('Versioning', { exact: false }).first()).toBeVisible({ timeout: 45000 });
 
-  await pickOption(page, 'Unreleased');
-  await expect(
-    page.getByText('How the bot decides which voice channels belong', { exact: false }).first(),
-  ).toBeVisible({ timeout: 45000 });
+  if (hasUnreleased) {
+    await pickOption(page, 'Unreleased');
+    await expect(
+      page.getByText('How the bot decides which voice channels belong', { exact: false }).first(),
+    ).toBeVisible({ timeout: 45000 });
 
-  const { options: optionsAfter } = await openVersionDropdown(page);
-  const selected = optionsAfter.find((o) => o.selected);
-  expect(selected?.text).toBe('Unreleased');
+    const { options: optionsAfter } = await openVersionDropdown(page);
+    const selected = optionsAfter.find((o) => o.selected);
+    expect(selected?.text).toBe('Unreleased');
+  } else {
+    const { options: optionsAfter } = await openVersionDropdown(page);
+    const selected = optionsAfter.find((o) => o.selected);
+    expect(selected?.text).toBe('0.1.0-alpha.1');
+  }
 });
