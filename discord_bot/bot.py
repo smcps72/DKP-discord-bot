@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from discord import app_commands, HTTPException
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+
 # Fix for 'RuntimeError: Event loop is closed' on Windows
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -19,12 +21,6 @@ if sys.platform == "win32":
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from discord_bot.database import Database, DB_FILE
-from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, RaidControlView, AuctionOpenPanelView, RaidOpenPanelView
-from discord_bot.utils import ensure_allowed_guild, create_info_embed
-from discord_bot.analytics import Analytics
-from discord_bot import __version__
-
 # --- Environment Variable Loading ---
 # The bot will look for the .env file in the project root.
 dotenv_paths = [
@@ -34,28 +30,43 @@ dotenv_paths = [
 ]
 
 dotenv_loaded = False
-if os.getenv("DISCORD_BOT_TOKEN"):
-    print("INFO: DISCORD_BOT_TOKEN is set in the environment; skipping dotenv file loading.")
-else:
-    for dotenv_path in dotenv_paths:
-        if dotenv_path.exists():
-            print(f"INFO: Loading environment from {dotenv_path}")
-            try:
-                load_dotenv(dotenv_path=dotenv_path, override=False)
-                dotenv_loaded = True
-                break
-            except Exception as e:
-                print(
-                    f"WARNING: Failed to load environment from {dotenv_path}: {e}. Relying on system environment variables."
-                )
+for dotenv_path in dotenv_paths:
+    if dotenv_path.exists():
+        logging.info(f"Loading environment from {dotenv_path}")
+        try:
+            load_dotenv(dotenv_path=dotenv_path, override=False)
+            dotenv_loaded = True
+            break
+        except Exception as e:
+            logging.warning(
+                f"Failed to load environment from {dotenv_path}: {e}. Relying on system environment variables."
+            )
 
-if not os.getenv("DISCORD_BOT_TOKEN") and not dotenv_loaded:
-    print(
-        "WARNING: No secrets/.env.local, .env.local, or .env file found (or they failed to load). Relying on system environment variables."
+if not dotenv_loaded:
+    logging.warning(
+        "No secrets/.env.local, .env.local, or .env file found (or they failed to load). Relying on system environment variables."
     )
 
-# --- Logging Setup ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+from discord_bot.database import Database, DB_FILE
+from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, RaidControlView, AuctionOpenPanelView, RaidOpenPanelView
+from discord_bot.utils import ensure_allowed_guild, create_info_embed
+from discord_bot.analytics import Analytics
+from discord_bot import __version__
+
+try:
+    resolved_db = str(Path(DB_FILE).expanduser().resolve())
+except Exception:
+    resolved_db = str(DB_FILE)
+logging.info(
+    "Bot environment identity: cwd=%s db_file=%s db_file_resolved=%s railway_env=%s railway_service=%s test_guild=%s allowed_guild_ids=%s",
+    os.getcwd(),
+    str(DB_FILE),
+    resolved_db,
+    os.getenv("RAILWAY_ENVIRONMENT_NAME") or os.getenv("RAILWAY_ENVIRONMENT") or "",
+    os.getenv("RAILWAY_SERVICE_NAME") or "",
+    os.getenv("TEST_GUILD_ID") or "",
+    os.getenv("ALLOWED_GUILD_IDS") or "",
+)
 
 # --- Load Environment Variables ---
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
