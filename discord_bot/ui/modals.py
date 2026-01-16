@@ -221,6 +221,45 @@ class RaidCreateModal(Modal, title="Create New Raid"):
         await self.raid_cog.create_raid_with_name(interaction, raid_name)
 
 
+class RaidGroupCountModal(Modal, title="Set Raid Groups"):
+    def __init__(self, raid_cog):
+        super().__init__()
+        self.raid_cog = raid_cog
+
+        self.group_count = TextInput(
+            label="How many groups?",
+            placeholder="e.g., 2",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=2,
+        )
+        self.add_item(self.group_count)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = (self.group_count.value or "").strip()
+        try:
+            count = int(raw)
+        except ValueError:
+            return await interaction.response.send_message(
+                "Group count must be a whole number.",
+                ephemeral=True,
+            )
+
+        if count < 1 or count > 20:
+            return await interaction.response.send_message(
+                "Group count must be between 1 and 20.",
+                ephemeral=True,
+            )
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
+
+        await self.raid_cog.configure_raid_groups(interaction, count)
+
+
 class AuctionStartModal(Modal, title="Start New Auction"):
     def __init__(self, auction_cog):
         super().__init__()

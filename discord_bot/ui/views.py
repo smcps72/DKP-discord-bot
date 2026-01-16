@@ -2,7 +2,7 @@ import discord
 import logging
 import re
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embed
@@ -775,6 +775,78 @@ class AdminPanelView(discord.ui.View):
         )
 
 
+class RaidGroupJoinSelect(discord.ui.Select):
+    def __init__(self, bot, raid_id: int, group_count: int):
+        self.bot = bot
+        self.raid_id = int(raid_id)
+        self.group_count = int(group_count)
+
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(label=f"Group {i}", value=str(i)) for i in range(1, self.group_count + 1)
+        ]
+        options.append(discord.SelectOption(label="Ungrouped", value="0"))
+
+        super().__init__(
+            placeholder="Select a group...",
+            min_values=1,
+            max_values=1,
+            options=options[:25],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await ensure_allowed_guild(interaction):
+            return
+
+        user_id = int(getattr(interaction.user, "id", 0) or 0)
+        if not user_id:
+            return await interaction.response.send_message("Could not resolve your user.", ephemeral=True)
+
+        try:
+            is_member = await self.bot.db.is_raid_member(self.raid_id, user_id)
+        except Exception:
+            is_member = False
+        if not is_member:
+            return await interaction.response.send_message(
+                "You must join the raid before picking a group.",
+                ephemeral=True,
+            )
+
+        raw = (self.values[0] or "").strip()
+        try:
+            selected = int(raw)
+        except ValueError:
+            selected = 0
+
+        group_number = None if selected == 0 else selected
+        if group_number is not None and (group_number < 1 or group_number > self.group_count):
+            return await interaction.response.send_message(
+                "That group is no longer available. Please try again.",
+                ephemeral=True,
+            )
+
+        try:
+            await self.bot.db.set_raid_member_group(self.raid_id, user_id, group_number)
+        except Exception:
+            return await interaction.response.send_message(
+                "Failed to update your group. Please try again.",
+                ephemeral=True,
+            )
+
+        if group_number is None:
+            return await interaction.response.send_message("You are now ungrouped.", ephemeral=True)
+        return await interaction.response.send_message(
+            f"You joined **Group {group_number}**.",
+            ephemeral=True,
+        )
+
+
+class RaidGroupJoinView(discord.ui.View):
+    def __init__(self, bot, raid_id: int, group_count: int):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.add_item(RaidGroupJoinSelect(bot, raid_id, group_count))
+
+
 class RaidControlView(discord.ui.View):
     def __init__(self, bot, show_leader_buttons: bool = True, show_rename_thread_button: bool = True):
         super().__init__(timeout=None)
@@ -794,6 +866,7 @@ class RaidControlView(discord.ui.View):
                 "raid_update_team",
                 "raid_sync_voice",
                 "raid_remove_raider",
+                "raid_configure_groups",
                 "raid_start_auction",
                 "raid_end_auction",
                 "raid_close_raid",
@@ -828,6 +901,7 @@ class RaidControlView(discord.ui.View):
         if interaction.type != discord.InteractionType.modal_submit and custom_id not in (
             "raid_add_rule",
             "raid_start_auction",
+            "raid_configure_groups",
             "raid_rename_thread",
         ):
             # Only defer if the interaction hasn't already been acknowledged
@@ -851,6 +925,7 @@ class RaidControlView(discord.ui.View):
             "raid_leave_raid",
             "raid_help",
             "raid_show_groups",
+            "raid_join_group",
             "raid_voice_roster",
         ):
             return True
@@ -1201,6 +1276,41 @@ class RaidControlView(discord.ui.View):
         if not raid_cog:
             return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
         await raid_cog.show_raid_groups(interaction)
+
+    @discord.ui.button(label="Join Group", style=discord.ButtonStyle.secondary, custom_id="raid_join_group", row=3)
+    async def join_group(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        try:
+            group_count = await self.bot.db.get_raid_group_count(int(raid["id"]))
+        except Exception:
+            group_count = None
+
+        if not group_count:
+            return await interaction.followup.send(
+                "Raid groups have not been configured yet.",
+                ephemeral=True,
+            )
+
+        view = RaidGroupJoinView(self.bot, int(raid["id"]), int(group_count))
+        return await interaction.followup.send("Select your group:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Group", style=discord.ButtonStyle.secondary, custom_id="raid_configure_groups", row=3)
+    async def configure_groups(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+
+        modal = RaidGroupCountModal(raid_cog)
+        try:
+            await interaction.response.send_modal(modal)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            try:
+                await interaction.followup.send("Please try again.", ephemeral=True)
+            except Exception:
+                pass
 
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
