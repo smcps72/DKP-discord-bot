@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from typing import Literal
+import os
+from pathlib import Path
 from .. import __version__
 from ..utils import is_admin, is_officer, create_info_embed
 from ..ui.modals import AdminDKPAdjustModal
@@ -18,12 +20,41 @@ class AdminCog(commands.Cog):
         config = await self.bot.db.get_guild_config(guild_id)
         license_status = config['license_status'].capitalize() if config else "Unknown"
         active_raids_count = await self.bot.db.fetchone("SELECT COUNT(*) as count FROM raids WHERE guild_id = ? AND is_active = 1", (guild_id,))
+
+        bot_user = getattr(self.bot, "user", None)
+        bot_user_id = getattr(bot_user, "id", None)
+
+        db_file = getattr(getattr(self.bot, "db", None), "db_file", None)
+        resolved_db = None
+        if db_file:
+            try:
+                resolved_db = str(Path(str(db_file)).expanduser().resolve())
+            except Exception:
+                resolved_db = str(db_file)
+
+        railway_env = os.getenv("RAILWAY_ENVIRONMENT_NAME") or os.getenv("RAILWAY_ENVIRONMENT")
+        railway_service = os.getenv("RAILWAY_SERVICE_NAME")
+
+        env_lines: list[str] = []
+        if bot_user_id:
+            env_lines.append(f"• **Bot User ID:** `{bot_user_id}`")
+        if db_file:
+            env_lines.append(f"• **DB File:** `{db_file}`")
+        if resolved_db and resolved_db != str(db_file):
+            env_lines.append(f"• **DB File (resolved):** `{resolved_db}`")
+        if railway_env:
+            env_lines.append(f"• **Railway Env:** `{railway_env}`")
+        if railway_service:
+            env_lines.append(f"• **Railway Service:** `{railway_service}`")
+
+        extra = ("\n" + "\n".join(env_lines)) if env_lines else ""
         return create_info_embed(
             "Bot Status",
             f"• **Version:** `{__version__}`\n"
             f"• **Discord API:** {self.bot.latency*1000:.2f}ms\n"
             f"• **Subscription:** `{license_status}`\n"
             f"• **Active Raids:** {active_raids_count['count']}"
+            f"{extra}"
         )
 
     @app_commands.command(name="status", description="Check the bot's operational status.")

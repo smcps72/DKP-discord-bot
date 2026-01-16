@@ -7,7 +7,14 @@ import asyncio
 # production deployments (e.g., Railway) can store the SQLite file on a
 # persistent volume. Locally, this will continue to default to "dkp_bot.db"
 # in the current working directory.
-DB_FILE = os.getenv("DKP_DB_FILE", "dkp_bot.db")
+_railway_env = os.getenv("RAILWAY_ENVIRONMENT_NAME") or os.getenv("RAILWAY_ENVIRONMENT")
+if os.getenv("DKP_DB_FILE"):
+    DB_FILE = os.getenv("DKP_DB_FILE", "dkp_bot.db")
+elif _railway_env:
+    safe_env = "".join([c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(_railway_env)])
+    DB_FILE = f"dkp_bot_{safe_env}.db"
+else:
+    DB_FILE = "dkp_bot.db"
 
 class Database:
     def __init__(self, db_file):
