@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- No unreleased notes yet.
+
+## 0.1.0-alpha.2
+
+- Added an **Open DKP Panel** button which opens a per-user **ephemeral** panel for common actions.
+- Added an in-bot docs viewer backed by `Documentation/*.md` (admin-only).
+- Added optional PostHog analytics instrumentation (disabled unless `POSTHOG_API_KEY` is set).
+- Added staging Playwright smoke tests for the changelog UI and improved CI reporting.
+- Added guidance for linked raid voice channels and "Sync Voice" behavior.
+
 ## 0.1.0-alpha.1
 
 - Added a Change Log button to the welcome panel with an ephemeral changelog viewer.
