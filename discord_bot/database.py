@@ -8,13 +8,41 @@ import asyncio
 # persistent volume. Locally, this will continue to default to "dkp_bot.db"
 # in the current working directory.
 _railway_env = os.getenv("RAILWAY_ENVIRONMENT_NAME") or os.getenv("RAILWAY_ENVIRONMENT")
-if os.getenv("DKP_DB_FILE"):
-    DB_FILE = os.getenv("DKP_DB_FILE", "dkp_bot.db")
+_railway_service = os.getenv("RAILWAY_SERVICE_NAME")
+_db_dir = os.getenv("DKP_DB_DIR")
+if _db_dir:
+    try:
+        os.makedirs(_db_dir, exist_ok=True)
+    except Exception:
+        pass
+
+_safe_env = "".join([c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(_railway_env)]) if _railway_env else ""
+_safe_service = "".join([c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(_railway_service)]) if _railway_service else ""
+_railway_suffix = f"_{_safe_env}" + (f"_{_safe_service}" if _safe_service else "") if _safe_env else ""
+
+def _apply_suffix(path: str) -> str:
+    if not _railway_suffix:
+        return path
+    base = os.path.basename(path)
+    if _railway_suffix in base:
+        return path
+    stem, ext = os.path.splitext(base)
+    if not ext:
+        ext = ".db"
+    return os.path.join(os.path.dirname(path), f"{stem}{_railway_suffix}{ext}")
+
+_db_override = os.getenv("DKP_DB_FILE")
+if _db_override:
+    raw = str(_db_override)
+    if _db_dir and not os.path.isabs(raw):
+        raw = os.path.join(_db_dir, raw)
+    DB_FILE = _apply_suffix(raw)
 elif _railway_env:
-    safe_env = "".join([c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(_railway_env)])
-    DB_FILE = f"dkp_bot_{safe_env}.db"
+    filename = f"dkp_bot{_railway_suffix}.db" if _railway_suffix else "dkp_bot.db"
+    raw = os.path.join(_db_dir, filename) if _db_dir else filename
+    DB_FILE = raw
 else:
-    DB_FILE = "dkp_bot.db"
+    DB_FILE = os.path.join(_db_dir, "dkp_bot.db") if _db_dir else "dkp_bot.db"
 
 class Database:
     def __init__(self, db_file):
