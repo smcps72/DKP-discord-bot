@@ -14,6 +14,22 @@ function ensureAuthState() {
 }
 
 async function openChangelogFromNewestWelcome(page) {
+  async function clickChangeLogFromDkpPanel() {
+    const panelTitle = page.getByText(/DKP Panel for/i).last();
+    await panelTitle.waitFor({ state: 'visible', timeout: 45000 });
+    const panel = panelTitle.locator('xpath=ancestor::li[1]');
+    const btn = panel.getByRole('button', { name: /Change Log/i }).first();
+    await btn.waitFor({ state: 'visible', timeout: 15000 });
+    await btn.click({ timeout: 15000 });
+  }
+
+  const openPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+  if (await openPanelButton.isVisible({ timeout: 15000 }).catch(() => false)) {
+    await openPanelButton.click({ timeout: 15000 });
+    await clickChangeLogFromDkpPanel();
+    return;
+  }
+
   const changeLogButton = page.getByRole('button', { name: /Change Log/i }).last();
   if (await changeLogButton.isVisible({ timeout: 15000 }).catch(() => false)) {
     await changeLogButton.click({ timeout: 15000 });
@@ -23,6 +39,14 @@ async function openChangelogFromNewestWelcome(page) {
   const pinnedButton = page.getByRole('button', { name: /Pinned Messages/i }).first();
   if (await pinnedButton.isVisible({ timeout: 15000 }).catch(() => false)) {
     await pinnedButton.click({ timeout: 15000 });
+
+    const pinnedOpenPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+    if (await pinnedOpenPanelButton.isVisible({ timeout: 15000 }).catch(() => false)) {
+      await pinnedOpenPanelButton.click({ timeout: 15000 });
+      await clickChangeLogFromDkpPanel();
+      return;
+    }
+
     const pinnedChangeLogButton = page.getByRole('button', { name: /Change Log/i }).last();
     await pinnedChangeLogButton.waitFor({ state: 'visible', timeout: 45000 });
     await pinnedChangeLogButton.click({ timeout: 15000 });

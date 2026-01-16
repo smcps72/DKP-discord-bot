@@ -355,11 +355,8 @@ class SetupCog(commands.Cog):
             embed = create_info_embed(
                 "Welcome to the DKP Bot!",
                 "This bot helps you manage your guild's Dragon Kill Points system right here in Discord.\n\n"
-                "**Buttons:**\n"
-                "	 **Create Raid:** Starts a new raid tied to your current voice channel and creates a raid log thread.\n"
-                "	 **My DKP:** Privately check your current DKP balance.\n"
-                "	 **Auction Help:** Get information on how bidding works.\n"
-                "	 **Admin:** (Admins Only) Configure the bot settings."
+                "**Button:**\n"
+                "\t **Open DKP Panel:** Opens a private (ephemeral) control panel with the actions you have access to."
             )
             view = WelcomeView(self.bot)
             message = await dkp_channel.send(embed=embed, view=view)
@@ -444,11 +441,8 @@ class SetupCog(commands.Cog):
         embed = create_info_embed(
             "Welcome to the DKP Bot!",
             "This bot helps you manage your guild's Dragon Kill Points system right here in Discord.\n\n"
-            "**Buttons:**\n"
-            "\t **Create Raid:** Starts a new raid tied to your current voice channel and creates a raid log thread.\n"
-            "\t **My DKP:** Privately check your current DKP balance.\n"
-            "\t **Auction Help:** Get information on how bidding works.\n"
-            "\t **Admin:** (Admins Only) Configure the bot settings.",
+            "**Button:**\n"
+            "\t **Open DKP Panel:** Opens a private (ephemeral) control panel with the actions you have access to.",
         )
         view = WelcomeView(self.bot)
 

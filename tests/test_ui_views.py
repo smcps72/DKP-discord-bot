@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import discord
 
-from discord_bot.ui.views import WelcomeView
+from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, DkpPanelView
 
 # Mock objects for testing
 class MockGuild(MagicMock):
@@ -45,7 +45,7 @@ async def test_welcome_view_create_raid_button(mock_bot, mock_interaction):
     mock_raid_cog = MagicMock()
     mock_raid_cog.create_raid_from_interaction = AsyncMock()
     mock_bot.get_cog.return_value = mock_raid_cog
-    view = WelcomeView(bot=mock_bot)
+    view = WelcomeLegacyView(bot=mock_bot)
 
     # Act
     await view.create_raid.callback(mock_interaction)
@@ -61,7 +61,7 @@ async def test_welcome_view_my_dkp_button(mock_bot, mock_interaction):
     mock_user_cog = MagicMock()
     mock_user_cog.show_my_dkp = AsyncMock()
     mock_bot.get_cog.return_value = mock_user_cog
-    view = WelcomeView(bot=mock_bot)
+    view = WelcomeLegacyView(bot=mock_bot)
 
     # Act
     await view.my_dkp.callback(mock_interaction)
@@ -77,7 +77,7 @@ async def test_welcome_view_bot_status_button(mock_bot, mock_interaction):
     mock_admin_cog = MagicMock()
     mock_admin_cog._create_status_embed = AsyncMock(return_value="embed_content")
     mock_bot.get_cog.return_value = mock_admin_cog
-    view = WelcomeView(bot=mock_bot)
+    view = WelcomeLegacyView(bot=mock_bot)
 
     # Act
     await view.bot_status.callback(mock_interaction)
@@ -94,7 +94,7 @@ async def test_welcome_view_admin_panel_button_as_officer(mock_AdminPanelView, m
     """Tests the admin panel button for an authorized officer."""
     # Arrange
     mock_is_admin.return_value = True
-    view = WelcomeView(bot=mock_bot)
+    view = WelcomeLegacyView(bot=mock_bot)
 
     # Act
     await view.admin_panel.callback(mock_interaction)
@@ -110,7 +110,7 @@ async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_admin, moc
     """Tests the admin panel button for a non-officer."""
     # Arrange
     mock_is_admin.return_value = False
-    view = WelcomeView(bot=mock_bot)
+    view = WelcomeLegacyView(bot=mock_bot)
 
     # Act
     await view.admin_panel.callback(mock_interaction)
@@ -119,6 +119,41 @@ async def test_welcome_view_admin_panel_button_as_non_officer(mock_is_admin, moc
     mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
     mock_is_admin.assert_called_once_with(mock_interaction)
     mock_interaction.followup.send.assert_called_once_with("You must be a bot admin to use this.", ephemeral=True)
+
+
+@patch('discord_bot.ui.views.discord.Member', new=MagicMock)
+@patch('discord_bot.ui.views.is_officer', new_callable=AsyncMock)
+@patch('discord_bot.ui.views.is_admin', new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_welcome_view_open_panel_sends_ephemeral_panel(mock_is_admin, mock_is_officer, mock_bot, mock_interaction):
+    mock_is_admin.return_value = False
+    mock_is_officer.return_value = False
+
+    view = WelcomeView(bot=mock_bot)
+    await view.open_panel.callback(mock_interaction)
+
+    mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
+
+    args, kwargs = mock_interaction.followup.send.call_args
+    assert kwargs.get("ephemeral") is True
+    assert isinstance(kwargs.get("view"), DkpPanelView)
+
+
+@pytest.mark.asyncio
+async def test_dkp_panel_view_hides_admin_and_docs_for_non_admin():
+    bot = MagicMock()
+    view = DkpPanelView(bot=bot, admin_ok=False, officer_ok=True)
+    ids = {getattr(c, "custom_id", None) for c in view.children}
+    assert "dkp_panel_admin_panel" not in ids
+    assert "dkp_panel_docs" not in ids
+
+
+@pytest.mark.asyncio
+async def test_dkp_panel_view_hides_create_raid_for_non_officer_non_admin():
+    bot = MagicMock()
+    view = DkpPanelView(bot=bot, admin_ok=False, officer_ok=False)
+    ids = {getattr(c, "custom_id", None) for c in view.children}
+    assert "dkp_panel_create_raid" not in ids
 
 
 # Tests for RaidControlView

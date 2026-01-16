@@ -246,6 +246,115 @@ class ChangelogView(discord.ui.View):
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
+
+class WelcomeLegacyView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await ensure_allowed_guild(interaction)
+
+    @discord.ui.button(label="Create Raid 🏰", style=discord.ButtonStyle.success, custom_id="welcome_create_raid")
+    async def create_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog:
+            await raid_cog.create_raid_from_interaction(interaction)
+        else:
+            await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+
+    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="welcome_my_dkp")
+    async def my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        user_cog = self.bot.get_cog("UserCog")
+        if user_cog:
+            await user_cog.show_my_dkp(interaction)
+        else:
+            await interaction.followup.send("User module is currently offline.", ephemeral=True)
+
+    @discord.ui.button(label="Auction Help ❓", style=discord.ButtonStyle.primary, custom_id="welcome_auction_help")
+    async def auction_help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        user_cog = self.bot.get_cog("UserCog")
+        if user_cog:
+            await user_cog.show_auction_help(interaction)
+        else:
+            await interaction.followup.send("User module is currently offline.", ephemeral=True)
+
+    @discord.ui.button(label="Bot Status 📈", style=discord.ButtonStyle.secondary, custom_id="welcome_bot_status")
+    async def bot_status(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        admin_cog = self.bot.get_cog("AdminCog")
+        if admin_cog and interaction.guild is not None:
+            embed = await admin_cog._create_status_embed(interaction.guild.id)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send("Admin module is currently offline.", ephemeral=True)
+
+    @discord.ui.button(label="Admin Panel ⚙️", style=discord.ButtonStyle.danger, custom_id="welcome_admin_panel")
+    async def admin_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        if not await is_admin(interaction):
+            return await interaction.followup.send("You must be a bot admin to use this.", ephemeral=True)
+
+        view = AdminPanelView(self.bot)
+        await interaction.followup.send("Welcome to the Admin Panel.", view=view, ephemeral=True)
+
+    @discord.ui.button(
+        label="Change Log 🔒",
+        style=discord.ButtonStyle.secondary,
+        custom_id="welcome_change_log",
+        row=1,
+    )
+    async def change_log(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        versions, entries = _load_changelog()
+        can_view_unreleased = await is_officer(interaction)
+        allowed_versions = versions if can_view_unreleased else [v for v in versions if v != "Unreleased"]
+
+        content = None
+        if not can_view_unreleased and "Unreleased" in versions:
+            content = "Showing public changelog entries. (Unreleased is officers-only.)"
+
+        if not allowed_versions:
+            return await interaction.followup.send(
+                "No public changelog entries are available.",
+                ephemeral=True,
+            )
+
+        default_version = bot_version if bot_version in allowed_versions else allowed_versions[0]
+        view = ChangelogView(allowed_versions, entries, default_version)
+        embeds = view.create_embeds(default_version)
+        if content:
+            await interaction.followup.send(content=content, embeds=embeds, view=view, ephemeral=True)
+        else:
+            await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
+
+    @discord.ui.button(
+        label="Docs 📚",
+        style=discord.ButtonStyle.primary,
+        custom_id="welcome_docs",
+        row=1,
+    )
+    async def docs(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        if not await is_admin(interaction):
+            return await interaction.followup.send("You must be a bot admin to use this.", ephemeral=True)
+
+        docs_cog = self.bot.get_cog("DocsCog")
+        if docs_cog and hasattr(docs_cog, "show_docs"):
+            await docs_cog.show_docs(interaction)
+        else:
+            await interaction.followup.send("Docs module is currently offline.", ephemeral=True)
+
 class MemberSelect(Select):
     def __init__(self, bot, action: str, members: list[discord.Member]):
         self.bot = bot
@@ -395,47 +504,118 @@ class WelcomeView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await ensure_allowed_guild(interaction)
 
-    @discord.ui.button(label="Create Raid 🏰", style=discord.ButtonStyle.success, custom_id="welcome_create_raid")
+    @discord.ui.button(
+        label="Open DKP Panel",
+        style=discord.ButtonStyle.primary,
+        custom_id="welcome_open_panel",
+    )
+    async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        if not isinstance(interaction.user, discord.Member):
+            return await interaction.followup.send("This panel can only be used in a server.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        officer_ok = await is_officer(interaction)
+
+        embed = create_info_embed(
+            f"DKP Panel for {interaction.user.display_name}",
+            "Use the buttons below to access DKP bot features. This panel is only visible to you.",
+        )
+        view = DkpPanelView(self.bot, admin_ok=admin_ok, officer_ok=officer_ok)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+
+class DkpPanelView(discord.ui.View):
+    def __init__(self, bot, admin_ok: bool, officer_ok: bool):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.admin_ok = bool(admin_ok)
+        self.officer_ok = bool(officer_ok)
+
+        hide_ids: set[str] = set()
+
+        if not (self.admin_ok or self.officer_ok):
+            hide_ids.add("dkp_panel_create_raid")
+
+        if not self.admin_ok:
+            hide_ids |= {
+                "dkp_panel_admin_panel",
+                "dkp_panel_docs",
+            }
+
+        if hide_ids:
+            to_remove: list[discord.ui.Item] = []
+            for child in self.children:
+                if isinstance(child, discord.ui.Button) and child.custom_id in hide_ids:
+                    to_remove.append(child)
+            for child in to_remove:
+                self.remove_item(child)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await ensure_allowed_guild(interaction)
+
+    @discord.ui.button(label="Create Raid 🏰", style=discord.ButtonStyle.success, custom_id="dkp_panel_create_raid")
     async def create_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not (self.admin_ok or self.officer_ok):
+            return await interaction.response.send_message("You don't have permission to create a raid.", ephemeral=True)
         raid_cog = self.bot.get_cog("RaidCog")
         if raid_cog:
             await raid_cog.create_raid_from_interaction(interaction)
         else:
-            # If the cog isn't loaded, we still need to respond to the interaction.
             await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
 
-    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="welcome_my_dkp")
+    @discord.ui.button(label="My DKP 💰", style=discord.ButtonStyle.secondary, custom_id="dkp_panel_my_dkp")
     async def my_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
         user_cog = self.bot.get_cog("UserCog")
         if user_cog:
             await user_cog.show_my_dkp(interaction)
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
-    @discord.ui.button(label="Auction Help ❓", style=discord.ButtonStyle.primary, custom_id="welcome_auction_help")
+    @discord.ui.button(label="Auction Help ❓", style=discord.ButtonStyle.primary, custom_id="dkp_panel_auction_help")
     async def auction_help(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
         user_cog = self.bot.get_cog("UserCog")
         if user_cog:
             await user_cog.show_auction_help(interaction)
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
-    @discord.ui.button(label="Bot Status 📈", style=discord.ButtonStyle.secondary, custom_id="welcome_bot_status")
+    @discord.ui.button(label="Bot Status 📈", style=discord.ButtonStyle.secondary, custom_id="dkp_panel_bot_status")
     async def bot_status(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
         admin_cog = self.bot.get_cog("AdminCog")
-        if admin_cog:
+        if admin_cog and interaction.guild is not None:
             embed = await admin_cog._create_status_embed(interaction.guild.id)
             await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             await interaction.followup.send("Admin module is currently offline.", ephemeral=True)
 
-    @discord.ui.button(label="Admin Panel ⚙️", style=discord.ButtonStyle.danger, custom_id="welcome_admin_panel")
+    @discord.ui.button(label="Admin Panel ⚙️", style=discord.ButtonStyle.danger, custom_id="dkp_panel_admin_panel")
     async def admin_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        if not await is_admin(interaction):
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+        if not self.admin_ok:
             return await interaction.followup.send("You must be a bot admin to use this.", ephemeral=True)
 
         view = AdminPanelView(self.bot)
@@ -444,12 +624,12 @@ class WelcomeView(discord.ui.View):
     @discord.ui.button(
         label="Change Log 🔒",
         style=discord.ButtonStyle.secondary,
-        custom_id="welcome_change_log",
-        row=1,
+        custom_id="dkp_panel_change_log",
     )
     async def change_log(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
-            await interaction.response.defer(ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
         except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
             pass
 
@@ -478,20 +658,26 @@ class WelcomeView(discord.ui.View):
     @discord.ui.button(
         label="Docs 📚",
         style=discord.ButtonStyle.primary,
-        custom_id="welcome_docs",
-        row=1,
+        custom_id="dkp_panel_docs",
     )
     async def docs(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
-            await interaction.response.defer(ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
         except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
             pass
+        if not self.admin_ok:
+            return await interaction.followup.send("You must be a bot admin to use this.", ephemeral=True)
 
         docs_cog = self.bot.get_cog("DocsCog")
         if docs_cog and hasattr(docs_cog, "show_docs"):
             await docs_cog.show_docs(interaction)
         else:
             await interaction.followup.send("Docs module is currently offline.", ephemeral=True)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="dkp_panel_close")
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
 
 
 # -- ADMIN VIEWS --

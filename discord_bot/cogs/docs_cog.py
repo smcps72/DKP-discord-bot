@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 from .. import __version__ as bot_version
-from ..utils import ensure_allowed_guild, is_officer, create_info_embed
+from ..utils import ensure_allowed_guild, is_officer, is_admin, create_info_embed
 
 
 DOCS_DIR = Path(__file__).resolve().parents[2] / "Documentation"
@@ -173,6 +173,11 @@ class DocsCog(commands.Cog):
         if not await ensure_allowed_guild(interaction):
             return
 
+        if not await is_admin(interaction):
+            if not interaction.response.is_done():
+                return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
+            return await interaction.followup.send("You don't have permission to use this.", ephemeral=True)
+
         pages = _load_pages()
         if not pages:
             if not interaction.response.is_done():
@@ -204,6 +209,7 @@ class DocsCog(commands.Cog):
             await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
 
     @app_commands.command(name="docs", description="Browse the DKP bot user documentation.")
+    @app_commands.check(is_admin)
     async def docs_cmd(self, interaction: discord.Interaction):
         if interaction.guild is None:
             return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
