@@ -24,7 +24,8 @@ function normalize(text) {
 }
 
 function extractField(text, label) {
-  const re = new RegExp(`${label}\\s*:?\\s*(?:\`([^\`]+)\`|([^\n]+))`, 'i');
+  const escaped = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${escaped}\\s*:?\\s*(?:\`([^\`]+)\`|([^•\\r\\n]+))`, 'i');
   const match = re.exec(text);
   const raw = match ? (match[1] || match[2] || '') : '';
   return normalize(raw);
@@ -142,13 +143,12 @@ async function runStatus(page, gid, cid, hint) {
     .last();
 
   await container.waitFor({ state: 'visible', timeout: 45000 });
-
-  const text = normalize(await container.innerText());
-
-  const dbFile = extractField(text, 'DB File');
-  const dbResolved = extractField(text, 'DB File \\(resolved\\)');
-  const railwayEnv = extractField(text, 'Railway Env');
-  const railwayService = extractField(text, 'Railway Service');
+  const rawText = await container.innerText();
+  const text = normalize(rawText);
+  const dbFile = extractField(rawText, 'DB File');
+  const dbResolved = extractField(rawText, 'DB File (resolved)');
+  const railwayEnv = extractField(rawText, 'Railway Env');
+  const railwayService = extractField(rawText, 'Railway Service');
 
   return { text, dbFile, dbResolved, railwayEnv, railwayService };
 }
@@ -192,7 +192,9 @@ test('status includes db identity (and differs across envs when configured)', as
   expect(r2.text).toContain('Bot Status');
   expect(r2.text).toMatch(/DB File/i);
 
-  if (firstResult?.dbResolved && r2.dbResolved) {
-    expect(r2.dbResolved).not.toBe(firstResult.dbResolved);
+  const id1 = (firstResult?.dbResolved || firstResult?.dbFile || '').trim();
+  const id2 = (r2.dbResolved || r2.dbFile || '').trim();
+  if (id1 && id2) {
+    expect(id2).not.toBe(id1);
   }
 });
