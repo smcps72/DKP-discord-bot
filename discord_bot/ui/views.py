@@ -286,8 +286,11 @@ class WelcomeLegacyView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         admin_cog = self.bot.get_cog("AdminCog")
         if admin_cog and interaction.guild is not None:
-            embed = await admin_cog._create_status_embed(interaction.guild.id)
+            embed = await admin_cog._create_status_basic_embed(interaction.guild.id)
             await interaction.followup.send(embed=embed, ephemeral=True)
+            if await is_admin(interaction):
+                env_embed = await admin_cog._create_status_env_embed()
+                await interaction.followup.send(embed=env_embed, ephemeral=True)
         else:
             await interaction.followup.send("Admin module is currently offline.", ephemeral=True)
 
@@ -603,8 +606,11 @@ class DkpPanelView(discord.ui.View):
             pass
         admin_cog = self.bot.get_cog("AdminCog")
         if admin_cog and interaction.guild is not None:
-            embed = await admin_cog._create_status_embed(interaction.guild.id)
+            embed = await admin_cog._create_status_basic_embed(interaction.guild.id)
             await interaction.followup.send(embed=embed, ephemeral=True)
+            if await is_admin(interaction):
+                env_embed = await admin_cog._create_status_env_embed()
+                await interaction.followup.send(embed=env_embed, ephemeral=True)
         else:
             await interaction.followup.send("Admin module is currently offline.", ephemeral=True)
 

@@ -67,6 +67,7 @@ async function runStatus(page, gid, cid, hint) {
   const { messageBox } = await openWritableChannel(page, gid, cid);
 
   const beforeCount = await page.getByText('Bot Status', { exact: true }).count();
+  const beforeAdminCount = await page.getByText('Bot Status (Admin)', { exact: true }).count();
 
   await messageBox.click();
   await messageBox.fill('/status');
@@ -138,21 +139,32 @@ async function runStatus(page, gid, cid, hint) {
     .poll(async () => page.getByText('Bot Status', { exact: true }).count(), { timeout: 45000 })
     .toBeGreaterThan(beforeCount);
 
-  const container = page
+  const basicContainer = page
     .locator('li')
     .filter({ hasText: 'Bot Status' })
-    .filter({ hasText: 'Only you can see this' })
+    .filter({ hasNotText: 'Bot Status (Admin)' })
     .last();
+  await basicContainer.waitFor({ state: 'visible', timeout: 45000 });
+  const basicRaw = await basicContainer.innerText();
+  const basicText = normalize(basicRaw);
 
-  await container.waitFor({ state: 'visible', timeout: 45000 });
-  const rawText = await container.innerText();
-  const text = normalize(rawText);
-  const dbFile = extractField(rawText, 'DB File');
-  const dbResolved = extractField(rawText, 'DB File (resolved)');
-  const railwayEnv = extractField(rawText, 'Railway Env');
-  const railwayService = extractField(rawText, 'Railway Service');
+  let adminRaw = '';
+  let adminText = '';
+  if (expectDbIdentity) {
+    await expect
+      .poll(async () => page.getByText('Bot Status (Admin)', { exact: true }).count(), { timeout: 45000 })
+      .toBeGreaterThan(beforeAdminCount);
+    const adminContainer = page
+      .locator('li')
+      .filter({ hasText: 'Bot Status (Admin)' })
+      .filter({ hasText: 'Only you can see this' })
+      .last();
+    await adminContainer.waitFor({ state: 'visible', timeout: 45000 });
+    adminRaw = await adminContainer.innerText();
+    adminText = normalize(adminRaw);
+  }
 
-  return { text, dbFile, dbResolved, railwayEnv, railwayService };
+  return { basicRaw, basicText, adminRaw, adminText };
 }
 
 let firstResult = null;
@@ -162,29 +174,21 @@ test('status includes db identity (and differs across envs when configured)', as
   ensureAuthState();
 
   const r1 = await runStatus(page, guildId, channelId, botHint);
-  console.log('[status #1] DB File:', r1.dbFile);
-  console.log('[status #1] DB File (resolved):', r1.dbResolved);
-  console.log('[status #1] Railway Env:', r1.railwayEnv);
-  console.log('[status #1] Railway Service:', r1.railwayService);
+  console.log('[status #1] basic:', r1.basicText);
+  console.log('[status #1] admin:', r1.adminText);
 
-  expect(r1.text).toContain('Bot Status');
+  expect(r1.basicText).toContain('Bot Status');
+  expect(r1.basicText).not.toMatch(/DB File/i);
+  expect(r1.basicText).not.toMatch(/Railway Env/i);
+  expect(r1.basicText).not.toMatch(/Railway Service/i);
+
   if (expectDbIdentity) {
-    if (!/DB File/i.test(r1.text)) {
-      throw new Error(
-        'Expected /status to include DB identity fields ("DB File" and optionally Railway Env/Service), but they were missing.\n\n'
-        + 'Possible causes:\n'
-        + '- The caller is not an admin (env identity is now admin-only).\n'
-        + '- The deployed bot is running an older build.\n'
-        + '- Playwright selected the wrong /status command from autocomplete.\n\n'
-        + 'Fix:\n'
-        + '- Grant the Playwright Discord account admin/DKP Admin role in the target server, OR set DISCORD_TEST_EXPECT_DB_IDENTITY=0 to test the non-admin view.\n'
-        + '- Ensure the bot has redeployed with the latest code.\n'
-        + '- If multiple bot apps provide /status, set DISCORD_TEST_STATUS_BOT_HINT to target the correct one.\n\n'
-        + `Observed status text: ${r1.text}`,
-      );
-    }
+    expect(r1.adminText).toContain('Bot Status (Admin)');
+    expect(r1.adminText).toMatch(/DB File/i);
+    expect(r1.adminText).toMatch(/Railway Env/i);
+    expect(r1.adminText).toMatch(/Railway Service/i);
   } else {
-    expect(r1.text).not.toMatch(/DB File/i);
+    expect(r1.adminText).toBe('');
   }
 
   firstResult = r1;
@@ -194,20 +198,22 @@ test('status includes db identity (and differs across envs when configured)', as
   }
 
   const r2 = await runStatus(page, guildId2, channelId2, botHint2);
-  console.log('[status #2] DB File:', r2.dbFile);
-  console.log('[status #2] DB File (resolved):', r2.dbResolved);
-  console.log('[status #2] Railway Env:', r2.railwayEnv);
-  console.log('[status #2] Railway Service:', r2.railwayService);
+  console.log('[status #2] basic:', r2.basicText);
+  console.log('[status #2] admin:', r2.adminText);
 
-  expect(r2.text).toContain('Bot Status');
+  expect(r2.basicText).toContain('Bot Status');
+  expect(r2.basicText).not.toMatch(/DB File/i);
+  expect(r2.basicText).not.toMatch(/Railway Env/i);
+  expect(r2.basicText).not.toMatch(/Railway Service/i);
+
   if (expectDbIdentity) {
-    expect(r2.text).toMatch(/DB File/i);
-    const id1 = (firstResult?.dbResolved || firstResult?.dbFile || '').trim();
-    const id2 = (r2.dbResolved || r2.dbFile || '').trim();
+    expect(r2.adminText).toContain('Bot Status (Admin)');
+    const id1 = extractField(firstResult.adminRaw, 'DB File');
+    const id2 = extractField(r2.adminRaw, 'DB File');
     if (id1 && id2) {
       expect(id2).not.toBe(id1);
     }
   } else {
-    expect(r2.text).not.toMatch(/DB File/i);
+    expect(r2.adminText).toBe('');
   }
 });
