@@ -16,7 +16,7 @@ class AdminCog(commands.Cog):
         self.bot = bot
         self._history_cooldowns: dict[int, float] = {}
 
-    async def _create_status_embed(self, guild_id: int) -> discord.Embed:
+    async def _create_status_embed(self, guild_id: int, include_env: bool) -> discord.Embed:
         config = await self.bot.db.get_guild_config(guild_id)
         license_status = config['license_status'].capitalize() if config else "Unknown"
         active_raids_count = await self.bot.db.fetchone("SELECT COUNT(*) as count FROM raids WHERE guild_id = ? AND is_active = 1", (guild_id,))
@@ -36,16 +36,17 @@ class AdminCog(commands.Cog):
         railway_service = os.getenv("RAILWAY_SERVICE_NAME")
 
         env_lines: list[str] = []
-        if bot_user_id:
-            env_lines.append(f"• **Bot User ID:** `{bot_user_id}`")
-        if db_file:
-            env_lines.append(f"• **DB File:** `{db_file}`")
-        if resolved_db and resolved_db != str(db_file):
-            env_lines.append(f"• **DB File (resolved):** `{resolved_db}`")
-        if railway_env:
-            env_lines.append(f"• **Railway Env:** `{railway_env}`")
-        if railway_service:
-            env_lines.append(f"• **Railway Service:** `{railway_service}`")
+        if include_env:
+            if bot_user_id:
+                env_lines.append(f"• **Bot User ID:** `{bot_user_id}`")
+            if db_file:
+                env_lines.append(f"• **DB File:** `{db_file}`")
+            if resolved_db and resolved_db != str(db_file):
+                env_lines.append(f"• **DB File (resolved):** `{resolved_db}`")
+            if railway_env:
+                env_lines.append(f"• **Railway Env:** `{railway_env}`")
+            if railway_service:
+                env_lines.append(f"• **Railway Service:** `{railway_service}`")
 
         extra = ("\n" + "\n".join(env_lines)) if env_lines else ""
         return create_info_embed(
@@ -58,12 +59,12 @@ class AdminCog(commands.Cog):
         )
 
     @app_commands.command(name="status", description="Check the bot's operational status.")
-    @app_commands.check(is_admin)
     async def status_cmd(self, interaction: discord.Interaction):
         if interaction.guild is None:
             return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
-        embed = await self._create_status_embed(interaction.guild.id)
+        include_env = await is_admin(interaction)
+        embed = await self._create_status_embed(interaction.guild.id, include_env)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="history", description="Downloads a CSV of the last 30 days of DKP transactions.")
