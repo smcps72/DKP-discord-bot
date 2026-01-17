@@ -7,6 +7,8 @@ const fallbackChannelId = (process.env.DISCORD_TEST_STATUS_FALLBACK_CHANNEL_ID |
 const guildId2 = (process.env.DISCORD_TEST_GUILD_ID_2 || '').trim();
 const channelId2 = (process.env.DISCORD_TEST_CHANNEL_ID_2 || '').trim();
 
+const expectDbIdentity = (process.env.DISCORD_TEST_EXPECT_DB_IDENTITY || '1').trim() !== '0';
+
 const botHint = (process.env.DISCORD_TEST_STATUS_BOT_HINT || '').trim();
 const botHint2 = (process.env.DISCORD_TEST_STATUS_BOT_HINT_2 || '').trim();
 
@@ -166,15 +168,23 @@ test('status includes db identity (and differs across envs when configured)', as
   console.log('[status #1] Railway Service:', r1.railwayService);
 
   expect(r1.text).toContain('Bot Status');
-  if (!/DB File/i.test(r1.text)) {
-    throw new Error(
-      'The /status response did not include the DB identity fields (expected "DB File" and optionally Railway Env/Service).\n\n'
-      + 'This usually means the deployed bot is running an older build that predates the status diagnostics changes, OR Playwright selected the wrong /status command from autocomplete.\n\n'
-      + 'Fix:\n'
-      + '- Redeploy the bot with the latest code from this repo (commit that adds DB identity to /status).\n'
-      + '- If multiple bot apps provide /status, set DISCORD_TEST_STATUS_BOT_HINT to target the correct one.\n\n'
-      + `Observed status text: ${r1.text}`,
-    );
+  if (expectDbIdentity) {
+    if (!/DB File/i.test(r1.text)) {
+      throw new Error(
+        'Expected /status to include DB identity fields ("DB File" and optionally Railway Env/Service), but they were missing.\n\n'
+        + 'Possible causes:\n'
+        + '- The caller is not an admin (env identity is now admin-only).\n'
+        + '- The deployed bot is running an older build.\n'
+        + '- Playwright selected the wrong /status command from autocomplete.\n\n'
+        + 'Fix:\n'
+        + '- Grant the Playwright Discord account admin/DKP Admin role in the target server, OR set DISCORD_TEST_EXPECT_DB_IDENTITY=0 to test the non-admin view.\n'
+        + '- Ensure the bot has redeployed with the latest code.\n'
+        + '- If multiple bot apps provide /status, set DISCORD_TEST_STATUS_BOT_HINT to target the correct one.\n\n'
+        + `Observed status text: ${r1.text}`,
+      );
+    }
+  } else {
+    expect(r1.text).not.toMatch(/DB File/i);
   }
 
   firstResult = r1;
@@ -190,11 +200,14 @@ test('status includes db identity (and differs across envs when configured)', as
   console.log('[status #2] Railway Service:', r2.railwayService);
 
   expect(r2.text).toContain('Bot Status');
-  expect(r2.text).toMatch(/DB File/i);
-
-  const id1 = (firstResult?.dbResolved || firstResult?.dbFile || '').trim();
-  const id2 = (r2.dbResolved || r2.dbFile || '').trim();
-  if (id1 && id2) {
-    expect(id2).not.toBe(id1);
+  if (expectDbIdentity) {
+    expect(r2.text).toMatch(/DB File/i);
+    const id1 = (firstResult?.dbResolved || firstResult?.dbFile || '').trim();
+    const id2 = (r2.dbResolved || r2.dbFile || '').trim();
+    if (id1 && id2) {
+      expect(id2).not.toBe(id1);
+    }
+  } else {
+    expect(r2.text).not.toMatch(/DB File/i);
   }
 });
