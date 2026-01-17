@@ -34,10 +34,9 @@ def _apply_suffix(path: str) -> str:
 _db_override = os.getenv("DKP_DB_FILE")
 if _db_override:
     raw = str(_db_override).strip()
-    if raw and raw[0] in ('"', "'"):
-        raw = raw[1:]
-    if raw and raw[-1] in ('"', "'"):
-        raw = raw[:-1]
+    raw = raw.replace('"', "").replace("'", "")
+    if not raw:
+        raw = "dkp_bot.db"
     if _db_dir and not os.path.isabs(raw):
         raw = os.path.join(_db_dir, raw)
     DB_FILE = _apply_suffix(raw)
