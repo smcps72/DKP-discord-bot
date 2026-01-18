@@ -70,7 +70,7 @@ async function openVersionDropdown(page) {
     await trigger.click({ timeout: 15000, force: true });
     await page.waitForTimeout(150);
 
-    const versionOptionRe = /Unreleased|0\.1\.0-alpha\.2|0\.1\.0-alpha\.1|0\.1\.0-alpha\.0/i;
+    const versionOptionRe = /Unreleased|0\.1\.0-alpha\.3|0\.1\.0-alpha\.2|0\.1\.0-alpha\.1|0\.1\.0-alpha\.0/i;
     const match = page
       .locator('[role="option"], [role="menuitemradio"], [role="menuitem"]')
       .filter({ hasText: versionOptionRe });
@@ -133,6 +133,7 @@ test('Changelog options include released versions', async ({ page }) => {
 
   // Unreleased is officers-only; depending on the auth state used in CI,
   // it may or may not be present.
+  expect(optionTexts).toContain('0.1.0-alpha.3');
   expect(optionTexts).toContain('0.1.0-alpha.2');
   expect(optionTexts).toContain('0.1.0-alpha.1');
   expect(optionTexts).toContain('0.1.0-alpha.0');
@@ -140,6 +141,15 @@ test('Changelog options include released versions', async ({ page }) => {
   if (!hasUnreleased) {
     await expect(page.getByText('Showing public changelog entries', { exact: false }).first()).toBeVisible({ timeout: 45000 });
   }
+});
+
+test('Changelog shows notes for 0.1.0-alpha.3', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await openChangelog(page);
+  await pickOption(page, '0.1.0-alpha.3');
+  await expect(page.getByText('team grouping', { exact: false }).first()).toBeVisible({ timeout: 45000 });
 });
 
 test('Changelog shows notes for 0.1.0-alpha.0', async ({ page }) => {
@@ -223,6 +233,9 @@ test('Staging changelog smoke test', async ({ page }) => {
   await pickOption(page, '0.1.0-alpha.2');
   await expect(page.getByText('Open DKP Panel', { exact: false }).first()).toBeVisible({ timeout: 45000 });
 
+  await pickOption(page, '0.1.0-alpha.3');
+  await expect(page.getByText('team grouping', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+
   if (hasUnreleased) {
     await pickOption(page, 'Unreleased');
     await expect(page.getByText('No unreleased notes yet.', { exact: false }).first()).toBeVisible({ timeout: 45000 });
@@ -233,6 +246,6 @@ test('Staging changelog smoke test', async ({ page }) => {
   } else {
     const { options: optionsAfter } = await openVersionDropdown(page);
     const selected = optionsAfter.find((o) => o.selected);
-    expect(selected?.text).toBe('0.1.0-alpha.2');
+    expect(selected?.text).toBe('0.1.0-alpha.3');
   }
 });

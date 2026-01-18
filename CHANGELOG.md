@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 - No unreleased notes yet.
 
+## 0.1.0-alpha.3
+
+- Added raid team grouping plus group setup + signup UI.
+- Fixed raid control panel interaction issues and reduced redundant setup prompts.
+- Improved `/status` diagnostics while hiding environment identity from non-admin users.
+- Isolated deployment sqlite per environment/service.
+- Improved E2E coverage for /status output and raid UI.
+
 ## 0.1.0-alpha.2
 
 - Added an **Open DKP Panel** button which opens a per-user **ephemeral** panel for common actions.

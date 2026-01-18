@@ -1,6 +1,7 @@
 import discord
 import logging
 import re
+import subprocess
 from pathlib import Path
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal
 from discord.ui import UserSelect, Select
@@ -166,10 +167,103 @@ def _get_default_changelog_version() -> str:
     return bot_version
 
 
+def _run_git(args: list[str], cwd: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+    except Exception:
+        return None
+
+    if proc.returncode != 0:
+        return None
+
+    return proc.stdout
+
+
+def _get_uncommitted_worktree_changes_markdown() -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / ".git").exists():
+        return ""
+
+    raw = _run_git(["worktree", "list", "--porcelain"], cwd=repo_root)
+    if not raw:
+        return ""
+
+    worktrees: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in raw.splitlines():
+        if line.startswith("worktree "):
+            if current:
+                worktrees.append(dict(current))
+            current = {"path": line.split(" ", 1)[1].strip()}
+            continue
+        if line.startswith("branch "):
+            current["branch"] = line.split(" ", 1)[1].strip()
+            continue
+        if line.startswith("HEAD "):
+            current["head"] = line.split(" ", 1)[1].strip()
+            continue
+
+    if current:
+        worktrees.append(dict(current))
+
+    sections: list[str] = []
+    for wt in worktrees:
+        path = wt.get("path")
+        if not path:
+            continue
+
+        status_raw = _run_git(["status", "--porcelain=v1"], cwd=Path(path))
+        if status_raw is None:
+            continue
+
+        status_lines = [ln.rstrip() for ln in status_raw.splitlines() if ln.strip()]
+        if not status_lines:
+            continue
+
+        branch = wt.get("branch") or "(detached)"
+        if branch.startswith("refs/heads/"):
+            branch = branch[len("refs/heads/") :]
+
+        rendered: list[str] = []
+        limit = 40
+        for ln in status_lines[:limit]:
+            code = ln[:2].strip() or ln[:2]
+            file_part = ln[3:] if len(ln) > 3 else ""
+            rendered.append(f"- `{code}` {file_part}")
+
+        remaining = len(status_lines) - limit
+        if remaining > 0:
+            rendered.append(f"- …and {remaining} more")
+
+        sections.append("\n".join([f"### {path} ({branch})", "", *rendered]))
+
+    if not sections:
+        return ""
+
+    return "\n".join([
+        "## Local worktree changes (not yet committed)",
+        "",
+        *sections,
+    ])
+
+
 def _create_changelog_embeds(version: str, entries: dict[str, str]) -> list[discord.Embed]:
     notes = entries.get(version)
     if not notes:
         notes = "No changelog entry is available for this version."
+
+    if version == "Unreleased":
+        extra = _get_uncommitted_worktree_changes_markdown()
+        if extra:
+            notes = f"{notes}\n\n{extra}"
 
     base_title = f"Changelog – v{version}" if version != "Unreleased" else "Changelog – Unreleased"
     chunks: list[str] = []
