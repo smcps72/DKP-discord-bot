@@ -10,12 +10,14 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         action: str,
         raid_cog,
         member: discord.Member | None = None,
+        group_number: int | None = None,
         source: str | None = None,
     ):
         super().__init__()
         self.action = action
         self.raid_cog = raid_cog
         self.target_member_obj = member  # The member passed from the command
+        self.group_number = group_number
         self.source = source
 
         self.amount = TextInput(
@@ -85,6 +87,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             self.amount.value,
             reason,
             member,
+            self.group_number,
             self.source,
         )
 

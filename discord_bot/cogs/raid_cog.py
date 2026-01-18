@@ -585,7 +585,7 @@ class RaidCog(commands.Cog):
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
         target_member = await self._get_member_from_str(interaction, member)
-        modal = DKPAdjustmentModal(action="Award", raid_cog=self, member=target_member)
+        modal = DKPAdjustmentModal(action="Award", raid_cog=self, member=target_member, group_number=None)
         await interaction.response.send_modal(modal)
 
     @app_commands.command(name="deduct", description="Deduct DKP from a member or the entire raid.")
@@ -597,7 +597,7 @@ class RaidCog(commands.Cog):
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
         target_member = await self._get_member_from_str(interaction, member)
-        modal = DKPAdjustmentModal(action="Deduct", raid_cog=self, member=target_member)
+        modal = DKPAdjustmentModal(action="Deduct", raid_cog=self, member=target_member, group_number=None)
         await interaction.response.send_modal(modal)
 
     async def _get_member_from_str(self, interaction: discord.Interaction, member_str: str | None) -> discord.Member | None:
@@ -1116,7 +1116,19 @@ class RaidCog(commands.Cog):
         except Exception:
             msg_id = None
 
-        view = RaidGroupSignupView(self.bot)
+        group_count = None
+        try:
+            group_count = int(raid["group_count"])
+        except Exception:
+            try:
+                if isinstance(raid, dict):
+                    group_count = int(raid.get("group_count") or 0)
+            except Exception:
+                group_count = None
+        if group_count is not None and group_count <= 0:
+            group_count = None
+
+        view = RaidGroupSignupView(self.bot, group_count=group_count)
         if msg_id:
             try:
                 msg = await thread.fetch_message(msg_id)
@@ -1311,6 +1323,7 @@ class RaidCog(commands.Cog):
         amount_str: str,
         reason: str,
         member: discord.Member | None = None,
+        group_number: int | None = None,
         source: str | None = None,
     ):
         # Defer if not already deferred
@@ -1346,6 +1359,18 @@ class RaidCog(commands.Cog):
         if action == "Deduct":
             amount = -amount
 
+        if group_number is not None and member is not None:
+            await interaction.followup.send(
+                embed=create_error_embed(
+                    "Invalid Target",
+                    "Choose either a member or a group (not both).",
+                ),
+                ephemeral=True,
+            )
+            if source == "raid_panel":
+                await self.send_ephemeral_raid_panel(interaction)
+            return
+
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             await interaction.followup.send(
@@ -1358,6 +1383,46 @@ class RaidCog(commands.Cog):
             if source == "raid_panel":
                 await self.send_ephemeral_raid_panel(interaction)
             return
+
+        if group_number is not None:
+            try:
+                group_number = int(group_number)
+            except Exception:
+                group_number = None
+
+        if group_number is not None:
+            group_count = 0
+            try:
+                group_count = int(raid["group_count"])
+            except Exception:
+                try:
+                    group_count = int(dict(raid).get("group_count") or 0)
+                except Exception:
+                    group_count = 0
+
+            if group_count <= 0:
+                await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Groups Not Set Up",
+                        "Groups have not been set up for this raid yet.",
+                    ),
+                    ephemeral=True,
+                )
+                if source == "raid_panel":
+                    await self.send_ephemeral_raid_panel(interaction)
+                return
+
+            if group_number < 1 or group_number > group_count:
+                await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Invalid Group",
+                        f"Group number must be between 1 and {group_count}.",
+                    ),
+                    ephemeral=True,
+                )
+                if source == "raid_panel":
+                    await self.send_ephemeral_raid_panel(interaction)
+                return
 
         vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
 
@@ -1379,7 +1444,28 @@ class RaidCog(commands.Cog):
                 if gm and not gm.bot:
                     targets_by_id[user_id] = gm
 
-            targets = list(targets_by_id.values())
+            if group_number is not None:
+                try:
+                    group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
+                except Exception:
+                    group_rows = []
+
+                member_to_group: dict[int, int] = {}
+                for row in group_rows:
+                    try:
+                        uid = int(row["user_id"])
+                        grp = int(row["group_number"])
+                    except Exception:
+                        continue
+                    member_to_group[uid] = grp
+
+                targets = [
+                    m
+                    for uid, m in targets_by_id.items()
+                    if member_to_group.get(int(uid)) == int(group_number)
+                ]
+            else:
+                targets = list(targets_by_id.values())
         else:
             if member.bot:
                 await interaction.followup.send(
@@ -1441,6 +1527,12 @@ class RaidCog(commands.Cog):
         action_word = "Awarded" if action == "Award" else "Deducted"
         if member:
             description = f"**{abs(amount)} DKP** {action_word.lower()} to {member.mention} for: *{reason}*."
+        elif group_number is not None:
+            mentions = ", ".join([m.mention for m in targets])
+            description = (
+                f"**{abs(amount)} DKP** {action_word.lower()} to **Group {int(group_number)}** "
+                f"(**{len(targets)}** players) for: *{reason}*.\n{mentions}"
+            )
         else:
             mentions = ", ".join([m.mention for m in targets])
             description = f"**{abs(amount)} DKP** {action_word.lower()} to **{len(targets)}** players for: *{reason}*.\n{mentions}"
