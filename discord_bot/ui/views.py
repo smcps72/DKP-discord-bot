@@ -1,6 +1,7 @@
 import discord
 import logging
 import re
+import subprocess
 from pathlib import Path
 from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupSetupModal
 from discord.ui import UserSelect, Select
@@ -10,6 +11,8 @@ from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embe
 
 CHANGELOG_PATH = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
 CHANGELOG_DIR = Path(__file__).resolve().parents[2] / "changelog"
+
+WORKTREE_STATUS_HEADER = "## Local worktree changes (not yet committed)"
 
 FALLBACK_CHANGELOG_ENTRIES: dict[str, str] = {
     "Unreleased": "No changelog file was found.",
@@ -166,10 +169,167 @@ def _get_default_changelog_version() -> str:
     return bot_version
 
 
+def _run_git(args: list[str], cwd: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+    except Exception:
+        return None
+
+    if proc.returncode != 0:
+        return None
+
+    return proc.stdout
+
+
+def _extract_path_from_porcelain_line(line: str) -> str:
+    if len(line) <= 3:
+        return ""
+    path = line[3:].strip()
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1].strip()
+    if path.startswith('"') and path.endswith('"') and len(path) >= 2:
+        path = path[1:-1]
+    return path
+
+
+def _categorize_path(path: str) -> str:
+    p = path.replace("\\", "/")
+    if p == "CHANGELOG.md" or p.startswith("changelog/"):
+        return "Changelog"
+    if p.startswith("discord_bot/ui/"):
+        return "UI"
+    if p.startswith("discord_bot/cogs/raid") or p.startswith("discord_bot/cogs/raid_"):
+        return "Raids"
+    if p.startswith("discord_bot/cogs/"):
+        return "Bot"
+    if p.startswith("discord_bot/"):
+        return "Bot"
+    if p.startswith("tests/"):
+        return "Tests"
+    if p.startswith("js-e2e/"):
+        return "E2E"
+    if p.startswith("Documentation/") or p == "mkdocs.yml":
+        return "Docs"
+    if p.startswith(".github/"):
+        return "CI"
+    if p.startswith("scripts/"):
+        return "Dev tooling"
+    if p.startswith("licensing_server/"):
+        return "Licensing"
+    if p.startswith("requirements"):
+        return "Dependencies"
+    return "Other"
+
+
+def _feature_hint(area: str) -> str:
+    hints = {
+        "UI": "Interaction and panel UX work",
+        "Raids": "Raid management, signup flows, and roster/voice tooling",
+        "Bot": "Command behavior and bot logic updates",
+        "Tests": "Unit/integration regression coverage",
+        "E2E": "End-to-end/staging smoke coverage",
+        "Docs": "User/admin documentation updates",
+        "CI": "CI/staging automation improvements",
+        "Dev tooling": "Local developer tooling and scripts",
+        "Changelog": "Release notes and changelog maintenance",
+        "Licensing": "License server / entitlement checks",
+        "Dependencies": "Dependency and packaging updates",
+        "Other": "Miscellaneous internal updates",
+    }
+    return hints.get(area, hints["Other"])
+
+
+def _get_uncommitted_worktree_changes_markdown() -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / ".git").exists():
+        return ""
+
+    raw = _run_git(["worktree", "list", "--porcelain"], cwd=repo_root)
+    if not raw:
+        return ""
+
+    worktrees: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in raw.splitlines():
+        if line.startswith("worktree "):
+            if current:
+                worktrees.append(dict(current))
+            current = {"path": line.split(" ", 1)[1].strip()}
+            continue
+        if line.startswith("branch "):
+            current["branch"] = line.split(" ", 1)[1].strip()
+            continue
+        if line.startswith("HEAD "):
+            current["head"] = line.split(" ", 1)[1].strip()
+            continue
+
+    if current:
+        worktrees.append(dict(current))
+
+    combined_counts: dict[str, int] = {}
+    for wt in worktrees:
+        path = wt.get("path")
+        if not path:
+            continue
+
+        status_raw = _run_git(["status", "--porcelain=v1"], cwd=Path(path))
+        if status_raw is None:
+            continue
+
+        status_lines = [ln.rstrip() for ln in status_raw.splitlines() if ln.strip()]
+        if not status_lines:
+            continue
+
+        counts: dict[str, int] = {}
+        for ln in status_lines:
+            fp = _extract_path_from_porcelain_line(ln)
+            if not fp:
+                continue
+            cat = _categorize_path(fp)
+            counts[cat] = counts.get(cat, 0) + 1
+
+        if not counts:
+            continue
+
+        for k, v in counts.items():
+            combined_counts[k] = combined_counts.get(k, 0) + v
+
+    if not combined_counts:
+        return ""
+
+    combined_categories = [
+        cat
+        for cat, _n in sorted(combined_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+
+    lines: list[str] = []
+    lines.append(WORKTREE_STATUS_HEADER)
+    lines.append("")
+    lines.append("### In-progress summary")
+    lines.append("")
+    lines.append("- Areas touched:")
+    for cat in combined_categories:
+        lines.append(f"  - {cat}: {_feature_hint(cat)}")
+    return "\n".join(lines)
+
+
 def _create_changelog_embeds(version: str, entries: dict[str, str]) -> list[discord.Embed]:
     notes = entries.get(version)
     if not notes:
         notes = "No changelog entry is available for this version."
+
+    if version == "Unreleased":
+        extra = _get_uncommitted_worktree_changes_markdown()
+        if extra and WORKTREE_STATUS_HEADER not in notes:
+            notes = f"{notes}\n\n{extra}"
 
     base_title = f"Changelog – v{version}" if version != "Unreleased" else "Changelog – Unreleased"
     chunks: list[str] = []
