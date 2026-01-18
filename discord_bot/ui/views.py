@@ -12,6 +12,8 @@ from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embe
 CHANGELOG_PATH = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
 CHANGELOG_DIR = Path(__file__).resolve().parents[2] / "changelog"
 
+WORKTREE_STATUS_HEADER = "## Local worktree changes (not yet committed)"
+
 FALLBACK_CHANGELOG_ENTRIES: dict[str, str] = {
     "Unreleased": "No changelog file was found.",
 }
@@ -187,6 +189,46 @@ def _run_git(args: list[str], cwd: Path) -> str | None:
     return proc.stdout
 
 
+def _extract_path_from_porcelain_line(line: str) -> str:
+    if len(line) <= 3:
+        return ""
+    path = line[3:].strip()
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1].strip()
+    if path.startswith('"') and path.endswith('"') and len(path) >= 2:
+        path = path[1:-1]
+    return path
+
+
+def _categorize_path(path: str) -> str:
+    p = path.replace("\\", "/")
+    if p == "CHANGELOG.md" or p.startswith("changelog/"):
+        return "Changelog"
+    if p.startswith("discord_bot/ui/"):
+        return "UI"
+    if p.startswith("discord_bot/cogs/raid") or p.startswith("discord_bot/cogs/raid_"):
+        return "Raids"
+    if p.startswith("discord_bot/cogs/"):
+        return "Bot"
+    if p.startswith("discord_bot/"):
+        return "Bot"
+    if p.startswith("tests/"):
+        return "Tests"
+    if p.startswith("js-e2e/"):
+        return "E2E"
+    if p.startswith("Documentation/") or p == "mkdocs.yml":
+        return "Docs"
+    if p.startswith(".github/"):
+        return "CI"
+    if p.startswith("scripts/"):
+        return "Dev tooling"
+    if p.startswith("licensing_server/"):
+        return "Licensing"
+    if p.startswith("requirements"):
+        return "Dependencies"
+    return "Other"
+
+
 def _get_uncommitted_worktree_changes_markdown() -> str:
     repo_root = Path(__file__).resolve().parents[2]
     if not (repo_root / ".git").exists():
@@ -232,24 +274,32 @@ def _get_uncommitted_worktree_changes_markdown() -> str:
         if branch.startswith("refs/heads/"):
             branch = branch[len("refs/heads/") :]
 
+        counts: dict[str, int] = {}
+        for ln in status_lines:
+            fp = _extract_path_from_porcelain_line(ln)
+            if not fp:
+                continue
+            cat = _categorize_path(fp)
+            counts[cat] = counts.get(cat, 0) + 1
+
+        if not counts:
+            continue
+
+        categories = [cat for cat, _n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
         rendered: list[str] = []
-        limit = 40
-        for ln in status_lines[:limit]:
-            code = ln[:2].strip() or ln[:2]
-            file_part = ln[3:] if len(ln) > 3 else ""
-            rendered.append(f"- `{code}` {file_part}")
+        rendered.append("- Areas touched:")
+        for cat in categories:
+            rendered.append(f"  - {cat}")
 
-        remaining = len(status_lines) - limit
-        if remaining > 0:
-            rendered.append(f"- …and {remaining} more")
-
-        sections.append("\n".join([f"### {path} ({branch})", "", *rendered]))
+        label = Path(path).name
+        sections.append("\n".join([f"### {label} ({branch})", "", *rendered]))
 
     if not sections:
         return ""
 
     return "\n".join([
-        "## Local worktree changes (not yet committed)",
+        WORKTREE_STATUS_HEADER,
         "",
         *sections,
     ])
@@ -262,7 +312,7 @@ def _create_changelog_embeds(version: str, entries: dict[str, str]) -> list[disc
 
     if version == "Unreleased":
         extra = _get_uncommitted_worktree_changes_markdown()
-        if extra:
+        if extra and WORKTREE_STATUS_HEADER not in notes:
             notes = f"{notes}\n\n{extra}"
 
     base_title = f"Changelog – v{version}" if version != "Unreleased" else "Changelog – Unreleased"
