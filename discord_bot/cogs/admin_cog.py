@@ -30,7 +30,6 @@ class AdminCog(commands.Cog):
 
     async def _create_status_embed(self, guild_id: int) -> discord.Embed:
         return await self._create_status_basic_embed(guild_id)
-
     async def _create_status_env_embed(self) -> discord.Embed:
         bot_user = getattr(self.bot, "user", None)
         bot_user_id = getattr(bot_user, "id", None)

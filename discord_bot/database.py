@@ -265,6 +265,14 @@ class Database:
                 )
             """)
             await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_group_settings (
+                    raid_id INTEGER PRIMARY KEY,
+                    group_count INTEGER NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS auctions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     raid_id INTEGER,
@@ -369,6 +377,36 @@ class Database:
         return await self.fetchall(
             "SELECT user_id, group_number FROM raid_member_groups WHERE raid_id = ?",
             (raid_id,),
+        )
+
+    async def get_raid_group_count(self, raid_id: int) -> int | None:
+        row = await self.fetchone(
+            "SELECT group_count FROM raid_group_settings WHERE raid_id = ?",
+            (int(raid_id),),
+        )
+        if row is None:
+            return None
+        try:
+            return int(row["group_count"])
+        except Exception:
+            return None
+
+    async def set_raid_group_count(self, raid_id: int, group_count: int | None):
+        if group_count is None:
+            await self.execute(
+                "DELETE FROM raid_group_settings WHERE raid_id = ?",
+                (int(raid_id),),
+            )
+            return
+
+        await self.execute(
+            """
+            INSERT INTO raid_group_settings (raid_id, group_count)
+            VALUES (?, ?)
+            ON CONFLICT(raid_id)
+            DO UPDATE SET group_count = excluded.group_count, updated_at = CURRENT_TIMESTAMP
+            """,
+            (int(raid_id), int(group_count)),
         )
 
     async def remove_raid_member(self, raid_id: int, user_id: int) -> bool:

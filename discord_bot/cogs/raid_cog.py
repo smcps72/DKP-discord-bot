@@ -549,6 +549,60 @@ class RaidCog(commands.Cog):
         await self.bot.db.set_raid_member_group(int(raid["id"]), int(member.id), None)
         await interaction.response.send_message(f"Cleared group assignment for {member.mention}.", ephemeral=True)
 
+    async def configure_raid_groups(self, interaction: discord.Interaction, group_count: int):
+        if interaction.guild is None:
+            return
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            try:
+                return await interaction.followup.send("This raid is not active.", ephemeral=True)
+            except Exception:
+                return
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            try:
+                return await interaction.followup.send(
+                    "You must be the raid leader or a bot admin to configure groups.",
+                    ephemeral=True,
+                )
+            except Exception:
+                return
+
+        try:
+            await self.bot.db.set_raid_group_count(int(raid["id"]), int(group_count))
+        except Exception:
+            return await interaction.followup.send(
+                "Failed to save group settings. Please try again.",
+                ephemeral=True,
+            )
+
+        try:
+            group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
+        except Exception:
+            group_rows = []
+
+        for row in group_rows:
+            try:
+                user_id = int(row["user_id"])
+                grp = int(row["group_number"])
+            except Exception:
+                continue
+            if grp < 1 or grp > int(group_count):
+                try:
+                    await self.bot.db.set_raid_member_group(int(raid["id"]), user_id, None)
+                except Exception:
+                    continue
+
+        try:
+            await interaction.followup.send(
+                f"Groups configured: **{int(group_count)}**. Raiders can now use **Join Group**.",
+                ephemeral=True,
+            )
+        except Exception:
+            pass
+
     async def member_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         raid = await self.bot.db.get_raid_by_thread(interaction.channel_id)
         if not raid or not interaction.guild:
