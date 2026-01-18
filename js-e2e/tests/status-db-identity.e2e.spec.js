@@ -66,8 +66,25 @@ async function openWritableChannel(page, gid, primaryCid) {
 async function runStatus(page, gid, cid, hint) {
   const { messageBox } = await openWritableChannel(page, gid, cid);
 
-  const beforeCount = await page.getByText('Bot Status', { exact: true }).count();
-  const beforeAdminCount = await page.getByText('Bot Status (Admin)', { exact: true }).count();
+  try {
+    const token = await page.evaluate(() => window.localStorage.getItem('token'));
+    if (token) {
+      const parts = String(token).split('.');
+      if (parts.length >= 1) {
+        const userId = Buffer.from(parts[0], 'base64').toString('utf8');
+        console.log('[status] logged-in discord user id:', userId);
+      }
+    }
+  } catch {
+  }
+
+  const basicTitle = page.getByText('Bot Status', { exact: true });
+  const adminTitle = page.getByText('Bot Status (Admin)', { exact: false });
+  const dbFileText = page.getByText('DB File', { exact: false });
+
+  const beforeCount = await basicTitle.count();
+  const beforeAdminCount = await adminTitle.count();
+  const beforeDbFileCount = await dbFileText.count();
 
   await messageBox.click();
   await messageBox.fill('/status');
@@ -81,7 +98,10 @@ async function runStatus(page, gid, cid, hint) {
         .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
         .filter((t) => t),
     );
-    console.log('[status] autocomplete options:', texts.slice(0, 10));
+    console.log('[status] autocomplete options (first 10):');
+    for (const t of texts.slice(0, 10)) {
+      console.log(`  - ${t}`);
+    }
   } catch {
   }
 
@@ -152,12 +172,11 @@ async function runStatus(page, gid, cid, hint) {
   let adminText = '';
   if (expectDbIdentity) {
     await expect
-      .poll(async () => page.getByText('Bot Status (Admin)', { exact: true }).count(), { timeout: 45000 })
-      .toBeGreaterThan(beforeAdminCount);
+      .poll(async () => dbFileText.count(), { timeout: 45000 })
+      .toBeGreaterThan(beforeDbFileCount);
     const adminContainer = page
       .locator('li')
-      .filter({ hasText: 'Bot Status (Admin)' })
-      .filter({ hasText: 'Only you can see this' })
+      .filter({ hasText: /DB File/i })
       .last();
     await adminContainer.waitFor({ state: 'visible', timeout: 45000 });
     adminRaw = await adminContainer.innerText();

@@ -153,6 +153,14 @@ class Database:
                 "announcement_message_id",
                 "ALTER TABLE raids ADD COLUMN announcement_message_id INTEGER",
             ),
+            (
+                "group_count",
+                "ALTER TABLE raids ADD COLUMN group_count INTEGER",
+            ),
+            (
+                "group_panel_message_id",
+                "ALTER TABLE raids ADD COLUMN group_panel_message_id INTEGER",
+            ),
         ]
 
         for col, sql in raid_migrations:
@@ -202,6 +210,8 @@ class Database:
                     vc_id INTEGER,
                     thread_id INTEGER UNIQUE,
                     announcement_message_id INTEGER,
+                    group_count INTEGER,
+                    group_panel_message_id INTEGER,
                     is_active INTEGER DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     rules TEXT

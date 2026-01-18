@@ -10,12 +10,14 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         action: str,
         raid_cog,
         member: discord.Member | None = None,
+        group_number: int | None = None,
         source: str | None = None,
     ):
         super().__init__()
         self.action = action
         self.raid_cog = raid_cog
         self.target_member_obj = member  # The member passed from the command
+        self.group_number = group_number
         self.source = source
 
         self.amount = TextInput(
@@ -85,6 +87,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             self.amount.value,
             reason,
             member,
+            self.group_number,
             self.source,
         )
 
@@ -391,3 +394,30 @@ class ThreadRenameModal(discord.ui.Modal):
             await interaction.response.send_message("Thread name cannot be empty.", ephemeral=True)
             return
         await self.raid_cog.rename_raid_thread(interaction, self.raid_id, new_name)
+
+
+class RaidGroupSetupModal(Modal, title="Set Up Raid Groups"):
+    def __init__(self, raid_cog):
+        super().__init__()
+        self.raid_cog = raid_cog
+
+        self.group_count = TextInput(
+            label="Number of groups",
+            placeholder="e.g., 2, 4, 6",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=2,
+        )
+        self.add_item(self.group_count)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = (self.group_count.value or "").strip()
+        try:
+            count = int(raw)
+        except ValueError:
+            return await interaction.response.send_message("Group count must be a whole number.", ephemeral=True)
+
+        if count < 1 or count > 25:
+            return await interaction.response.send_message("Group count must be between 1 and 25.", ephemeral=True)
+
+        await self.raid_cog.setup_raid_groups(interaction, count)
