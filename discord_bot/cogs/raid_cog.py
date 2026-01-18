@@ -1227,9 +1227,12 @@ class RaidCog(commands.Cog):
             return await interaction.followup.send("Join the raid first (click **Join Raid**) before selecting a group.", ephemeral=True)
 
         try:
-            group_count = int(raid.get("group_count") or 0)
+            group_count = int(raid["group_count"])
         except Exception:
-            group_count = 0
+            try:
+                group_count = int(dict(raid).get("group_count") or 0)
+            except Exception:
+                group_count = 0
 
         if group_count < 1:
             return await interaction.followup.send("Groups have not been set up for this raid yet.", ephemeral=True)
