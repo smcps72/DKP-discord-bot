@@ -1392,17 +1392,6 @@ class RaidControlView(discord.ui.View):
             return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        admin_ok = await is_admin(interaction)
-        if raid and (int(interaction.user.id) == int(raid["leader_id"]) or admin_ok):
-            modal = RaidGroupSetupModal(raid_cog=raid_cog)
-            try:
-                return await interaction.response.send_modal(modal)
-            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-                try:
-                    return await interaction.followup.send("Please try again.", ephemeral=True)
-                except discord.HTTPException:
-                    return
-
         raid_dict = raid
         try:
             if raid is not None and not isinstance(raid, dict):
@@ -1418,6 +1407,17 @@ class RaidControlView(discord.ui.View):
                 group_count = int(raid["group_count"])
         except Exception:
             group_count = 0
+
+        admin_ok = await is_admin(interaction)
+        if raid and (int(interaction.user.id) == int(raid["leader_id"]) or admin_ok) and group_count <= 0:
+            modal = RaidGroupSetupModal(raid_cog=raid_cog)
+            try:
+                return await interaction.response.send_modal(modal)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                try:
+                    return await interaction.followup.send("Please try again.", ephemeral=True)
+                except discord.HTTPException:
+                    return
 
         if group_count > 0 and interaction.guild:
             embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)

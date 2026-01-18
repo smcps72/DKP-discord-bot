@@ -404,6 +404,34 @@ class TestRaidControlView:
         modal_sent = mock_raid_control_interaction.response.send_modal.call_args[0][0]
         assert isinstance(modal_sent, RaidGroupSetupModal)
 
+    async def test_groups_button_shows_signup_panel_for_leader_when_groups_already_set_up(self, mock_bot, mock_raid_control_interaction):
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(
+            return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id, "group_count": 3}
+        )
+
+        mock_raid_cog = MagicMock()
+        mock_raid_cog._build_group_signup_embed = AsyncMock(return_value="embed_content")
+        mock_bot.get_cog.return_value = mock_raid_cog
+
+        mock_raid_control_interaction.guild = MockGuild(id=123)
+        mock_raid_control_interaction.response.is_done = MagicMock(return_value=False)
+        mock_raid_control_interaction.response.send_message = AsyncMock()
+        mock_raid_control_interaction.followup.send = AsyncMock()
+        mock_raid_control_interaction.response.send_modal = AsyncMock()
+
+        with patch("discord_bot.ui.views.is_admin", new_callable=AsyncMock) as mock_is_admin:
+            mock_is_admin.return_value = False
+            await view.show_groups.callback(mock_raid_control_interaction)
+
+        mock_raid_control_interaction.response.send_modal.assert_not_called()
+        mock_raid_control_interaction.response.send_message.assert_called_once()
+        _, kwargs = mock_raid_control_interaction.response.send_message.call_args
+        assert kwargs.get("embed") == "embed_content"
+        assert kwargs.get("ephemeral") is True
+        assert isinstance(kwargs.get("view"), RaidGroupSignupView)
+
     async def test_groups_button_shows_signup_panel_for_non_leader(self, mock_bot, mock_raid_control_interaction):
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
