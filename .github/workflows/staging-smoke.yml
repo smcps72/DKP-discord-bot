@@ -59,7 +59,7 @@ jobs:
           echo "$DISCORD_AUTH_JSON_GZ_B64" | base64 -d | gunzip -c > discord-auth.json
           node -e "const fs=require('fs'); const p='discord-auth.json'; if(!fs.existsSync(p) || fs.statSync(p).size===0){ process.exit(1);}"
 
-      - name: Run Playwright changelog smoke test
+      - name: Run Playwright Discord UI smoke tests
         working-directory: js-e2e
         env:
           DISCORD_TEST_GUILD_ID: ${{ vars.DISCORD_TEST_GUILD_ID }}
@@ -69,4 +69,4 @@ jobs:
           QASE_TESTOPS_API_TOKEN: ${{ secrets.QASE_TESTOPS_API_TOKEN }}
           QASE_TESTOPS_RUN_TITLE: "staging-smoke #${{ github.run_number }} (${{ github.sha }})"
           QASE_TESTOPS_RUN_DESCRIPTION: "GitHub Actions run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        run: npx playwright test tests/changelog-smoke.e2e.spec.js
+        run: npx playwright test tests/changelog-smoke.e2e.spec.js tests/dkp-panel-smoke.e2e.spec.js
