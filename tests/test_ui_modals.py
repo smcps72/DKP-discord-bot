@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal, BidModal
+from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidGroupSetupModal
 from discord_bot.cogs.raid_cog import RaidCog
 from discord_bot.cogs.auction_cog import AuctionCog
 
@@ -98,3 +98,18 @@ class TestBidModal:
             auction_id,
             "100"
         )
+
+
+@pytest.mark.asyncio
+class TestRaidGroupSetupModal:
+    async def test_on_submit_delegates_to_raid_cog(self, mock_interaction):
+        raid_cog = MagicMock()
+        raid_cog.setup_raid_groups = AsyncMock()
+
+        modal = RaidGroupSetupModal(raid_cog=raid_cog)
+        modal.group_count = MagicMock()
+        modal.group_count.value = "4"
+
+        await modal.on_submit(mock_interaction)
+
+        raid_cog.setup_raid_groups.assert_called_once_with(mock_interaction, 4)

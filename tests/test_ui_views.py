@@ -160,6 +160,7 @@ async def test_dkp_panel_view_hides_create_raid_for_non_officer_non_admin():
 from discord_bot.ui.views import RaidControlView, DKPAdjustmentView
 from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal
 from discord_bot.ui.views import RaidOpenPanelView
+from discord_bot.ui.modals import RaidGroupSetupModal
 
 @pytest.fixture
 def mock_raid_control_interaction(mock_interaction): # Use the existing mock_interaction
@@ -351,6 +352,23 @@ class TestRaidControlView:
         # Assert: modal is not sent; error followup is sent
         mock_raid_control_interaction.response.send_modal.assert_not_called()
         mock_raid_control_interaction.followup.send.assert_called_with("You don't have permission to rename this thread.", ephemeral=True)
+
+    async def test_groups_button_opens_setup_modal_for_leader(self, mock_bot, mock_raid_control_interaction):
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id})
+
+        mock_raid_cog = MagicMock()
+        mock_bot.get_cog.return_value = mock_raid_cog
+
+        with patch("discord_bot.ui.views.is_admin", new_callable=AsyncMock) as mock_is_admin:
+            mock_is_admin.return_value = False
+            mock_raid_control_interaction.response.send_modal = AsyncMock()
+            await view.show_groups.callback(mock_raid_control_interaction)
+
+        mock_raid_control_interaction.response.send_modal.assert_called_once()
+        modal_sent = mock_raid_control_interaction.response.send_modal.call_args[0][0]
+        assert isinstance(modal_sent, RaidGroupSetupModal)
 
 
 @patch('discord_bot.ui.views.ensure_allowed_guild', new_callable=AsyncMock)

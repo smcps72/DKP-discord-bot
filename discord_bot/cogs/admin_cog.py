@@ -28,6 +28,9 @@ class AdminCog(commands.Cog):
             f"• **Active Raids:** {active_raids_count['count']}"
         )
 
+    async def _create_status_embed(self, guild_id: int) -> discord.Embed:
+        return await self._create_status_basic_embed(guild_id)
+
     async def _create_status_env_embed(self) -> discord.Embed:
         bot_user = getattr(self.bot, "user", None)
         bot_user_id = getattr(bot_user, "id", None)
@@ -62,7 +65,7 @@ class AdminCog(commands.Cog):
         if interaction.guild is None:
             return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
 
-        ephemeral_basic = False
+        ephemeral_basic = True
         try:
             channel = getattr(interaction, "channel", None)
             me = interaction.guild.get_member(getattr(self.bot.user, "id", 0)) if self.bot.user else None
@@ -73,11 +76,11 @@ class AdminCog(commands.Cog):
                 else:
                     ephemeral_basic = not bool(getattr(perms, "send_messages", False))
         except Exception:
-            ephemeral_basic = False
+            ephemeral_basic = True
 
         await interaction.response.defer(ephemeral=True)
 
-        basic_embed = await self._create_status_basic_embed(interaction.guild.id)
+        basic_embed = await self._create_status_embed(interaction.guild.id)
         await interaction.followup.send(embed=basic_embed, ephemeral=ephemeral_basic)
 
         if await is_admin(interaction):

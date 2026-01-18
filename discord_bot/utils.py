@@ -1,5 +1,6 @@
 import os
 import logging
+import inspect
 import discord
 
 def _get_allowed_guild_ids() -> set[int]:
@@ -18,6 +19,20 @@ def _get_allowed_guild_ids() -> set[int]:
     return ids
 
 
+async def _resolve_member(guild: discord.Guild | None, user: discord.abc.User | None) -> discord.Member | None:
+    if not guild or not user:
+        return None
+    if isinstance(user, discord.Member):
+        return user
+    member = guild.get_member(getattr(user, "id", 0))
+    if member:
+        return member
+    try:
+        return await guild.fetch_member(getattr(user, "id", 0))
+    except Exception:
+        return None
+
+
 async def is_officer(interaction: discord.Interaction) -> bool:
     """Checks if the user is an officer or has admin permissions."""
     guild = getattr(interaction, "guild", None)
@@ -25,52 +40,96 @@ async def is_officer(interaction: discord.Interaction) -> bool:
 
     # If this interaction is not in a guild or the user is not a guild member,
     # treat them as a non-officer to avoid attribute errors in DMs.
-    if not guild or not isinstance(user, discord.Member):
+    member = await _resolve_member(guild, user)
+    if not guild or not member:
         return False
 
-    if user.guild_permissions.administrator:
+    admin_flag = getattr(getattr(member, "guild_permissions", None), "administrator", False)
+    if isinstance(admin_flag, bool) and admin_flag:
         return True
 
-    dkp_admin_role = discord.utils.get(guild.roles, name="DKP Admin")
-    if dkp_admin_role and discord.utils.get(user.roles, id=dkp_admin_role.id):
-        return True
+    guild_roles = getattr(guild, "roles", None) or []
+    if inspect.isawaitable(guild_roles):
+        guild_roles = []
+    member_roles = getattr(member, "roles", None) or []
+    if inspect.isawaitable(member_roles):
+        member_roles = []
 
-    config = await interaction.client.db.get_guild_config(guild.id)
+    dkp_admin_role_id = None
+    for role in list(guild_roles):
+        role_name = (getattr(role, "name", "") or "").strip().casefold()
+        if role_name == "dkp admin":
+            dkp_admin_role_id = getattr(role, "id", None)
+            break
+    if dkp_admin_role_id is not None:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == dkp_admin_role_id:
+                return True
+
+    try:
+        config = await interaction.client.db.get_guild_config(guild.id)
+    except Exception:
+        config = None
     admin_role_id = None
     if config and ("admin_role_id" in getattr(config, "keys", lambda: [])()):
         admin_role_id = config["admin_role_id"]
-    if admin_role_id and discord.utils.get(user.roles, id=admin_role_id):
-        return True
+    if admin_role_id:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == admin_role_id:
+                return True
 
     officer_role_id = None
     if config and ("officer_role_id" in getattr(config, "keys", lambda: [])()):
         officer_role_id = config["officer_role_id"]
-    if officer_role_id and discord.utils.get(user.roles, id=officer_role_id):
-        return True
+    if officer_role_id:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == officer_role_id:
+                return True
     return False
 
 async def is_admin(interaction: discord.Interaction) -> bool:
     guild = getattr(interaction, "guild", None)
     user = getattr(interaction, "user", None)
 
-    if not guild or not isinstance(user, discord.Member):
+    member = await _resolve_member(guild, user)
+    if not guild or not member:
         return False
 
     # Always allow true server admins as a backstop (e.g. initial setup).
-    if bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator):
+    admin_flag = getattr(getattr(member, "guild_permissions", None), "administrator", False)
+    if isinstance(admin_flag, bool) and admin_flag:
         return True
 
-    dkp_admin_role = discord.utils.get(guild.roles, name="DKP Admin")
-    if dkp_admin_role and discord.utils.get(user.roles, id=dkp_admin_role.id):
-        return True
+    guild_roles = getattr(guild, "roles", None) or []
+    if inspect.isawaitable(guild_roles):
+        guild_roles = []
+    member_roles = getattr(member, "roles", None) or []
+    if inspect.isawaitable(member_roles):
+        member_roles = []
+
+    dkp_admin_role_id = None
+    for role in list(guild_roles):
+        role_name = (getattr(role, "name", "") or "").strip().casefold()
+        if role_name == "dkp admin":
+            dkp_admin_role_id = getattr(role, "id", None)
+            break
+    if dkp_admin_role_id is not None:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == dkp_admin_role_id:
+                return True
 
     # Otherwise, allow users who have the configured bot-admin role.
-    config = await interaction.client.db.get_guild_config(guild.id)
+    try:
+        config = await interaction.client.db.get_guild_config(guild.id)
+    except Exception:
+        config = None
     admin_role_id = None
     if config and ("admin_role_id" in getattr(config, "keys", lambda: [])()):
         admin_role_id = config["admin_role_id"]
-    if admin_role_id and discord.utils.get(user.roles, id=admin_role_id):
-        return True
+    if admin_role_id:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == admin_role_id:
+                return True
 
     return False
 

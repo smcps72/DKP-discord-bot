@@ -2,7 +2,7 @@ import discord
 import logging
 import re
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupSetupModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embed
@@ -286,7 +286,7 @@ class WelcomeLegacyView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         admin_cog = self.bot.get_cog("AdminCog")
         if admin_cog and interaction.guild is not None:
-            embed = await admin_cog._create_status_basic_embed(interaction.guild.id)
+            embed = await admin_cog._create_status_embed(interaction.guild.id)
             await interaction.followup.send(embed=embed, ephemeral=True)
             if await is_admin(interaction):
                 env_embed = await admin_cog._create_status_env_embed()
@@ -606,7 +606,7 @@ class DkpPanelView(discord.ui.View):
             pass
         admin_cog = self.bot.get_cog("AdminCog")
         if admin_cog and interaction.guild is not None:
-            embed = await admin_cog._create_status_basic_embed(interaction.guild.id)
+            embed = await admin_cog._create_status_embed(interaction.guild.id)
             await interaction.followup.send(embed=embed, ephemeral=True)
             if await is_admin(interaction):
                 env_embed = await admin_cog._create_status_env_embed()
@@ -834,6 +834,7 @@ class RaidControlView(discord.ui.View):
         if interaction.type != discord.InteractionType.modal_submit and custom_id not in (
             "raid_add_rule",
             "raid_start_auction",
+            "raid_show_groups",
             "raid_rename_thread",
         ):
             # Only defer if the interaction hasn't already been acknowledged
@@ -1206,6 +1207,25 @@ class RaidControlView(discord.ui.View):
         raid_cog = self.bot.get_cog("RaidCog")
         if not raid_cog:
             return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        admin_ok = await is_admin(interaction)
+        if raid and (int(interaction.user.id) == int(raid["leader_id"]) or admin_ok):
+            modal = RaidGroupSetupModal(raid_cog=raid_cog)
+            try:
+                return await interaction.response.send_modal(modal)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                try:
+                    return await interaction.followup.send("Please try again.", ephemeral=True)
+                except discord.HTTPException:
+                    return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
         await raid_cog.show_raid_groups(interaction)
 
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
@@ -1577,3 +1597,65 @@ class RaidOpenPanelView(discord.ui.View):
                 ephemeral=True,
             )
         await raid_cog.send_ephemeral_raid_panel(interaction)
+
+
+class RaidGroupSignupSelect(discord.ui.Select):
+    def __init__(self, bot):
+        self.bot = bot
+        options = [
+            discord.SelectOption(label=f"Group {i}", value=str(i))
+            for i in range(1, 26)
+        ]
+        super().__init__(
+            placeholder="Select a group...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="raid_group_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await ensure_allowed_guild(interaction):
+            return
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        value = None
+        try:
+            value = self.values[0]
+        except Exception:
+            value = None
+
+        await raid_cog.handle_group_signup(interaction, value)
+
+
+class RaidGroupSignupView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.add_item(RaidGroupSignupSelect(bot))
+
+    @discord.ui.button(label="Leave group", style=discord.ButtonStyle.secondary, custom_id="raid_group_leave")
+    async def leave_group(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        await raid_cog.handle_group_signup(interaction, "0")

@@ -6,7 +6,7 @@ import logging
 import re
 import io
 from ..utils import create_info_embed, create_error_embed, create_success_embed, is_admin, is_officer, send_dkp_change_dm
-from ..ui.views import RaidControlView, RaidOpenPanelView
+from ..ui.views import RaidControlView, RaidOpenPanelView, RaidGroupSignupView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
 
 MAX_DKP_ADJUSTMENT = 100000
@@ -1037,6 +1037,232 @@ class RaidCog(commands.Cog):
 
         embed = create_info_embed("Raid Groups", "\n".join(lines))
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    async def _build_group_signup_embed(self, raid: dict, guild: discord.Guild) -> discord.Embed:
+        try:
+            group_count = int(raid["group_count"])
+        except Exception:
+            try:
+                group_count = int(dict(raid).get("group_count") or 0)
+            except Exception:
+                group_count = 0
+
+        members_by_id: dict[int, discord.Member] = {}
+        try:
+            member_rows = await self.bot.db.get_raid_members(int(raid["id"]))
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row.get("user_id") if isinstance(row, dict) else row["user_id"]
+            try:
+                uid = int(user_id)
+            except Exception:
+                continue
+            if uid in members_by_id:
+                continue
+            gm = guild.get_member(uid)
+            if gm and not gm.bot:
+                members_by_id[uid] = gm
+
+        try:
+            group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
+        except Exception:
+            group_rows = []
+
+        member_to_group: dict[int, int] = {}
+        for row in group_rows:
+            try:
+                uid = int(row["user_id"])
+                grp = int(row["group_number"])
+            except Exception:
+                continue
+            member_to_group[uid] = grp
+
+        groups: dict[str, list[str]] = {}
+        for i in range(1, max(group_count, 0) + 1):
+            groups[f"Group {i}"] = []
+        groups["Ungrouped"] = []
+
+        for uid, member in members_by_id.items():
+            grp = member_to_group.get(uid)
+            if grp is not None and 1 <= int(grp) <= group_count:
+                groups.setdefault(f"Group {int(grp)}", []).append(member.mention)
+            else:
+                groups.setdefault("Ungrouped", []).append(member.mention)
+
+        lines: list[str] = []
+        if group_count > 0:
+            for i in range(1, group_count + 1):
+                mentions = ", ".join(groups.get(f"Group {i}") or [])
+                lines.append(f"**Group {i}**: {mentions if mentions else '—'}")
+        ungrouped = ", ".join(groups.get("Ungrouped") or [])
+        lines.append(f"**Ungrouped**: {ungrouped if ungrouped else '—'}")
+
+        description = "\n".join(lines)
+        if len(description) > 4096:
+            description = description[:4090] + "..."
+        return create_info_embed("Group Signups", description)
+
+    async def _ensure_group_panel_message(self, thread: discord.Thread, raid: dict, embed: discord.Embed) -> int:
+        raid_id = int(raid["id"])
+        msg_id = None
+        try:
+            msg_id = raid.get("group_panel_message_id")
+        except Exception:
+            msg_id = None
+        try:
+            msg_id = int(msg_id) if msg_id else None
+        except Exception:
+            msg_id = None
+
+        view = RaidGroupSignupView(self.bot)
+        if msg_id:
+            try:
+                msg = await thread.fetch_message(msg_id)
+                await msg.edit(embed=embed, view=view)
+                return msg.id
+            except Exception:
+                msg_id = None
+
+        msg = await thread.send(embed=embed, view=view)
+        await self.bot.db.execute(
+            "UPDATE raids SET group_panel_message_id = ? WHERE id = ?",
+            (int(msg.id), raid_id),
+        )
+        return int(msg.id)
+
+    async def setup_raid_groups(self, interaction: discord.Interaction, group_count: int):
+        if interaction.guild is None:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+                else:
+                    await interaction.followup.send("This command cannot be used in DMs.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        if not isinstance(interaction.channel, discord.Thread):
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("This must be run inside a raid log thread.", ephemeral=True)
+                else:
+                    await interaction.followup.send("This must be run inside a raid log thread.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.followup.send(
+                "You must be the raid leader or a bot admin to set up groups.",
+                ephemeral=True,
+            )
+
+        raid_id = int(raid["id"])
+        await self.bot.db.execute(
+            "UPDATE raids SET group_count = ? WHERE id = ?",
+            (int(group_count), raid_id),
+        )
+        await self.bot.db.execute(
+            "DELETE FROM raid_member_groups WHERE raid_id = ?",
+            (raid_id,),
+        )
+
+        raid_dict = dict(raid)
+        raid_dict["group_count"] = int(group_count)
+        embed = await self._build_group_signup_embed(raid_dict, interaction.guild)
+        msg_id = await self._ensure_group_panel_message(interaction.channel, raid_dict, embed)
+        raid_dict["group_panel_message_id"] = int(msg_id)
+
+        await interaction.followup.send("Group signups are ready.", ephemeral=True)
+
+    async def handle_group_signup(self, interaction: discord.Interaction, selected_value: str | None):
+        if interaction.guild is None:
+            return
+
+        if not isinstance(interaction.channel, discord.Thread):
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("This must be used inside a raid log thread.", ephemeral=True)
+                else:
+                    await interaction.followup.send("This must be used inside a raid log thread.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        if getattr(interaction.user, "bot", False):
+            return await interaction.followup.send("Bots cannot join groups.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+        user_id = int(interaction.user.id)
+
+        try:
+            is_member = await self.bot.db.is_raid_member(raid_id, user_id)
+        except Exception:
+            is_member = False
+
+        if not is_member:
+            return await interaction.followup.send("Join the raid first (click **Join Raid**) before selecting a group.", ephemeral=True)
+
+        try:
+            group_count = int(raid.get("group_count") or 0)
+        except Exception:
+            group_count = 0
+
+        if group_count < 1:
+            return await interaction.followup.send("Groups have not been set up for this raid yet.", ephemeral=True)
+
+        group_number: int | None
+        if selected_value in (None, "", "0"):
+            group_number = None
+        else:
+            try:
+                group_number = int(selected_value)
+            except ValueError:
+                return await interaction.followup.send("Invalid group selection.", ephemeral=True)
+            if group_number < 1 or group_number > group_count:
+                return await interaction.followup.send(f"Please select a group between 1 and {group_count}.", ephemeral=True)
+
+        await self.bot.db.set_raid_member_group(raid_id, user_id, group_number)
+
+        raid_dict = dict(raid)
+        embed = await self._build_group_signup_embed(raid_dict, interaction.guild)
+        msg_id = await self._ensure_group_panel_message(interaction.channel, raid_dict, embed)
+
+        if msg_id and (raid_dict.get("group_panel_message_id") != msg_id):
+            try:
+                await self.bot.db.execute(
+                    "UPDATE raids SET group_panel_message_id = ? WHERE id = ?",
+                    (int(msg_id), raid_id),
+                )
+            except Exception:
+                pass
+
+        if group_number is None:
+            return await interaction.followup.send("You have left your group.", ephemeral=True)
+        return await interaction.followup.send(f"You joined **Group {group_number}**.", ephemeral=True)
 
     async def update_team_list(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)

@@ -48,7 +48,7 @@ if not dotenv_loaded:
     )
 
 from discord_bot.database import Database, DB_FILE
-from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, RaidControlView, AuctionOpenPanelView, RaidOpenPanelView
+from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, RaidControlView, AuctionOpenPanelView, RaidOpenPanelView, RaidGroupSignupView
 from discord_bot.utils import ensure_allowed_guild, create_info_embed
 from discord_bot.analytics import Analytics
 from discord_bot import __version__
@@ -227,6 +227,7 @@ class DkpBot(commands.Bot):
         self.add_view(RaidControlView(self))
         self.add_view(AuctionOpenPanelView(self))
         self.add_view(RaidOpenPanelView(self))
+        self.add_view(RaidGroupSignupView(self))
         
         # Sync slash commands
         # In a production bot, you might want to sync only once or on command
