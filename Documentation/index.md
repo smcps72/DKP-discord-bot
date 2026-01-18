@@ -14,4 +14,5 @@ Use this guide if you are:
 - [Commands](commands.md)
 - [Player Guide](Player-Help.md)
 - [Officer/Admin Guide](Officer-Admin-Help.md)
+- [Testing / QA](testing-qa.md)
 - [Security](security.md)
