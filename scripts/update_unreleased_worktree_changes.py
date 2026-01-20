@@ -1,12 +1,66 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import urllib.request
 from pathlib import Path
 
 
 SECTION_HEADER = "## Local worktree changes (not yet committed)"
+
+
+def _load_env_from_file(path: Path) -> None:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        key = k.strip()
+        val = v.strip().strip('"').strip("'")
+        if not key:
+            continue
+        os.environ.setdefault(key, val)
+
+
+def _load_env() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+
+    paths = [
+        repo_root / "secrets" / ".env.local",
+        repo_root / ".env.local",
+        repo_root / ".env",
+    ]
+
+    try:
+        from dotenv import load_dotenv  # type: ignore
+
+        for p in paths:
+            if p.exists():
+                load_dotenv(dotenv_path=p, override=False)
+        return
+    except Exception:
+        for p in paths:
+            if p.exists():
+                _load_env_from_file(p)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    m = re.match(r"^(\d+)", raw)
+    if not m:
+        return default
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return default
 
 
 def _run_git(args: list[str], cwd: Path, timeout: float = 5) -> str | None:
@@ -30,6 +84,7 @@ def _run_git(args: list[str], cwd: Path, timeout: float = 5) -> str | None:
 
 
 def _get_openai_config() -> tuple[str, str, str] | None:
+    _load_env()
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
@@ -61,10 +116,13 @@ def _sanitize_diff_for_ai(raw: str, max_chars: int = 80_000) -> str:
 
 
 def _openai_chat_completion(prompt: str, timeout: float = 20) -> str | None:
+    _load_env()
     cfg = _get_openai_config()
     if cfg is None:
         return None
     api_key, base_url, model = cfg
+
+    is_o_series = model.lower().startswith("o")
 
     payload = {
         "model": model,
@@ -73,16 +131,22 @@ def _openai_chat_completion(prompt: str, timeout: float = 20) -> str | None:
                 "role": "system",
                 "content": (
                     "You are an expert release note writer for a Discord bot. "
-                    "Write an in-depth, feature-oriented summary of the provided uncommitted code changes. "
-                    "Output must be Markdown using only '###' headings, '-' bullets, and short paragraphs. "
+                    "Write in the same style as the project's 0.1.0-alpha.* changelog files: "
+                    "use '##' headings, '-' bullets, short paragraphs, and occasional sub-bullets. "
                     "Do not mention filenames, file paths, branches, worktrees, commit hashes, or git commands. "
-                    "Prefer describing user-visible behavior, UX changes, command changes, and data/QA improvements."
+                    "Prefer describing user-visible behavior, permissions/visibility changes, UX changes, "
+                    "raid/voice/timed DKP behavior, and QA/testing work."
                 ),
             },
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0.2,
     }
+
+    if is_o_series:
+        payload["max_completion_tokens"] = _env_int("OPENAI_MAX_OUTPUT_TOKENS", 2000)
+    else:
+        payload["temperature"] = 0.2
+        payload["max_tokens"] = _env_int("OPENAI_MAX_TOKENS", 1200)
 
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -227,16 +291,14 @@ def _worktree_uncommitted_diff_text(repo_root: Path, cwd: Path) -> str:
     return "\n\n".join([p.strip() for p in parts if p and p.strip()]).strip()
 
 
-def _render_worktree_status(repo_root: Path) -> str:
-    if not (repo_root / ".git").exists():
-        return ""
-
+def _gather_worktree_changes(repo_root: Path) -> tuple[dict[str, int], list[str], str]:
     worktrees = _iter_worktrees(repo_root)
     if not worktrees:
-        return ""
+        return {}, [], ""
 
     combined_counts: dict[str, int] = {}
     diff_parts: list[str] = []
+
     for wt in worktrees:
         path_str = wt.get("path")
         if not path_str:
@@ -270,33 +332,64 @@ def _render_worktree_status(repo_root: Path) -> str:
             diff_parts.append(diff_text)
 
     if not combined_counts:
-        return ""
+        return {}, [], ""
 
     combined_categories = [
         cat
         for cat, _n in sorted(combined_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
-
     diff_for_ai = _sanitize_diff_for_ai("\n\n".join(diff_parts)) if diff_parts else ""
-    summary: str | None = None
-    if diff_for_ai and _get_openai_config() is not None:
-        prompt = (
-            "Summarize the following uncommitted changes into in-progress release notes. "
-            "Keep it specific and in-depth.\n\n"
-            f"{diff_for_ai}"
-        )
-        summary = _openai_chat_completion(prompt)
+    return combined_counts, combined_categories, diff_for_ai
 
-    if not summary:
-        lines: list[str] = []
-        lines.append("### In-progress summary")
+
+def _render_worktree_status(repo_root: Path) -> str:
+    if not (repo_root / ".git").exists():
+        return ""
+
+    combined_counts, combined_categories, _diff_for_ai = _gather_worktree_changes(repo_root)
+    if not combined_counts:
+        return ""
+
+    lines: list[str] = []
+    for cat in combined_categories:
+        n = combined_counts.get(cat, 0)
+        if not n:
+            continue
+        lines.append(f"### {cat}: {_feature_hint(cat)}")
         lines.append("")
-        lines.append("- Areas touched:")
-        for cat in combined_categories:
-            lines.append(f"  - {cat}: {_feature_hint(cat)}")
-        summary = "\n".join(lines).rstrip()
+        lines.append(f"- {n} file(s) changed")
+        lines.append("")
 
+    summary = "\n".join(lines).rstrip()
     return "\n".join([SECTION_HEADER, "", summary]).rstrip() + "\n"
+
+
+def _render_unreleased_notes(repo_root: Path, base_notes: str) -> str | None:
+    if not (repo_root / ".git").exists():
+        return None
+
+    _counts, _cats, diff_for_ai = _gather_worktree_changes(repo_root)
+    if not diff_for_ai:
+        return None
+    if _get_openai_config() is None:
+        return None
+
+    task_list = (base_notes or "").strip()
+    if not task_list:
+        task_list = "No unreleased notes yet."
+
+    prompt = (
+        "Write the Unreleased changelog entry in the same style as 0.1.0-alpha.* files. "
+        "Use '##' headings, '-' bullets, short paragraphs, and sub-bullets when helpful. "
+        "Do not mention filenames, file paths, branches, worktrees, commit hashes, or git commands. "
+        "Focus on user-visible behavior and raid/DKP/permission details. "
+        "If something is mentioned in the task list but not clearly implemented yet, mark it as 'In progress' or 'Needs testing'.\n\n"
+        "Task list / requirements (use as required topics):\n"
+        f"{task_list}\n\n"
+        "Uncommitted changes (source of truth for what is implemented):\n"
+        f"{diff_for_ai}"
+    )
+    return _openai_chat_completion(prompt)
 
 
 def _strip_existing_generated_section(raw: str) -> str:
@@ -307,13 +400,16 @@ def _strip_existing_generated_section(raw: str) -> str:
     return raw.rstrip() + "\n"
 
 
-def _update_unreleased_file(unreleased_path: Path, generated: str) -> bool:
+def _update_unreleased_file(unreleased_path: Path, generated: str, new_base: str | None = None) -> bool:
     try:
         existing = unreleased_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
 
     base = _strip_existing_generated_section(existing)
+
+    if new_base is not None and new_base.strip():
+        base = new_base.rstrip() + "\n"
 
     if generated:
         out = base.rstrip() + "\n\n" + generated
@@ -345,8 +441,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    _load_env()
+
     repo_root = Path(__file__).resolve().parents[1]
-    generated = _render_worktree_status(repo_root)
+    generated = ""
 
     worktree_paths: list[Path]
     if args.current_only:
@@ -361,7 +459,15 @@ def main() -> int:
         unreleased_path = wt_root / "changelog" / "Unreleased.md"
         if not unreleased_path.exists():
             continue
-        if _update_unreleased_file(unreleased_path, generated):
+
+        try:
+            existing = unreleased_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            existing = ""
+        base_notes = _strip_existing_generated_section(existing).strip()
+
+        new_base = _render_unreleased_notes(wt_root, base_notes)
+        if _update_unreleased_file(unreleased_path, generated, new_base=new_base):
             changed_any = True
 
     return 0 if changed_any else 0

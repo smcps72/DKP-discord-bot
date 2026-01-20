@@ -344,11 +344,6 @@ def _create_changelog_embeds(version: str, entries: dict[str, str]) -> list[disc
     if not notes:
         notes = "No changelog entry is available for this version."
 
-    if version == "Unreleased":
-        extra = _get_uncommitted_worktree_changes_markdown()
-        if extra and WORKTREE_STATUS_HEADER not in notes:
-            notes = f"{notes}\n\n{extra}"
-
     base_title = f"Changelog – v{version}" if version != "Unreleased" else "Changelog – Unreleased"
     chunks: list[str] = []
     text = notes
