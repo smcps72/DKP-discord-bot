@@ -2090,14 +2090,18 @@ class RaidControlView(discord.ui.View):
         if not raid:
             return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
 
+        group_count = 0
         try:
-            group_count = await self.bot.db.get_raid_group_count(int(raid["id"]))
+            group_count = int(raid["group_count"])
         except Exception:
-            group_count = None
+            try:
+                group_count = int(dict(raid).get("group_count") or 0)
+            except Exception:
+                group_count = 0
 
-        if not group_count:
+        if group_count <= 0:
             return await interaction.followup.send(
-                "Raid groups have not been configured yet.",
+                "Groups are not enabled for this raid yet. Ask the raid leader to click **Groups** to set them up.",
                 ephemeral=True,
             )
 
