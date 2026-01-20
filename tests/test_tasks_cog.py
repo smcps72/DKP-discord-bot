@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timedelta
 import os # <--- Added import
 
 import discord
@@ -68,9 +69,9 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
     async def test_dummy(self):
         self.assertTrue(True)
         if self.bot.license_check_enabled:
-            self.assertEqual(self.mock_loop_start_method.call_count, 3)
+            self.assertEqual(self.mock_loop_start_method.call_count, 5)
         else:
-            self.assertEqual(self.mock_loop_start_method.call_count, 2)
+            self.assertEqual(self.mock_loop_start_method.call_count, 4)
 
 
     def _setup_mock_http_response(self, status_code, json_payload=None, exception_to_raise=None):
@@ -209,7 +210,7 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
 
         cog_disabled = TasksCog(self.bot_specific)
 
-        self.assertEqual(mock_loop_start_override_method.call_count, 2)
+        self.assertEqual(mock_loop_start_override_method.call_count, 4)
 
 
     async def test_hourly_dkp_award_only_active_raid_members(self):
@@ -340,6 +341,77 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
         self.bot.db.fetchall.assert_called_once_with("SELECT id, vc_id FROM raids WHERE is_active = 1")
         self.bot.get_channel.assert_not_called()
         self.bot.db.execute.assert_not_called()
+
+
+    async def test_enforce_raid_voice_absences_skips_when_no_voice_channels(self):
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = 12345
+        mock_guild.get_channel.return_value = None
+        self.bot.get_guild = MagicMock(return_value=mock_guild)
+
+        self.bot.db.fetchall = AsyncMock(return_value=[
+            {"id": 1, "guild_id": 12345, "leader_id": 111, "thread_id": 222, "vc_id": None},
+        ])
+        self.bot.db.get_raid_voice_channels = AsyncMock(return_value=[])
+        self.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 111}])
+        self.bot.db.remove_raid_member = AsyncMock()
+
+        await self.cog.enforce_raid_voice_absences()
+
+        self.bot.db.remove_raid_member.assert_not_called()
+        self.bot.db.execute.assert_any_call(
+            "DELETE FROM raid_voice_absences WHERE raid_id = ?",
+            (1,),
+        )
+
+
+    async def test_enforce_raid_voice_absences_removes_after_15_minutes(self):
+        class FakeVoiceChannel:
+            def __init__(self, members=None):
+                self.members = members or []
+
+        member_id = 555
+        raid_id = 1
+        guild_id = 12345
+        vc_id = 999
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.get_thread = MagicMock(return_value=None)
+        mock_guild.get_member = MagicMock(return_value=None)
+
+        fake_vc = FakeVoiceChannel(members=[])
+        mock_guild.get_channel = MagicMock(return_value=fake_vc)
+        self.bot.get_guild = MagicMock(return_value=mock_guild)
+
+        from discord_bot.cogs import tasks_cog as tasks_cog_module
+        with patch.object(tasks_cog_module.discord, "VoiceChannel", FakeVoiceChannel):
+            self.bot.db.fetchall = AsyncMock(return_value=[
+                {"id": raid_id, "guild_id": guild_id, "leader_id": 111, "thread_id": 222, "vc_id": vc_id},
+            ])
+            self.bot.db.get_raid_voice_channels = AsyncMock(return_value=[])
+            self.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member_id}])
+            self.bot.db.is_raid_member_excluded = AsyncMock(return_value=False)
+
+            absent_since = (datetime.utcnow() - timedelta(minutes=16)).isoformat()
+            self.bot.db.fetchone = AsyncMock(return_value={"absent_since": absent_since})
+            self.bot.db.remove_raid_member = AsyncMock(return_value=True)
+            self.bot.db.add_raid_member_exclusion = AsyncMock()
+            self.bot.db.delete_raid_join_request = AsyncMock()
+
+            await self.cog.enforce_raid_voice_absences()
+
+            self.bot.db.remove_raid_member.assert_called_once_with(raid_id, member_id)
+            self.bot.db.add_raid_member_exclusion.assert_called_once_with(raid_id, member_id)
+            self.bot.db.delete_raid_join_request.assert_called_once_with(raid_id, member_id)
+            self.bot.db.execute.assert_any_call(
+                "DELETE FROM raid_member_groups WHERE raid_id = ? AND user_id = ?",
+                (raid_id, member_id),
+            )
+            self.bot.db.execute.assert_any_call(
+                "DELETE FROM raid_voice_absences WHERE raid_id = ? AND user_id = ?",
+                (raid_id, member_id),
+            )
 
 
 if __name__ == '__main__':

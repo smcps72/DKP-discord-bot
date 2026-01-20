@@ -41,12 +41,32 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         if member is None and source != "raid_panel":
             self.target_member_input = TextInput(
                 label="Target Member Name (optional)",
-                placeholder="Leave blank to adjust everyone in VC",
+                placeholder="Leave blank to adjust everyone in raid",
                 style=discord.TextStyle.short,
                 required=False,
                 max_length=100,
             )
             self.add_item(self.target_member_input)
+
+        self.exclude_groups_input = None
+        self.exclude_members_input = None
+        if member is None and group_number is None:
+            self.exclude_groups_input = TextInput(
+                label="Exclude group number(s) (optional)",
+                placeholder="e.g., 1, 2",
+                style=discord.TextStyle.short,
+                required=False,
+                max_length=50,
+            )
+            self.exclude_members_input = TextInput(
+                label="Exclude member(s) (optional)",
+                placeholder="@mentions or IDs, comma-separated",
+                style=discord.TextStyle.short,
+                required=False,
+                max_length=200,
+            )
+            self.add_item(self.exclude_groups_input)
+            self.add_item(self.exclude_members_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         member = self.target_member_obj
@@ -75,6 +95,41 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                         f"Member '{target_value}' not found. Please use their exact Discord name, nickname, or ID.",
                         ephemeral=True
                     )
+
+        exclude_group_numbers: set[int] | None = None
+        if self.exclude_groups_input is not None:
+            raw = (self.exclude_groups_input.value or "").strip()
+            if raw:
+                exclude_group_numbers = set()
+                for token in raw.replace(";", ",").replace(" ", ",").split(","):
+                    token = token.strip()
+                    if not token:
+                        continue
+                    try:
+                        exclude_group_numbers.add(int(token))
+                    except ValueError:
+                        continue
+                if not exclude_group_numbers:
+                    exclude_group_numbers = None
+
+        exclude_member_ids: set[int] | None = None
+        if self.exclude_members_input is not None:
+            raw = (self.exclude_members_input.value or "").strip()
+            if raw:
+                exclude_member_ids = set()
+                for part in raw.replace(";", ",").split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    digits = [c for c in part if c.isdigit()]
+                    if not digits:
+                        continue
+                    try:
+                        exclude_member_ids.add(int("".join(digits)))
+                    except ValueError:
+                        continue
+                if not exclude_member_ids:
+                    exclude_member_ids = None
         reason = (self.reason.value or "").strip()
         if not reason:
             reason = "No reason provided"
@@ -89,7 +144,52 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             member,
             self.group_number,
             self.source,
+            exclude_member_ids=exclude_member_ids,
+            exclude_group_numbers=exclude_group_numbers,
         )
+
+
+class RaidTimedAwardModal(Modal, title="Timed Raid DKP"):
+    def __init__(self, raid_cog):
+        super().__init__()
+        self.raid_cog = raid_cog
+
+        self.amount = TextInput(
+            label="DKP per interval",
+            placeholder="e.g., 5",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=6,
+        )
+        self.interval_minutes = TextInput(
+            label="Interval (minutes)",
+            placeholder="e.g., 30",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=4,
+        )
+
+        self.add_item(self.amount)
+        self.add_item(self.interval_minutes)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw_amount = (self.amount.value or "").strip()
+        raw_interval = (self.interval_minutes.value or "").strip()
+        try:
+            amount = int(raw_amount)
+        except ValueError:
+            return await interaction.response.send_message("Amount must be a whole number.", ephemeral=True)
+        try:
+            interval = int(raw_interval)
+        except ValueError:
+            return await interaction.response.send_message("Interval must be a whole number.", ephemeral=True)
+
+        if amount <= 0:
+            return await interaction.response.send_message("Amount must be greater than 0.", ephemeral=True)
+        if interval <= 0:
+            return await interaction.response.send_message("Interval must be greater than 0.", ephemeral=True)
+
+        await self.raid_cog.configure_timed_award(interaction, amount=amount, interval_minutes=interval)
 
 
 class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):

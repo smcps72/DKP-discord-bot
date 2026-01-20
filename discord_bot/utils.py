@@ -85,6 +85,17 @@ async def is_officer(interaction: discord.Interaction) -> bool:
         for role in list(member_roles):
             if getattr(role, "id", None) == officer_role_id:
                 return True
+
+    fallback_officer_role_id = None
+    for role in list(guild_roles):
+        role_name = (getattr(role, "name", "") or "").strip().casefold()
+        if role_name == "officer":
+            fallback_officer_role_id = getattr(role, "id", None)
+            break
+    if fallback_officer_role_id is not None:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == fallback_officer_role_id:
+                return True
     return False
 
 async def is_admin(interaction: discord.Interaction) -> bool:

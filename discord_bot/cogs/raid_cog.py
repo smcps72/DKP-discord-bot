@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 import logging
+import random
 import re
 import io
 from ..utils import create_info_embed, create_error_embed, create_success_embed, is_admin, is_officer, send_dkp_change_dm
@@ -20,6 +21,108 @@ class RaidCog(commands.Cog):
         # instead of after every single award/deduct.
         # Key: (guild_id, thread_id, leader_id) -> int count
         self._dkp_adjust_counts: dict[tuple[int, int, int], int] = {}
+
+    async def configure_timed_award(
+        self,
+        interaction: discord.Interaction,
+        amount: int,
+        interval_minutes: int,
+    ):
+        if not interaction.guild:
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.followup.send(
+                "You must be the raid leader or a bot admin to configure timed DKP.",
+                ephemeral=True,
+            )
+
+        try:
+            amount = int(amount)
+            interval_minutes = int(interval_minutes)
+        except Exception:
+            return await interaction.followup.send("Invalid timed DKP settings.", ephemeral=True)
+
+        if amount <= 0 or interval_minutes <= 0:
+            return await interaction.followup.send("Invalid timed DKP settings.", ephemeral=True)
+
+        try:
+            await self.bot.db.set_raid_timed_award(
+                int(raid["id"]),
+                amount=int(amount),
+                interval_minutes=int(interval_minutes),
+                is_enabled=True,
+            )
+        except Exception:
+            logging.exception("Failed to save timed award settings")
+            return await interaction.followup.send(
+                "Failed to save timed DKP settings. Please try again.",
+                ephemeral=True,
+            )
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(
+                    f"Timed DKP enabled: **+{int(amount)} DKP** every **{int(interval_minutes)} minutes** (awarded to raid members)."
+                )
+        except Exception:
+            logging.exception("Failed to announce timed award settings")
+
+        return await interaction.followup.send(
+            f"Timed DKP configured: **+{int(amount)}** every **{int(interval_minutes)}m**.",
+            ephemeral=True,
+        )
+
+    async def disable_timed_award(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.followup.send(
+                "You must be the raid leader or a bot admin to disable timed DKP.",
+                ephemeral=True,
+            )
+
+        try:
+            row = await self.bot.db.get_raid_timed_award(int(raid["id"]))
+        except Exception:
+            row = None
+
+        if not row:
+            return await interaction.followup.send("Timed DKP is not configured for this raid.", ephemeral=True)
+
+        try:
+            await self.bot.db.set_raid_timed_award_enabled(int(raid["id"]), False)
+        except Exception:
+            logging.exception("Failed to disable timed award")
+            return await interaction.followup.send(
+                "Failed to disable timed DKP. Please try again.",
+                ephemeral=True,
+            )
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send("Timed DKP disabled.")
+        except Exception:
+            logging.exception("Failed to announce timed award disable")
+
+        return await interaction.followup.send("Timed DKP disabled.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
@@ -1354,7 +1457,22 @@ class RaidCog(commands.Cog):
                 members_by_id[user_id] = gm
 
         members = list(members_by_id.values())
-        members.sort(key=lambda m: (m.display_name or "").lower())
+
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        if str(member_list_order).strip().casefold() == "random":
+            random.shuffle(members)
+        else:
+            members.sort(key=lambda m: (m.display_name or "").lower())
         if not members:
             return await interaction.followup.send("No raid members were found for this raid.")
 
@@ -1379,6 +1497,8 @@ class RaidCog(commands.Cog):
         member: discord.Member | None = None,
         group_number: int | None = None,
         source: str | None = None,
+        exclude_member_ids: set[int] | None = None,
+        exclude_group_numbers: set[int] | None = None,
     ):
         # Defer if not already deferred
         if not interaction.response.is_done():
@@ -1498,13 +1618,13 @@ class RaidCog(commands.Cog):
                 if gm and not gm.bot:
                     targets_by_id[user_id] = gm
 
-            if group_number is not None:
+            member_to_group: dict[int, int] = {}
+            if group_number is not None or exclude_group_numbers:
                 try:
                     group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
                 except Exception:
                     group_rows = []
 
-                member_to_group: dict[int, int] = {}
                 for row in group_rows:
                     try:
                         uid = int(row["user_id"])
@@ -1513,6 +1633,18 @@ class RaidCog(commands.Cog):
                         continue
                     member_to_group[uid] = grp
 
+            if exclude_member_ids:
+                for uid in list(targets_by_id.keys()):
+                    if int(uid) in exclude_member_ids:
+                        targets_by_id.pop(uid, None)
+
+            if exclude_group_numbers:
+                for uid in list(targets_by_id.keys()):
+                    grp = member_to_group.get(int(uid))
+                    if grp is not None and int(grp) in exclude_group_numbers:
+                        targets_by_id.pop(uid, None)
+
+            if group_number is not None:
                 targets = [
                     m
                     for uid, m in targets_by_id.items()
@@ -1520,6 +1652,16 @@ class RaidCog(commands.Cog):
                 ]
             else:
                 targets = list(targets_by_id.values())
+
+            filtered: list[discord.Member] = []
+            for m in targets:
+                try:
+                    if await self.bot.db.is_raid_member_excluded(int(raid["id"]), int(m.id)):
+                        continue
+                except Exception:
+                    pass
+                filtered.append(m)
+            targets = filtered
         else:
             if member.bot:
                 await interaction.followup.send(
