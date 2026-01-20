@@ -1703,21 +1703,6 @@ class RaidControlView(discord.ui.View):
         view = RaidGroupJoinView(self.bot, int(raid["id"]), int(group_count))
         return await interaction.followup.send("Select your group:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="Group", style=discord.ButtonStyle.secondary, custom_id="raid_configure_groups", row=3)
-    async def configure_groups(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_cog = self.bot.get_cog("RaidCog")
-        if not raid_cog:
-            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
-
-        modal = RaidGroupCountModal(raid_cog)
-        try:
-            await interaction.response.send_modal(modal)
-        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-            try:
-                await interaction.followup.send("Please try again.", ephemeral=True)
-            except Exception:
-                pass
-
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Open a modal to rename the raid thread (raid leaders/officers only)."""
