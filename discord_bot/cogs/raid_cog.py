@@ -721,7 +721,7 @@ class RaidCog(commands.Cog):
 
         try:
             await interaction.followup.send(
-                f"Groups configured: **{int(group_count)}**. Raiders can now use **Join Group**.",
+                f"Groups configured: **{int(group_count)}**. Raiders can now use **Groups**.",
                 ephemeral=True,
             )
         except Exception:
