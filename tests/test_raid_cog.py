@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -10,6 +10,7 @@ from discord_bot.cogs.raid_cog import RaidCog
 def mock_bot():
     bot = MagicMock()
     bot.db = AsyncMock()
+    bot.db.is_raid_member_excluded = AsyncMock(return_value=False)
     return bot
 
 
@@ -380,3 +381,156 @@ async def test_process_dkp_adjustment_rejects_member_not_in_vc_or_raid(raid_cog,
     embed = kwargs.get("embed")
     assert embed is not None
     assert embed.title == "Invalid Target"
+
+
+@pytest.mark.asyncio
+async def test_process_dkp_adjustment_excludes_members_and_groups(raid_cog, mock_interaction, mock_thread):
+    raid = {
+        "id": 1,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "vc_id": 999,
+        "group_count": 2,
+    }
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+
+    m1 = MagicMock(spec=discord.Member)
+    m1.id = 111
+    m1.bot = False
+    m1.mention = f"<@{m1.id}>"
+    m1.display_name = "A"
+
+    m2 = MagicMock(spec=discord.Member)
+    m2.id = 222
+    m2.bot = False
+    m2.mention = f"<@{m2.id}>"
+    m2.display_name = "B"
+
+    m3 = MagicMock(spec=discord.Member)
+    m3.id = 333
+    m3.bot = False
+    m3.mention = f"<@{m3.id}>"
+    m3.display_name = "C"
+
+    raid_cog.bot.db.get_raid_members = AsyncMock(
+        return_value=[{"user_id": m1.id}, {"user_id": m2.id}, {"user_id": m3.id}]
+    )
+    raid_cog.bot.db.get_raid_member_groups = AsyncMock(
+        return_value=[
+            {"user_id": m1.id, "group_number": 1},
+            {"user_id": m2.id, "group_number": 2},
+            {"user_id": m3.id, "group_number": 1},
+        ]
+    )
+
+    def get_member_side_effect(user_id):
+        if int(user_id) == m1.id:
+            return m1
+        if int(user_id) == m2.id:
+            return m2
+        if int(user_id) == m3.id:
+            return m3
+        return None
+
+    mock_interaction.guild.get_member.side_effect = get_member_side_effect
+    raid_cog.bot.db.modify_user_dkp = AsyncMock()
+    mock_interaction.response.is_done.return_value = True
+
+    await raid_cog.process_dkp_adjustment(
+        mock_interaction,
+        action="Award",
+        amount_str="5",
+        reason="Mass award with exclusions",
+        member=None,
+        exclude_member_ids={333},
+        exclude_group_numbers={2},
+    )
+
+    # group 2 excludes m2; explicit exclude removes m3; only m1 should be awarded
+    raid_cog.bot.db.modify_user_dkp.assert_awaited_once()
+    raid_cog.bot.db.modify_user_dkp.assert_awaited_once_with(
+        m1.id,
+        mock_interaction.guild.id,
+        5,
+        "Award: Mass award with exclusions (Raid)",
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_team_from_voice_channel_skips_excluded_members(raid_cog, mock_interaction, mock_thread):
+    raid = {
+        "id": 1,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "vc_id": 999,
+    }
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+    raid_cog.bot.db.execute = AsyncMock()
+    raid_cog.bot.db.add_raid_voice_channel = AsyncMock()
+    raid_cog.bot.db.get_raid_voice_channels = AsyncMock(return_value=[])
+
+    leader_member = MagicMock(spec=discord.Member)
+    leader_member.id = mock_interaction.user.id
+    leader_member.bot = False
+    leader_voice = MagicMock()
+    leader_vc = MagicMock()
+    leader_voice.channel = leader_vc
+    leader_member.voice = leader_voice
+    mock_interaction.guild.get_member.return_value = leader_member
+
+    vc_member_ok = MagicMock(spec=discord.Member)
+    vc_member_ok.id = 111
+    vc_member_ok.bot = False
+
+    vc_member_excluded = MagicMock(spec=discord.Member)
+    vc_member_excluded.id = 222
+    vc_member_excluded.bot = False
+
+    leader_vc.id = 999
+    leader_vc.members = [vc_member_ok, vc_member_excluded]
+    leader_vc.mention = "#voice"
+
+    mock_interaction.guild.get_channel.return_value = leader_vc
+
+    async def excluded_side_effect(raid_id, user_id):
+        return int(user_id) == 222
+
+    raid_cog.bot.db.is_raid_member_excluded = AsyncMock(side_effect=excluded_side_effect)
+    raid_cog.bot.db.add_raid_member = AsyncMock(return_value=True)
+
+    raid_cog.update_team_list = AsyncMock()
+
+    mock_interaction.response.is_done.return_value = True
+
+    with patch("discord_bot.cogs.raid_cog.discord.VoiceChannel", new=MagicMock):
+        with patch("discord_bot.cogs.raid_cog.is_admin", new_callable=AsyncMock) as mock_is_admin:
+            mock_is_admin.return_value = False
+            await raid_cog.update_team_from_voice_channel(mock_interaction)
+
+    raid_cog.bot.db.add_raid_member.assert_awaited_once_with(int(raid["id"]), int(vc_member_ok.id))
+
+
+@pytest.mark.asyncio
+async def test_configure_timed_award_saves_to_db(raid_cog, mock_interaction, mock_thread):
+    raid = {
+        "id": 1,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "vc_id": 999,
+    }
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+    raid_cog.bot.db.set_raid_timed_award = AsyncMock()
+    mock_thread.send = AsyncMock()
+    mock_interaction.response.is_done.return_value = True
+
+    with patch("discord_bot.cogs.raid_cog.is_admin", new_callable=AsyncMock) as mock_is_admin:
+        mock_is_admin.return_value = False
+        await raid_cog.configure_timed_award(mock_interaction, amount=5, interval_minutes=30)
+
+    raid_cog.bot.db.set_raid_timed_award.assert_awaited_once_with(
+        int(raid["id"]),
+        amount=5,
+        interval_minutes=30,
+        is_enabled=True,
+    )
+    mock_thread.send.assert_awaited()

@@ -24,4 +24,5 @@ bandit-report.json
 audit-report.json
 Documentation/dont_commit/
 site/
+.venv
 # Local notes / scratch files

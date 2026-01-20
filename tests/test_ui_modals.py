@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidGroupSetupModal
+from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidGroupSetupModal, RaidTimedAwardModal
 from discord_bot.cogs.raid_cog import RaidCog
 from discord_bot.cogs.auction_cog import AuctionCog
 
@@ -20,6 +20,7 @@ def mock_interaction():
 def mock_raid_cog():
     cog = MagicMock(spec=RaidCog)
     cog.process_dkp_adjustment = AsyncMock()
+    cog.configure_timed_award = AsyncMock()
     return cog
 
 @pytest.fixture
@@ -60,6 +61,42 @@ class TestDKPAdjustmentModal:
             mock_member,
             None,
             None,
+            exclude_member_ids=None,
+            exclude_group_numbers=None,
+        )
+
+    async def test_on_submit_parses_exclusions(self, mock_interaction, mock_raid_cog):
+        action = "Award"
+        modal = DKPAdjustmentModal(action=action, raid_cog=mock_raid_cog)
+
+        modal.amount = MagicMock()
+        modal.amount.value = "10"
+        modal.reason = MagicMock()
+        modal.reason.value = "Test Reason"
+
+        modal.target_member_input = MagicMock()
+        modal.target_member_input.value = ""
+
+        modal.exclude_groups_input = MagicMock()
+        modal.exclude_groups_input.value = "1, 2"
+
+        modal.exclude_members_input = MagicMock()
+        modal.exclude_members_input.value = "<@123>, 456"
+
+        mock_interaction.guild = MagicMock()
+
+        await modal.on_submit(mock_interaction)
+
+        mock_raid_cog.process_dkp_adjustment.assert_called_once_with(
+            mock_interaction,
+            action,
+            "10",
+            "Test Reason",
+            None,
+            None,
+            None,
+            exclude_member_ids={123, 456},
+            exclude_group_numbers={1, 2},
         )
 
 @pytest.mark.asyncio
@@ -114,3 +151,21 @@ class TestRaidGroupSetupModal:
         await modal.on_submit(mock_interaction)
 
         raid_cog.setup_raid_groups.assert_called_once_with(mock_interaction, 4)
+
+
+@pytest.mark.asyncio
+class TestRaidTimedAwardModal:
+    async def test_on_submit_delegates_to_raid_cog(self, mock_interaction, mock_raid_cog):
+        modal = RaidTimedAwardModal(raid_cog=mock_raid_cog)
+        modal.amount = MagicMock()
+        modal.amount.value = "5"
+        modal.interval_minutes = MagicMock()
+        modal.interval_minutes.value = "30"
+
+        await modal.on_submit(mock_interaction)
+
+        mock_raid_cog.configure_timed_award.assert_called_once_with(
+            mock_interaction,
+            amount=5,
+            interval_minutes=30,
+        )

@@ -74,6 +74,11 @@ async def is_officer(interaction: discord.Interaction) -> bool:
     if config and ("admin_role_id" in getattr(config, "keys", lambda: [])()):
         admin_role_id = config["admin_role_id"]
     if admin_role_id:
+        try:
+            admin_role_id = int(admin_role_id)
+        except Exception:
+            admin_role_id = None
+    if admin_role_id:
         for role in list(member_roles):
             if getattr(role, "id", None) == admin_role_id:
                 return True
@@ -82,8 +87,24 @@ async def is_officer(interaction: discord.Interaction) -> bool:
     if config and ("officer_role_id" in getattr(config, "keys", lambda: [])()):
         officer_role_id = config["officer_role_id"]
     if officer_role_id:
+        try:
+            officer_role_id = int(officer_role_id)
+        except Exception:
+            officer_role_id = None
+    if officer_role_id:
         for role in list(member_roles):
             if getattr(role, "id", None) == officer_role_id:
+                return True
+
+    fallback_officer_role_id = None
+    for role in list(guild_roles):
+        role_name = (getattr(role, "name", "") or "").strip().casefold()
+        if role_name == "officer":
+            fallback_officer_role_id = getattr(role, "id", None)
+            break
+    if fallback_officer_role_id is not None:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == fallback_officer_role_id:
                 return True
     return False
 
@@ -126,6 +147,11 @@ async def is_admin(interaction: discord.Interaction) -> bool:
     admin_role_id = None
     if config and ("admin_role_id" in getattr(config, "keys", lambda: [])()):
         admin_role_id = config["admin_role_id"]
+    if admin_role_id:
+        try:
+            admin_role_id = int(admin_role_id)
+        except Exception:
+            admin_role_id = None
     if admin_role_id:
         for role in list(member_roles):
             if getattr(role, "id", None) == admin_role_id:

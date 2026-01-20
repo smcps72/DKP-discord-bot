@@ -1,9 +1,10 @@
 import discord
 import logging
 import re
+import random
 import subprocess
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embed
@@ -23,6 +24,23 @@ _CHANGELOG_CACHE: dict[str, object] = {
     "versions": [],
     "entries": {},
 }
+
+
+def _safe_member_display_name(member: object) -> str:
+    name = getattr(member, "display_name", None)
+    if not name:
+        name = getattr(member, "name", None)
+    if not name:
+        name = ""
+    return str(name)
+
+
+def _member_sort_key(member: object) -> str:
+    return _safe_member_display_name(member).casefold()
+
+
+def _is_random_member_order(member_list_order: object) -> bool:
+    return str(member_list_order).strip().casefold() == "random"
 
 
 def _changelog_sort_key(version: str) -> tuple[int, int, int, int, int, str]:
@@ -522,8 +540,9 @@ class WelcomeLegacyView(discord.ui.View):
         else:
             await interaction.followup.send("Docs module is currently offline.", ephemeral=True)
 
+
 class MemberSelect(Select):
-    def __init__(self, bot, action: str, members: list[discord.Member]):
+    def __init__(self, bot, action: str, members: list[discord.Member], member_list_order: str = "name"):
         self.bot = bot
         self.action = action
         # Track which members are currently in the raid voice channel so we can
@@ -531,9 +550,15 @@ class MemberSelect(Select):
         # Discord's built-in type-to-search user picker.
         self._allowed_member_ids = {m.id for m in members}
 
+        members_sorted = list(members)
+        if str(member_list_order).strip().casefold() == "random":
+            random.shuffle(members_sorted)
+        else:
+            members_sorted.sort(key=_member_sort_key)
+
         options = [
-            discord.SelectOption(label=m.display_name[:100], value=str(m.id))
-            for m in members
+            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
+            for m in members_sorted
         ][:25]
 
         super().__init__(
@@ -574,13 +599,19 @@ class MemberSelect(Select):
 
 
 class RaidMemberRemoveSelect(Select):
-    def __init__(self, bot, members: list[discord.Member]):
+    def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
         self.bot = bot
         self._allowed_member_ids = {m.id for m in members}
 
+        members_sorted = list(members)
+        if str(member_list_order).strip().casefold() == "random":
+            random.shuffle(members_sorted)
+        else:
+            members_sorted.sort(key=_member_sort_key)
+
         options = [
-            discord.SelectOption(label=m.display_name[:100], value=str(m.id))
-            for m in members
+            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
+            for m in members_sorted
         ][:25]
 
         super().__init__(
@@ -639,20 +670,53 @@ class RaidMemberRemoveSelect(Select):
 
 
 class RaidMemberRemoveView(discord.ui.View):
-    def __init__(self, bot, members: list[discord.Member]):
+    def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
         super().__init__(timeout=180)
         self.bot = bot
-        self.add_item(RaidMemberRemoveSelect(bot, members))
+        self.members = list(members)
+        self.member_list_order = str(member_list_order)
+
+        self.add_item(
+            RaidMemberRemoveSelect(
+                bot,
+                self.members,
+                member_list_order=self.member_list_order,
+            )
+        )
+
+        is_random = _is_random_member_order(self.member_list_order)
+        toggle_btn = discord.ui.Button(
+            label=("Sort A-Z" if is_random else "Shuffle"),
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        async def _toggle_cb(interaction: discord.Interaction):
+            new_order = "name" if is_random else "random"
+            new_view = RaidMemberRemoveView(self.bot, self.members, member_list_order=new_order)
+            try:
+                await interaction.response.edit_message(view=new_view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+
+        toggle_btn.callback = _toggle_cb
+        self.add_item(toggle_btn)
 
 
 class RaidMemberClearGroupSelect(Select):
-    def __init__(self, bot, members: list[discord.Member]):
+    def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
         self.bot = bot
         self._allowed_member_ids = {m.id for m in members}
 
+        members_sorted = list(members)
+        if str(member_list_order).strip().casefold() == "random":
+            random.shuffle(members_sorted)
+        else:
+            members_sorted.sort(key=_member_sort_key)
+
         options = [
-            discord.SelectOption(label=m.display_name[:100], value=str(m.id))
-            for m in members
+            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
+            for m in members_sorted
         ][:25]
 
         super().__init__(
@@ -719,18 +783,232 @@ class RaidMemberClearGroupSelect(Select):
 
 
 class RaidMemberClearGroupView(discord.ui.View):
-    def __init__(self, bot, members: list[discord.Member]):
+    def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
         super().__init__(timeout=180)
         self.bot = bot
-        self.add_item(RaidMemberClearGroupSelect(bot, members))
+        self.members = list(members)
+        self.member_list_order = str(member_list_order)
+
+        self.add_item(
+            RaidMemberClearGroupSelect(
+                bot,
+                self.members,
+                member_list_order=self.member_list_order,
+            )
+        )
+
+        is_random = _is_random_member_order(self.member_list_order)
+        toggle_btn = discord.ui.Button(
+            label=("Sort A-Z" if is_random else "Shuffle"),
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        async def _toggle_cb(interaction: discord.Interaction):
+            new_order = "name" if is_random else "random"
+            new_view = RaidMemberClearGroupView(self.bot, self.members, member_list_order=new_order)
+            try:
+                await interaction.response.edit_message(view=new_view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+
+        toggle_btn.callback = _toggle_cb
+        self.add_item(toggle_btn)
+
+
+class RaidMemberAssignGroupMemberSelect(Select):
+    def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
+        self.bot = bot
+        self._allowed_member_ids = {m.id for m in members}
+
+        members_sorted = list(members)
+        if str(member_list_order).strip().casefold() == "random":
+            random.shuffle(members_sorted)
+        else:
+            members_sorted.sort(key=_member_sort_key)
+
+        options = [
+            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
+            for m in members_sorted
+        ][:25]
+
+        super().__init__(
+            placeholder="Select a member...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            selected_id = int(self.values[0])
+        except (ValueError, TypeError):
+            return await interaction.response.send_message("Invalid selection.", ephemeral=True)
+
+        if selected_id not in self._allowed_member_ids:
+            return await interaction.response.send_message("That member is not a raid member.", ephemeral=True)
+
+        view = self.view
+        if view is None or not isinstance(view, RaidMemberAssignGroupView):
+            return await interaction.response.send_message("Please try again.", ephemeral=True)
+
+        view.selected_member_id = int(selected_id)
+        member = interaction.guild.get_member(selected_id) if interaction.guild else None
+        mention = member.mention if member else f"<@{selected_id}>"
+
+        try:
+            await interaction.response.edit_message(
+                content=f"Selected {mention}. Now pick a group.",
+                view=view,
+            )
+        except discord.HTTPException:
+            return
+
+
+class RaidMemberAssignGroupNumberSelect(Select):
+    def __init__(self, bot, group_count: int):
+        self.bot = bot
+        self.group_count = int(group_count)
+
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(label=f"Group {i}", value=str(i))
+            for i in range(1, min(self.group_count, 25) + 1)
+        ]
+        options.append(discord.SelectOption(label="Ungrouped", value="0"))
+
+        super().__init__(
+            placeholder="Select a group...",
+            min_values=1,
+            max_values=1,
+            options=options[:25],
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if view is None or not isinstance(view, RaidMemberAssignGroupView):
+            return await interaction.response.send_message("Please try again.", ephemeral=True)
+
+        if view.selected_member_id is None:
+            return await interaction.response.send_message("Select a member first.", ephemeral=True)
+
+        try:
+            selected = int((self.values[0] or "").strip())
+        except Exception:
+            selected = 0
+
+        group_number = None if selected == 0 else selected
+        if group_number is not None and (group_number < 1 or group_number > view.group_count):
+            return await interaction.response.send_message("Invalid group selection.", ephemeral=True)
+
+        try:
+            await self.bot.db.set_raid_member_group(int(view.raid_id), int(view.selected_member_id), group_number)
+        except Exception:
+            return await interaction.response.send_message("Failed to update group. Please try again.", ephemeral=True)
+
+        member = interaction.guild.get_member(int(view.selected_member_id)) if interaction.guild else None
+        mention = member.mention if member else f"<@{int(view.selected_member_id)}>"
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog and interaction.guild and isinstance(interaction.channel, discord.Thread):
+            try:
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                await raid_cog._ensure_group_panel_message(interaction.channel, raid_dict, embed)
+            except Exception:
+                logging.exception("Failed to refresh group signup message after assigning member group")
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                if group_number is None:
+                    await interaction.channel.send(f"{mention} was removed from their group.")
+                else:
+                    await interaction.channel.send(f"{mention} was assigned to **Group {int(group_number)}**.")
+        except Exception:
+            logging.exception("Failed to send group assignment message to raid thread")
+
+        for child in list(getattr(view, "children", []) or []):
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+
+        try:
+            if group_number is None:
+                await interaction.response.edit_message(content=f"Cleared group assignment for {mention}.", view=view)
+            else:
+                await interaction.response.edit_message(
+                    content=f"Assigned {mention} to **Group {int(group_number)}**.",
+                    view=view,
+                )
+        except discord.HTTPException:
+            return
+
+
+class RaidMemberAssignGroupView(discord.ui.View):
+    def __init__(self, bot, raid_id: int, members: list[discord.Member], group_count: int, member_list_order: str = "name"):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.raid_id = int(raid_id)
+        self.group_count = int(group_count)
+        self.members = list(members)
+        self.member_list_order = str(member_list_order)
+        self.selected_member_id: int | None = None
+
+        self.add_item(
+            RaidMemberAssignGroupMemberSelect(
+                bot,
+                self.members,
+                member_list_order=self.member_list_order,
+            )
+        )
+        self.add_item(RaidMemberAssignGroupNumberSelect(bot, group_count))
+
+        is_random = _is_random_member_order(self.member_list_order)
+        toggle_btn = discord.ui.Button(
+            label=("Sort A-Z" if is_random else "Shuffle"),
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+
+        async def _toggle_cb(interaction: discord.Interaction):
+            new_order = "name" if is_random else "random"
+            new_view = RaidMemberAssignGroupView(
+                self.bot,
+                self.raid_id,
+                self.members,
+                self.group_count,
+                member_list_order=new_order,
+            )
+            new_view.selected_member_id = self.selected_member_id
+            try:
+                await interaction.response.edit_message(view=new_view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+
+        toggle_btn.callback = _toggle_cb
+        self.add_item(toggle_btn)
 
 
 class DKPAdjustmentView(discord.ui.View):
-    def __init__(self, bot, action: str, members: list[discord.Member], group_count: int | None = None):
+    def __init__(
+        self,
+        bot,
+        action: str,
+        members: list[discord.Member],
+        group_count: int | None = None,
+        member_list_order: str = "name",
+    ):
         super().__init__(timeout=180)
         self.bot = bot
         self.action = action
-        self.add_item(MemberSelect(bot, action, members))
+        self.members = list(members)
+        self.group_count = group_count
+        self.member_list_order = str(member_list_order)
+
+        self.add_item(MemberSelect(bot, action, self.members, member_list_order=self.member_list_order))
 
         max_groups = 0
         try:
@@ -759,6 +1037,30 @@ class DKPAdjustmentView(discord.ui.View):
 
             btn.callback = _group_cb
             self.add_item(btn)
+
+        is_random = _is_random_member_order(self.member_list_order)
+        toggle_btn = discord.ui.Button(
+            label=("Sort A-Z" if is_random else "Shuffle"),
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+
+        async def _toggle_cb(interaction: discord.Interaction):
+            new_order = "name" if is_random else "random"
+            new_view = DKPAdjustmentView(
+                self.bot,
+                self.action,
+                self.members,
+                group_count=self.group_count,
+                member_list_order=new_order,
+            )
+            try:
+                await interaction.response.edit_message(view=new_view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+
+        toggle_btn.callback = _toggle_cb
+        self.add_item(toggle_btn)
 
     @discord.ui.button(label="All Raid Members", style=discord.ButtonStyle.primary, row=1)
     async def all_in_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1147,7 +1449,9 @@ class RaidControlView(discord.ui.View):
                 "raid_sync_voice",
                 "raid_remove_raider",
                 "raid_remove_from_group",
-                "raid_configure_groups",
+                "raid_set_group",
+                "raid_timed_dkp",
+                "raid_stop_timed_dkp",
                 "raid_start_auction",
                 "raid_end_auction",
                 "raid_close_raid",
@@ -1187,7 +1491,7 @@ class RaidControlView(discord.ui.View):
             "raid_remove_from_group",
             "raid_start_auction",
             "raid_show_groups",
-            "raid_configure_groups",
+            "raid_timed_dkp",
             "raid_rename_thread",
         ):
             # Only defer if the interaction hasn't already been acknowledged
@@ -1274,6 +1578,10 @@ class RaidControlView(discord.ui.View):
                 return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
             try:
                 await self.bot.db.remove_raid_member_exclusion(raid_id, user_id)
+            except Exception:
+                pass
+            try:
+                await self.bot.db.delete_raid_join_request(raid_id, user_id)
             except Exception:
                 pass
             try:
@@ -1392,7 +1700,24 @@ class RaidControlView(discord.ui.View):
                 ephemeral=True,
             )
 
-        view = DKPAdjustmentView(self.bot, action, members, group_count=group_count)
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        view = DKPAdjustmentView(
+            self.bot,
+            action,
+            members,
+            group_count=group_count,
+            member_list_order=member_list_order,
+        )
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 f"Who do you want to {action.lower()} DKP?",
@@ -1572,7 +1897,18 @@ class RaidControlView(discord.ui.View):
         if not members:
             return await interaction.followup.send("No raid members were found.", ephemeral=True)
 
-        view = RaidMemberRemoveView(self.bot, members)
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        view = RaidMemberRemoveView(self.bot, members, member_list_order=member_list_order)
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 "Who do you want to remove from the raid?",
@@ -1610,7 +1946,18 @@ class RaidControlView(discord.ui.View):
         if not members:
             return await interaction.followup.send("No raid members were found.", ephemeral=True)
 
-        view = RaidMemberClearGroupView(self.bot, members)
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        view = RaidMemberClearGroupView(self.bot, members, member_list_order=member_list_order)
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 "Who do you want to remove from their group?",
@@ -1623,6 +1970,65 @@ class RaidControlView(discord.ui.View):
                 view=view,
                 ephemeral=True,
             )
+
+    @discord.ui.button(label="Set group", style=discord.ButtonStyle.secondary, custom_id="raid_set_group", row=4)
+    async def set_group(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        try:
+            group_count = await self.bot.db.get_raid_group_count(int(raid["id"]))
+        except Exception:
+            group_count = None
+
+        if not group_count:
+            return await interaction.followup.send(
+                "Raid groups have not been configured yet.",
+                ephemeral=True,
+            )
+
+        members_by_id: dict[int, discord.Member] = {}
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        members = list(members_by_id.values())
+        if not members:
+            return await interaction.followup.send("No raid members were found.", ephemeral=True)
+
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        view = RaidMemberAssignGroupView(
+            self.bot,
+            int(raid["id"]),
+            members,
+            int(group_count),
+            member_list_order=member_list_order,
+        )
+        return await interaction.followup.send(
+            "Select a member, then select a group:",
+            view=view,
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="Groups", style=discord.ButtonStyle.secondary, custom_id="raid_show_groups", row=2)
     async def show_groups(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1655,8 +2061,8 @@ class RaidControlView(discord.ui.View):
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 try:
                     return await interaction.followup.send("Please try again.", ephemeral=True)
-                except discord.HTTPException:
-                    return
+                except Exception:
+                    pass
 
         if group_count > 0 and interaction.guild:
             embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
@@ -1703,6 +2109,32 @@ class RaidControlView(discord.ui.View):
         view = RaidGroupJoinView(self.bot, int(raid["id"]), int(group_count))
         return await interaction.followup.send("Select your group:", view=view, ephemeral=True)
 
+    @discord.ui.button(label="Timed DKP", style=discord.ButtonStyle.primary, custom_id="raid_timed_dkp", row=3)
+    async def timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+
+        modal = RaidTimedAwardModal(raid_cog=raid_cog)
+        try:
+            await interaction.response.send_modal(modal)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            try:
+                await interaction.followup.send("Please try again.", ephemeral=True)
+            except Exception:
+                pass
+
+    @discord.ui.button(
+        label="Stop Timed DKP",
+        style=discord.ButtonStyle.secondary,
+        custom_id="raid_stop_timed_dkp",
+        row=3,
+    )
+    async def stop_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        await raid_cog.disable_timed_award(interaction)
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Open a modal to rename the raid thread (raid leaders/officers only)."""
@@ -1747,6 +2179,9 @@ class RaidControlView(discord.ui.View):
                 "**My DKP 💰**: Shows your current DKP.",
                 "",
                 "**Award DKP / Deduct DKP** (leader/admin): Pick a raid member, then enter the DKP amount + reason.",
+                "**Set group** (leader/admin): Assign a raid member to a group (or ungroup them).",
+                "**Timed DKP** (leader/admin): Configure an automatic DKP award every X minutes.",
+                "**Stop Timed DKP** (leader/admin): Disable automatic timed DKP awards for this raid.",
                 "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Update Team** or have people **Join Raid** first).",
                 "**End Auction** (leader/admin): Ends the current auction for this raid.",
                 "**Close Raid** (leader/admin): Closes out the raid when finished.",

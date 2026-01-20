@@ -131,6 +131,10 @@ class Database:
                 "ALTER TABLE guilds ADD COLUMN archive_category_id INTEGER",
             ),
             (
+                "raid_member_list_order",
+                "ALTER TABLE guilds ADD COLUMN raid_member_list_order TEXT DEFAULT 'name'",
+            ),
+            (
                 "last_announced_version",
                 "ALTER TABLE guilds ADD COLUMN last_announced_version TEXT",
             ),
@@ -191,6 +195,7 @@ class Database:
                     raid_leader_role_id INTEGER,
                     raid_vc_template_id INTEGER,
                     default_dkp_award INTEGER DEFAULT 5,
+                    raid_member_list_order TEXT DEFAULT 'name',
                     last_announced_version TEXT
                 )
             """)
@@ -269,6 +274,25 @@ class Database:
                     raid_id INTEGER PRIMARY KEY,
                     group_count INTEGER NOT NULL,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_timed_awards (
+                    raid_id INTEGER PRIMARY KEY,
+                    amount INTEGER NOT NULL,
+                    interval_minutes INTEGER NOT NULL,
+                    is_enabled INTEGER DEFAULT 1,
+                    last_awarded_at TIMESTAMP,
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_voice_absences (
+                    raid_id INTEGER,
+                    user_id INTEGER,
+                    absent_since TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (raid_id, user_id),
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
             """)
@@ -380,14 +404,29 @@ class Database:
         )
 
     async def get_raid_group_count(self, raid_id: int) -> int | None:
+        raid_id_int = int(raid_id)
+
         row = await self.fetchone(
             "SELECT group_count FROM raid_group_settings WHERE raid_id = ?",
-            (int(raid_id),),
+            (raid_id_int,),
+        )
+        if row is not None:
+            try:
+                count = int(row["group_count"])
+                return count if count > 0 else None
+            except Exception:
+                pass
+
+        # Back-compat: older installs and some flows store group_count on the raids row.
+        row = await self.fetchone(
+            "SELECT group_count FROM raids WHERE id = ?",
+            (raid_id_int,),
         )
         if row is None:
             return None
         try:
-            return int(row["group_count"])
+            count = int(row["group_count"])
+            return count if count > 0 else None
         except Exception:
             return None
 
@@ -397,6 +436,13 @@ class Database:
                 "DELETE FROM raid_group_settings WHERE raid_id = ?",
                 (int(raid_id),),
             )
+            try:
+                await self.execute(
+                    "UPDATE raids SET group_count = 0 WHERE id = ?",
+                    (int(raid_id),),
+                )
+            except Exception:
+                pass
             return
 
         await self.execute(
@@ -407,6 +453,53 @@ class Database:
             DO UPDATE SET group_count = excluded.group_count, updated_at = CURRENT_TIMESTAMP
             """,
             (int(raid_id), int(group_count)),
+        )
+
+        try:
+            await self.execute(
+                "UPDATE raids SET group_count = ? WHERE id = ?",
+                (int(group_count), int(raid_id)),
+            )
+        except Exception:
+            pass
+
+    async def get_raid_timed_award(self, raid_id: int):
+        return await self.fetchone(
+            "SELECT raid_id, amount, interval_minutes, is_enabled, last_awarded_at FROM raid_timed_awards WHERE raid_id = ?",
+            (int(raid_id),),
+        )
+
+    async def set_raid_timed_award(
+        self,
+        raid_id: int,
+        amount: int,
+        interval_minutes: int,
+        is_enabled: bool = True,
+    ):
+        await self.execute(
+            """
+            INSERT INTO raid_timed_awards (raid_id, amount, interval_minutes, is_enabled, last_awarded_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(raid_id)
+            DO UPDATE SET
+                amount = excluded.amount,
+                interval_minutes = excluded.interval_minutes,
+                is_enabled = excluded.is_enabled,
+                last_awarded_at = CURRENT_TIMESTAMP
+            """,
+            (int(raid_id), int(amount), int(interval_minutes), 1 if is_enabled else 0),
+        )
+
+    async def set_raid_timed_award_enabled(self, raid_id: int, is_enabled: bool):
+        if is_enabled:
+            await self.execute(
+                "UPDATE raid_timed_awards SET is_enabled = 1, last_awarded_at = CURRENT_TIMESTAMP WHERE raid_id = ?",
+                (int(raid_id),),
+            )
+            return
+        await self.execute(
+            "UPDATE raid_timed_awards SET is_enabled = 0 WHERE raid_id = ?",
+            (int(raid_id),),
         )
 
     async def remove_raid_member(self, raid_id: int, user_id: int) -> bool:

@@ -440,6 +440,37 @@ class AdminCog(commands.Cog):
         embed = create_info_embed("Guild Configuration Debug", description)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    @app_commands.command(
+        name="raid_member_list_order",
+        description="Configure the default ordering for raid member lists (dropdowns/team list).",
+    )
+    @app_commands.check(is_admin)
+    @app_commands.describe(order="name = alphabetical, random = shuffled")
+    async def raid_member_list_order_cmd(
+        self,
+        interaction: discord.Interaction,
+        order: Literal["name", "random"] = "name",
+    ):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            await self.bot.db.execute(
+                "INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)",
+                (int(interaction.guild.id),),
+            )
+        except Exception:
+            pass
+
+        await self.bot.db.execute(
+            "UPDATE guilds SET raid_member_list_order = ? WHERE guild_id = ?",
+            (str(order), int(interaction.guild.id)),
+        )
+
+        await interaction.followup.send(f"Raid member list order set to `{order}`.", ephemeral=True)
+
     @commands.command(name="debug_config", help="Show DKP configuration for this server (prefix version).")
     @commands.has_permissions(administrator=True)
     async def debug_config_prefix(self, ctx: commands.Context):

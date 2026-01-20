@@ -161,7 +161,7 @@ from discord_bot.ui.views import RaidControlView, DKPAdjustmentView
 from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal
 from discord_bot.ui.views import RaidOpenPanelView
 from discord_bot.ui.modals import RaidGroupSetupModal
-from discord_bot.ui.views import RaidMemberClearGroupView
+from discord_bot.ui.views import RaidMemberClearGroupView, RaidMemberAssignGroupView
 
 @pytest.fixture
 def mock_raid_control_interaction(mock_interaction): # Use the existing mock_interaction
@@ -178,6 +178,7 @@ class TestRaidControlView:
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345, "group_count": 2})
         mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
 
@@ -211,11 +212,60 @@ class TestRaidControlView:
         assert "Group 1" in labels
         assert "Group 2" in labels
 
+    async def test_dkp_adjustment_view_shuffle_toggle_rebuilds_view(self):
+        bot = MagicMock()
+
+        member1 = MagicMock()
+        member1.id = 1
+        member1.bot = False
+        member1.display_name = "Alpha"
+
+        member2 = MagicMock()
+        member2.id = 2
+        member2.bot = False
+        member2.display_name = "Bravo"
+
+        view = DKPAdjustmentView(
+            bot,
+            action="award",
+            members=[member1, member2],
+            group_count=2,
+            member_list_order="name",
+        )
+
+        toggle_btns = [
+            c
+            for c in view.children
+            if isinstance(c, discord.ui.Button) and getattr(c, "label", None) == "Shuffle"
+        ]
+        assert len(toggle_btns) == 1
+        toggle_btn = toggle_btns[0]
+
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.edit_message = AsyncMock()
+
+        await toggle_btn.callback(interaction)
+
+        interaction.response.edit_message.assert_awaited_once()
+        _args, kwargs = interaction.response.edit_message.call_args
+        new_view = kwargs.get("view")
+        assert isinstance(new_view, DKPAdjustmentView)
+        assert getattr(new_view, "member_list_order", None) == "random"
+
+        new_toggle_btns = [
+            c
+            for c in new_view.children
+            if isinstance(c, discord.ui.Button) and getattr(c, "label", None) == "Sort A-Z"
+        ]
+        assert len(new_toggle_btns) == 1
+
     async def test_deduct_dkp_button(self, mock_bot, mock_raid_control_interaction):
         """Tests that the 'Deduct DKP' button shows the DKPAdjustmentView for raid members."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345, "group_count": 2})
         mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}])
 
@@ -248,6 +298,7 @@ class TestRaidControlView:
     async def test_remove_from_group_button(self, mock_bot, mock_raid_control_interaction):
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id})
 
         member1 = MagicMock()
@@ -267,11 +318,37 @@ class TestRaidControlView:
         assert kwargs.get("ephemeral") is True
         assert isinstance(kwargs.get("view"), RaidMemberClearGroupView)
 
+    async def test_set_group_button_opens_assign_group_view(self, mock_bot, mock_raid_control_interaction):
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id})
+        mock_bot.db.get_raid_group_count = AsyncMock(return_value=2)
+
+        member1 = MagicMock()
+        member1.bot = False
+        member1.id = 1
+        member2 = MagicMock()
+        member2.bot = False
+        member2.id = 2
+
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
+        mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member1 if uid == 1 else (member2 if uid == 2 else None)
+
+        await view.set_group.callback(mock_raid_control_interaction)
+
+        mock_raid_control_interaction.followup.send.assert_called_once()
+        args, kwargs = mock_raid_control_interaction.followup.send.call_args
+        assert "Select a member" in args[0]
+        assert kwargs.get("ephemeral") is True
+        assert isinstance(kwargs.get("view"), RaidMemberAssignGroupView)
+
     async def test_start_auction_button(self, mock_bot, mock_raid_control_interaction):
         """Tests that the 'Start Auction' button opens the item-name modal when preconditions are met."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
         mock_bot.db.get_active_auction = AsyncMock(return_value=None)
         mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 456}])
@@ -300,6 +377,7 @@ class TestRaidControlView:
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345})
         mock_bot.db.get_active_auction = AsyncMock(return_value=None)
 
@@ -324,6 +402,7 @@ class TestRaidControlView:
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345, "leader_id": 999})
         mock_bot.db.is_raid_member = AsyncMock(return_value=False)
         mock_bot.db.get_raid_join_request = AsyncMock(side_effect=[None, {"status": "pending"}])
@@ -362,6 +441,7 @@ class TestRaidControlView:
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": 999})
         mock_bot.get_cog = MagicMock()
         mock_raid_cog = MagicMock()
@@ -390,6 +470,7 @@ class TestRaidControlView:
     async def test_groups_button_opens_setup_modal_for_leader(self, mock_bot, mock_raid_control_interaction):
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id})
 
         mock_raid_cog = MagicMock()
@@ -407,6 +488,7 @@ class TestRaidControlView:
     async def test_groups_button_shows_signup_panel_for_leader_when_groups_already_set_up(self, mock_bot, mock_raid_control_interaction):
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(
             return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id, "group_count": 3}
         )
@@ -435,6 +517,7 @@ class TestRaidControlView:
     async def test_groups_button_shows_signup_panel_for_non_leader(self, mock_bot, mock_raid_control_interaction):
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": 999, "group_count": 3})
 
         mock_raid_cog = MagicMock()
