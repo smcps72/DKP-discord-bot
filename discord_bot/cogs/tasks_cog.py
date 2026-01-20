@@ -12,14 +12,12 @@ class TasksCog(commands.Cog):
         if self.bot.license_check_enabled:
             self.license_check.start()
         self.cleanup_channels.start()
-        self.hourly_dkp_award.start()
         self.raid_timed_awards.start()
         self.enforce_raid_voice_absences.start()
 
     def cog_unload(self):
         self.license_check.cancel()
         self.cleanup_channels.cancel()
-        self.hourly_dkp_award.cancel()
         self.raid_timed_awards.cancel()
         self.enforce_raid_voice_absences.cancel()
 
@@ -157,61 +155,6 @@ class TasksCog(commands.Cog):
     @cleanup_channels.before_loop
     async def before_cleanup(self):
         await self.bot.wait_until_ready()
-
-    @tasks.loop(hours=1)
-    async def hourly_dkp_award(self):
-        amount = 5
-        for guild in list(getattr(self.bot, "guilds", []) or []):
-            try:
-                rows = await self.bot.db.fetchall(
-                    """
-                    SELECT rm.user_id
-                    FROM raid_members rm
-                    JOIN raids r ON r.id = rm.raid_id
-                    WHERE r.guild_id = ? AND r.is_active = 1
-                    """,
-                    (int(guild.id),),
-                )
-            except Exception:
-                logging.exception("Failed to load active raid members for guild_id=%s", getattr(guild, "id", None))
-                continue
-
-            user_ids: set[int] = set()
-            for row in list(rows or []):
-                try:
-                    user_id = int(row["user_id"])
-                except Exception:
-                    try:
-                        user_id = int(row.get("user_id"))
-                    except Exception:
-                        continue
-                user_ids.add(user_id)
-
-            if not user_ids:
-                continue
-
-            for user_id in user_ids:
-                member = guild.get_member(int(user_id))
-                if member is None or getattr(member, "bot", False):
-                    continue
-                try:
-                    await self.bot.db.modify_user_dkp(
-                        int(member.id),
-                        int(guild.id),
-                        int(amount),
-                        "Hourly award",
-                    )
-                except Exception:
-                    logging.exception("Failed to apply hourly DKP award for user_id=%s guild_id=%s", getattr(member, "id", None), getattr(guild, "id", None))
-
-    @hourly_dkp_award.before_loop
-    async def before_hourly_dkp_award(self):
-        await self.bot.wait_until_ready()
-        now = datetime.utcnow()
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        delay = (next_hour - now).total_seconds()
-        if delay > 0:
-            await asyncio.sleep(delay)
 
     @tasks.loop(minutes=1)
     async def raid_timed_awards(self):

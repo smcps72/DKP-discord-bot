@@ -69,9 +69,9 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
     async def test_dummy(self):
         self.assertTrue(True)
         if self.bot.license_check_enabled:
-            self.assertEqual(self.mock_loop_start_method.call_count, 5)
-        else:
             self.assertEqual(self.mock_loop_start_method.call_count, 4)
+        else:
+            self.assertEqual(self.mock_loop_start_method.call_count, 3)
 
 
     def _setup_mock_http_response(self, status_code, json_payload=None, exception_to_raise=None):
@@ -210,49 +210,57 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
 
         cog_disabled = TasksCog(self.bot_specific)
 
-        self.assertEqual(mock_loop_start_override_method.call_count, 4)
+        self.assertEqual(mock_loop_start_override_method.call_count, 3)
 
 
-    async def test_hourly_dkp_award_only_active_raid_members(self):
+    async def test_raid_timed_awards_awards_when_due(self):
+        guild_id = 12345
+        raid_id = 1
+        thread_id = 222
+
         mock_guild = MagicMock(spec=discord.Guild)
-        mock_guild.id = 12345
+        mock_guild.id = guild_id
+        mock_guild.get_thread = MagicMock(return_value=None)
+        self.bot.get_guild = MagicMock(return_value=mock_guild)
 
         member1 = MagicMock(spec=discord.Member)
         member1.id = 111
         member1.bot = False
         member2 = MagicMock(spec=discord.Member)
-        member2.id = 222
+        member2.id = 2222
         member2.bot = False
-        bot_member = MagicMock(spec=discord.Member)
-        bot_member.id = 333
-        bot_member.bot = True
 
         def get_member_side_effect(user_id):
             if int(user_id) == 111:
                 return member1
-            if int(user_id) == 222:
+            if int(user_id) == 2222:
                 return member2
-            if int(user_id) == 333:
-                return bot_member
             return None
 
         mock_guild.get_member.side_effect = get_member_side_effect
 
-        self.bot.guilds = [mock_guild]
+        last_awarded_at = (datetime.utcnow() - timedelta(minutes=61)).isoformat()
         self.bot.db.fetchall = AsyncMock(return_value=[
-            {"user_id": 111},
-            {"user_id": 222},
-            {"user_id": 222},
-            {"user_id": 333},
+            {
+                "raid_id": raid_id,
+                "guild_id": guild_id,
+                "thread_id": thread_id,
+                "leader_id": 999,
+                "amount": 5,
+                "interval_minutes": 60,
+                "last_awarded_at": last_awarded_at,
+            }
         ])
+        self.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 111}, {"user_id": 2222}])
+        self.bot.db.is_raid_member_excluded = AsyncMock(return_value=False)
         self.bot.db.modify_user_dkp = AsyncMock()
+        self.bot.db.execute = AsyncMock()
+        self.bot.get_channel = MagicMock(return_value=None)
 
-        await self.cog.hourly_dkp_award()
+        await self.cog.raid_timed_awards()
 
-        self.bot.db.modify_user_dkp.assert_any_call(111, 12345, 5, "Hourly award")
-        self.bot.db.modify_user_dkp.assert_any_call(222, 12345, 5, "Hourly award")
-        calls = [c for c in self.bot.db.modify_user_dkp.call_args_list if c[0][0] == 333]
-        self.assertEqual(len(calls), 0)
+        self.bot.db.modify_user_dkp.assert_any_call(111, guild_id, 5, "Timed raid award (+5 every 60m)")
+        self.bot.db.modify_user_dkp.assert_any_call(2222, guild_id, 5, "Timed raid award (+5 every 60m)")
 
     async def test_cleanup_channels_empty_raid_vc_deleted(self):
         mock_vc = AsyncMock(spec=discord.VoiceChannel)
