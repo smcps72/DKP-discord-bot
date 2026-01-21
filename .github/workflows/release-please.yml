@@ -14,9 +14,117 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           command: manifest
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Split Unreleased into shipped vs remaining (release PR)
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'o3-mini' }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          OPENAI_MAX_OUTPUT_TOKENS: ${{ vars.OPENAI_MAX_OUTPUT_TOKENS }}
+          RELEASE_PLEASE_PR_JSON: ${{ steps.release.outputs.pr }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          if not (os.environ.get('OPENAI_API_KEY') or '').strip():
+              print('Missing required GitHub Actions secret OPENAI_API_KEY')
+              sys.exit(1)
+
+          def run(cmd: list[str], check: bool = True) -> str:
+              p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+              out = (p.stdout or '').strip()
+              if check and p.returncode != 0:
+                  if out:
+                      print(out)
+                  sys.exit(p.returncode)
+              return out
+
+          pr_json = os.environ.get('RELEASE_PLEASE_PR_JSON', '').strip()
+          if not pr_json:
+              print('Missing release-please pr output')
+              sys.exit(0)
+
+          pr = json.loads(pr_json)
+          head = pr.get('headBranchName')
+          if not head:
+              print('Missing headBranchName in release-please pr output')
+              sys.exit(0)
+
+          run(['git', 'fetch', 'origin', head])
+          run(['git', 'checkout', head])
+
+          def parse_version(s: str) -> str:
+              s = (s or '').strip()
+              m = re.match(r'^\s*([0-9A-Za-z.\-]+)', s)
+              return m.group(1) if m else ''
+
+          version_raw = Path('discord_bot/VERSION').read_text(encoding='utf-8', errors='replace')
+          release_version = parse_version(version_raw)
+          if not release_version:
+              print('Could not parse release version from discord_bot/VERSION')
+              sys.exit(0)
+
+          prev_raw = run(['git', 'show', 'origin/master:discord_bot/VERSION'])
+          previous_version = parse_version(prev_raw)
+          if not previous_version:
+              print('Could not parse previous version from origin/master:discord_bot/VERSION')
+              sys.exit(0)
+
+          base_commit = run(['git', 'log', '-n', '1', '--format=%H', 'origin/master', '--', 'discord_bot/VERSION'])
+          if not base_commit:
+              base_commit = run(['git', 'log', '-n', '1', '--format=%H', 'origin/master', '--', '.release-please-manifest.json'])
+
+          if not base_commit:
+              print('Could not determine base commit for diff')
+              sys.exit(0)
+
+          cmd = [
+              'python',
+              'scripts/split_unreleased_for_release.py',
+              '--release-version',
+              release_version,
+              '--previous-version',
+              previous_version,
+              '--head-ref',
+              'origin/master',
+              '--base-ref',
+              base_commit,
+              '--strict',
+          ]
+          out = run(cmd)
+          if out:
+              print(out)
+
+          status = run(['git', 'status', '--porcelain'])
+          if not status:
+              print('No changelog changes to commit')
+              sys.exit(0)
+
+          run(['git', 'config', 'user.email', 'release-please@users.noreply.github.com'])
+          run(['git', 'config', 'user.name', 'release-please[bot]'])
+          run(['git', 'add', 'changelog/Unreleased.md'])
+          run(['git', 'add', f'changelog/{release_version}.md'])
+          run(['git', 'commit', '-m', f'chore(changelog): split Unreleased for {release_version}'])
+          run(['git', 'push', 'origin', head])
+          PY
