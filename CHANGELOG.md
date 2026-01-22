@@ -4,11 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- No unreleased notes yet.
+- Validate the new pop-up raid panel flow under real-world usage.
+- Validate group-specific awarding flow end-to-end.
 
 ## 0.1.0-alpha.3
 
 - Added raid team grouping plus group setup + signup UI.
+- Officers now see and can use the **Create Raid** button; role checks refined for sensitive raid actions.
+- Added timed DKP (hourly raid points) scoped to a raid, with auto-removal after 15 minutes out of linked voice.
+- Added raid team tooling: exclusions when syncing from voice / awarding DKP, group-specific awarding.
+- Added roster sorting options (alphabetical by default, optional random order).
+- Added orphan raid management commands: `/raid_orphans` and `/raid_orphan_cleanup`.
+- Improved panel UX and error handling; expanded regression and E2E coverage.
 - Fixed raid control panel interaction issues and reduced redundant setup prompts.
 - Improved `/status` diagnostics while hiding environment identity from non-admin users.
 - Isolated deployment sqlite per environment/service.

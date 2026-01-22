@@ -207,7 +207,7 @@ test('Changelog shows Unreleased when available', async ({ page }) => {
   test.skip(!hasUnreleased, 'Unreleased is officers-only; current auth state does not have access.');
 
   await pickOption(page, 'Unreleased');
-  await expect(page.getByText('No unreleased notes yet.', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+  await expect(page.getByText('Validate the new pop-up raid panel flow', { exact: false }).first()).toBeVisible({ timeout: 45000 });
 
   const { options: optionsAfter } = await openVersionDropdown(page);
   const selected = optionsAfter.find((o) => o.selected);
@@ -238,7 +238,7 @@ test('Staging changelog smoke test', async ({ page }) => {
 
   if (hasUnreleased) {
     await pickOption(page, 'Unreleased');
-    await expect(page.getByText('No unreleased notes yet.', { exact: false }).first()).toBeVisible({ timeout: 45000 });
+    await expect(page.getByText('Validate the new pop-up raid panel flow', { exact: false }).first()).toBeVisible({ timeout: 45000 });
 
     const { options: optionsAfter } = await openVersionDropdown(page);
     const selected = optionsAfter.find((o) => o.selected);
