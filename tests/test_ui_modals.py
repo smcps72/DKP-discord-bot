@@ -63,6 +63,7 @@ class TestDKPAdjustmentModal:
             None,
             exclude_member_ids=None,
             exclude_group_numbers=None,
+            popup_message=None,
         )
 
     async def test_on_submit_parses_exclusions(self, mock_interaction, mock_raid_cog):
@@ -97,6 +98,7 @@ class TestDKPAdjustmentModal:
             None,
             exclude_member_ids={123, 456},
             exclude_group_numbers={1, 2},
+            popup_message=None,
         )
 
 @pytest.mark.asyncio
@@ -114,7 +116,11 @@ class TestAuctionStartModal:
         # Assert
         mock_auction_cog.process_auction_start.assert_called_once_with(
             mock_interaction,
-            "Test Item"
+            "Test Item",
+            source=None,
+            popup_can_manage=False,
+            popup_can_rename_thread=False,
+            popup_message=None,
         )
 
 @pytest.mark.asyncio
@@ -168,4 +174,6 @@ class TestRaidTimedAwardModal:
             mock_interaction,
             amount=5,
             interval_minutes=30,
+            source=None,
+            popup_message=None,
         )

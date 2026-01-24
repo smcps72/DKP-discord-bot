@@ -271,8 +271,40 @@ class RaidCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         raid: dict | None = None,
+        *,
+        throttle: bool = False,
     ):
-        return
+        if not interaction.guild:
+            return
+
+        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+        if thread is None:
+            return
+
+        if raid is None:
+            try:
+                raid = await self.bot.db.get_raid_by_thread(thread.id)
+            except Exception:
+                raid = None
+
+        if not raid:
+            return
+
+        if throttle:
+            try:
+                key = (int(interaction.guild.id), int(thread.id), int(raid["leader_id"]))
+            except Exception:
+                return
+
+            count = int(self._dkp_adjust_counts.get(key, 0)) + 1
+            self._dkp_adjust_counts[key] = count
+            if count % 4 != 0:
+                return
+
+        try:
+            await self._send_control_panel_ephemeral(interaction, thread)
+        except Exception:
+            logging.exception("Failed to re-show raid control panel")
 
     async def _send_control_panel_ephemeral(self, interaction: discord.Interaction, thread: discord.Thread):
         """Send the raid control panel as an ephemeral message to the raid leader.
@@ -1982,7 +2014,7 @@ class RaidCog(commands.Cog):
         # Default behavior: show detailed result in-channel (non-ephemeral) and
         # periodically re-show the leader's ephemeral panel.
         await interaction.followup.send(embed=embed)
-        await self.maybe_send_control_panel_ephemeral(interaction, raid=raid)
+        await self.maybe_send_control_panel_ephemeral(interaction, raid=raid, throttle=True)
 
     async def rename_raid_thread(
         self,

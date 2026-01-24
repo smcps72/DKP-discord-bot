@@ -18,15 +18,18 @@ class MockUser(MagicMock):
         self.bot = False
 
 class MockInteraction(MagicMock):
-    def __init__(self, guild, user, *args, **kwargs):
+    def __init__(self, guild=None, user=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.guild = guild
         self.user = user
         self.response = MagicMock()
         self.response.defer = AsyncMock()
+        self.response.is_done = MagicMock(return_value=False)
         self.response.send_message = AsyncMock()
+        self.response.send_modal = AsyncMock()
         self.followup = MagicMock()
         self.followup.send = AsyncMock()
+        self.message = MagicMock()
 
 @pytest.fixture
 def mock_bot():
@@ -200,8 +203,8 @@ class TestRaidControlView:
             await view.award_dkp.callback(mock_raid_control_interaction)
 
         # Assert
-        mock_raid_control_interaction.followup.send.assert_called_once()
-        args, kwargs = mock_raid_control_interaction.followup.send.call_args
+        mock_raid_control_interaction.response.send_message.assert_called_once()
+        args, kwargs = mock_raid_control_interaction.response.send_message.call_args
         assert "Who do you want to award DKP?" in args[0]
         assert isinstance(kwargs["view"], DKPAdjustmentView)
         assert kwargs["ephemeral"] is True
@@ -284,8 +287,8 @@ class TestRaidControlView:
             await view.deduct_dkp.callback(mock_raid_control_interaction)
 
         # Assert
-        mock_raid_control_interaction.followup.send.assert_called_once()
-        args, kwargs = mock_raid_control_interaction.followup.send.call_args
+        mock_raid_control_interaction.response.send_message.assert_called_once()
+        args, kwargs = mock_raid_control_interaction.response.send_message.call_args
         assert "Who do you want to deduct DKP?" in args[0]
         assert isinstance(kwargs["view"], DKPAdjustmentView)
         assert kwargs["ephemeral"] is True
@@ -313,8 +316,8 @@ class TestRaidControlView:
 
         await view.remove_from_group.callback(mock_raid_control_interaction)
 
-        mock_raid_control_interaction.followup.send.assert_called_once()
-        _args, kwargs = mock_raid_control_interaction.followup.send.call_args
+        mock_raid_control_interaction.response.send_message.assert_called_once()
+        _args, kwargs = mock_raid_control_interaction.response.send_message.call_args
         assert kwargs.get("ephemeral") is True
         assert isinstance(kwargs.get("view"), RaidMemberClearGroupView)
 
@@ -463,9 +466,12 @@ class TestRaidControlView:
         # Act: non-leader attempts rename
         await view.rename_thread.callback(mock_raid_control_interaction)
 
-        # Assert: modal is not sent; error followup is sent
+        # Assert: modal is not sent; error is sent
         mock_raid_control_interaction.response.send_modal.assert_not_called()
-        mock_raid_control_interaction.followup.send.assert_called_with("You don't have permission to rename this thread.", ephemeral=True)
+        mock_raid_control_interaction.response.send_message.assert_called_with(
+            "You don't have permission to rename this thread.",
+            ephemeral=True,
+        )
 
     async def test_groups_button_opens_setup_modal_for_leader(self, mock_bot, mock_raid_control_interaction):
         view = RaidControlView(bot=mock_bot)
