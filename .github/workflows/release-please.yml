@@ -109,7 +109,6 @@ jobs:
               'origin/master',
               '--base-ref',
               base_commit,
-              '--strict',
           ]
           out = run(cmd)
           if out:
