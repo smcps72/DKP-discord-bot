@@ -7,7 +7,7 @@ import random
 import re
 import io
 from ..utils import create_info_embed, create_error_embed, create_success_embed, is_admin, is_officer, send_dkp_change_dm
-from ..ui.views import RaidControlView, RaidOpenPanelView, RaidGroupSignupView
+from ..ui.views import RaidControlView, RaidPopupView, RaidOpenPanelView, RaidGroupSignupView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
 
 MAX_DKP_ADJUSTMENT = 100000
@@ -27,7 +27,56 @@ class RaidCog(commands.Cog):
         interaction: discord.Interaction,
         amount: int,
         interval_minutes: int,
+        *,
+        source: str | None = None,
+        popup_message: discord.Message | None = None,
     ):
+        async def respond_popup(message: str, *, title: str = "Timed DKP"):
+            if source != "raid_popup":
+                return
+
+            raid = None
+            try:
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+            except Exception:
+                raid = None
+
+            can_manage = False
+            can_rename_thread = False
+            if raid:
+                try:
+                    admin_ok = await is_admin(interaction)
+                    is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
+                    can_manage = bool(is_leader or admin_ok)
+                    officer_ok = await is_officer(interaction)
+                    can_rename_thread = bool(can_manage or officer_ok)
+                except Exception:
+                    can_manage = False
+                    can_rename_thread = False
+
+            embed = create_info_embed(title, message)
+            popup_view = RaidPopupView(
+                self.bot,
+                mode=("manage" if can_manage else "main"),
+                can_manage=can_manage,
+                can_rename_thread=can_rename_thread,
+            )
+
+            try:
+                target_msg = popup_message or getattr(interaction, "message", None)
+                if target_msg is not None:
+                    await target_msg.edit(embed=embed, view=popup_view)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=popup_view)
+
+                try:
+                    if interaction.type == discord.InteractionType.modal_submit:
+                        await interaction.delete_original_response()
+                except Exception:
+                    pass
+            except Exception:
+                return
+
         if not interaction.guild:
             return
 
@@ -39,10 +88,16 @@ class RaidCog(commands.Cog):
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
+            await respond_popup("This raid is not active.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
         admin_ok = await is_admin(interaction)
         if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            await respond_popup("You must be the raid leader or a bot admin to configure timed DKP.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send(
                 "You must be the raid leader or a bot admin to configure timed DKP.",
                 ephemeral=True,
@@ -52,9 +107,15 @@ class RaidCog(commands.Cog):
             amount = int(amount)
             interval_minutes = int(interval_minutes)
         except Exception:
+            await respond_popup("Invalid timed DKP settings.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send("Invalid timed DKP settings.", ephemeral=True)
 
         if amount <= 0 or interval_minutes <= 0:
+            await respond_popup("Invalid timed DKP settings.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send("Invalid timed DKP settings.", ephemeral=True)
 
         try:
@@ -66,6 +127,9 @@ class RaidCog(commands.Cog):
             )
         except Exception:
             logging.exception("Failed to save timed award settings")
+            await respond_popup("Failed to save timed DKP settings. Please try again.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send(
                 "Failed to save timed DKP settings. Please try again.",
                 ephemeral=True,
@@ -78,6 +142,13 @@ class RaidCog(commands.Cog):
                 )
         except Exception:
             logging.exception("Failed to announce timed award settings")
+
+        await respond_popup(
+            f"Timed DKP configured: **+{int(amount)}** every **{int(interval_minutes)}m**.",
+            title="Timed DKP",
+        )
+        if source == "raid_popup":
+            return
 
         return await interaction.followup.send(
             f"Timed DKP configured: **+{int(amount)}** every **{int(interval_minutes)}m**.",
@@ -201,43 +272,7 @@ class RaidCog(commands.Cog):
         interaction: discord.Interaction,
         raid: dict | None = None,
     ):
-        if not interaction.guild:
-            return
-
-        if not isinstance(interaction.user, discord.Member):
-            return
-
-        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
-        if not isinstance(thread, discord.Thread):
-            channel_id = getattr(interaction, "channel_id", None)
-            if channel_id:
-                try:
-                    resolved = self.bot.get_channel(int(channel_id))
-                    if resolved is None:
-                        resolved = await self.bot.fetch_channel(int(channel_id))
-                    if isinstance(resolved, discord.Thread):
-                        thread = resolved
-                except Exception:
-                    return
-
-        if not isinstance(thread, discord.Thread):
-            return
-
-        if raid is None:
-            raid = await self.bot.db.get_raid_by_thread(thread.id)
-        if not raid:
-            return
-
-        admin_ok = await is_admin(interaction)
-        if interaction.user.id != raid["leader_id"] and not admin_ok:
-            return
-
-        key = (interaction.guild.id, thread.id, interaction.user.id)
-        current = self._dkp_adjust_counts.get(key, 0) + 1
-        self._dkp_adjust_counts[key] = current
-
-        if current % 4 == 0:
-            await self._send_control_panel_ephemeral(interaction, thread)
+        return
 
     async def _send_control_panel_ephemeral(self, interaction: discord.Interaction, thread: discord.Thread):
         """Send the raid control panel as an ephemeral message to the raid leader.
@@ -253,7 +288,12 @@ class RaidCog(commands.Cog):
             f"Raid Control Panel for {interaction.user.display_name}",
             "Use the buttons below to manage your raid. This panel is only visible to you.",
         )
-        view = RaidControlView(self.bot, show_leader_buttons=True)
+        view = RaidPopupView(
+            self.bot,
+            mode="main",
+            can_manage=True,
+            can_rename_thread=True,
+        )
         await interaction.followup.send(
             f"Manage the raid in {thread.mention}.",
             embed=control_embed,
@@ -276,6 +316,19 @@ class RaidCog(commands.Cog):
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "This is not an active raid thread.",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send(
+                        "This is not an active raid thread.",
+                        ephemeral=True,
+                    )
+            except discord.HTTPException:
+                pass
             return
 
         is_leader = interaction.user.id == raid["leader_id"]
@@ -293,10 +346,11 @@ class RaidCog(commands.Cog):
         )
 
         embed = create_info_embed(title, description)
-        view = RaidControlView(
+        view = RaidPopupView(
             self.bot,
-            show_leader_buttons=can_manage,
-            show_rename_thread_button=can_rename_thread,
+            mode="main",
+            can_manage=can_manage,
+            can_rename_thread=can_rename_thread,
         )
 
         # If the original interaction has not been responded to yet, send via
@@ -479,14 +533,12 @@ class RaidCog(commands.Cog):
                 if raider_role:
                     raider_mention_prefix = f"{raider_role.mention} "
 
-            updated_content = (
-                f"{raider_mention_prefix}{base_content}\n\n"
-                f"Jump to the current raid log thread: {thread.mention}"
-            )
             try:
-                await raid_message.edit(content=updated_content)
+                await active_raids_channel.send(
+                    f"{raider_mention_prefix}Jump to the current raid log thread: {thread.mention}"
+                )
             except discord.HTTPException:
-                # If we cannot edit the message, we still continue with raid
+                # If we cannot send the followup message, we still continue with raid
                 # creation; users can reach the thread via the channel UI.
                 pass
 
@@ -1520,26 +1572,104 @@ class RaidCog(commands.Cog):
         source: str | None = None,
         exclude_member_ids: set[int] | None = None,
         exclude_group_numbers: set[int] | None = None,
+        popup_message: discord.Message | None = None,
     ):
+        responded_by_editing_message = False
+
+        async def respond_popup(embed: discord.Embed):
+            if source != "raid_popup":
+                return False
+
+            raid_row = None
+            try:
+                raid_row = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+            except Exception:
+                raid_row = None
+
+            can_manage = False
+            can_rename_thread = False
+            if raid_row:
+                try:
+                    admin_ok = await is_admin(interaction)
+                    is_leader = int(getattr(interaction.user, "id", 0)) == int(raid_row["leader_id"])
+                    can_manage = bool(is_leader or admin_ok)
+                    officer_ok = await is_officer(interaction)
+                    can_rename_thread = bool(can_manage or officer_ok)
+                except Exception:
+                    can_manage = False
+                    can_rename_thread = False
+
+            popup_view = RaidPopupView(
+                self.bot,
+                mode=("manage" if can_manage else "main"),
+                can_manage=can_manage,
+                can_rename_thread=can_rename_thread,
+            )
+
+            try:
+                target_msg = popup_message or getattr(interaction, "message", None)
+                if target_msg is not None:
+                    await target_msg.edit(embed=embed, view=popup_view)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=popup_view)
+
+                try:
+                    if interaction.type == discord.InteractionType.modal_submit:
+                        await interaction.delete_original_response()
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                # In popup mode, avoid falling back to followup.send() because that
+                # would create an extra ephemeral message.
+                return True
+
         # Defer if not already deferred
+        # For the popup panel flow, try to acknowledge by editing the existing
+        # ephemeral panel message so we can keep everything in one "popup".
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            if source == "raid_popup":
+                try:
+                    if getattr(interaction, "message", None) is not None:
+                        await interaction.response.edit_message(
+                            embed=create_info_embed("Working...", "Applying DKP change."),
+                            view=None,
+                        )
+                        responded_by_editing_message = True
+                    else:
+                        await interaction.response.defer(ephemeral=True)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    pass
+            else:
+                try:
+                    await interaction.response.defer(ephemeral=True)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    pass
         try:
             amount = int(amount_str)
             if amount <= 0:
                 raise ValueError
         except ValueError:
+            await respond_popup(create_error_embed("Invalid Amount", "DKP amount must be a positive number."))
+            if source == "raid_popup":
+                return
             await interaction.followup.send(
                 embed=create_error_embed("Invalid Amount", "DKP amount must be a positive number."),
                 ephemeral=True,
             )
-            if source == "raid_panel":
-                await self.send_ephemeral_raid_panel(interaction)
             return
 
         admin_ok = await is_admin(interaction)
 
         if amount > MAX_DKP_ADJUSTMENT and not admin_ok:
+            await respond_popup(
+                create_error_embed(
+                    "Invalid Amount",
+                    f"DKP amount must be a positive number up to {MAX_DKP_ADJUSTMENT}.",
+                )
+            )
+            if source == "raid_popup":
+                return
             await interaction.followup.send(
                 embed=create_error_embed(
                     "Invalid Amount",
@@ -1547,14 +1677,20 @@ class RaidCog(commands.Cog):
                 ),
                 ephemeral=True,
             )
-            if source == "raid_panel":
-                await self.send_ephemeral_raid_panel(interaction)
             return
 
         if action == "Deduct":
             amount = -amount
 
         if group_number is not None and member is not None:
+            await respond_popup(
+                create_error_embed(
+                    "Invalid Target",
+                    "Choose either a member or a group (not both).",
+                )
+            )
+            if source == "raid_popup":
+                return
             await interaction.followup.send(
                 embed=create_error_embed(
                     "Invalid Target",
@@ -1562,12 +1698,18 @@ class RaidCog(commands.Cog):
                 ),
                 ephemeral=True,
             )
-            if source == "raid_panel":
-                await self.send_ephemeral_raid_panel(interaction)
             return
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
+            await respond_popup(
+                create_error_embed(
+                    "No Active Raid",
+                    "This channel is not associated with an active raid. DKP changes can only be made from a raid log thread.",
+                )
+            )
+            if source == "raid_popup":
+                return
             await interaction.followup.send(
                 embed=create_error_embed(
                     "No Active Raid",
@@ -1575,8 +1717,6 @@ class RaidCog(commands.Cog):
                 ),
                 ephemeral=True,
             )
-            if source == "raid_panel":
-                await self.send_ephemeral_raid_panel(interaction)
             return
 
         if group_number is not None:
@@ -1596,6 +1736,14 @@ class RaidCog(commands.Cog):
                     group_count = 0
 
             if group_count <= 0:
+                await respond_popup(
+                    create_error_embed(
+                        "Groups Not Set Up",
+                        "Groups have not been set up for this raid yet.",
+                    )
+                )
+                if source == "raid_popup":
+                    return
                 await interaction.followup.send(
                     embed=create_error_embed(
                         "Groups Not Set Up",
@@ -1603,11 +1751,17 @@ class RaidCog(commands.Cog):
                     ),
                     ephemeral=True,
                 )
-                if source == "raid_panel":
-                    await self.send_ephemeral_raid_panel(interaction)
                 return
 
             if group_number < 1 or group_number > group_count:
+                await respond_popup(
+                    create_error_embed(
+                        "Invalid Group",
+                        f"Group number must be between 1 and {group_count}.",
+                    )
+                )
+                if source == "raid_popup":
+                    return
                 await interaction.followup.send(
                     embed=create_error_embed(
                         "Invalid Group",
@@ -1615,8 +1769,6 @@ class RaidCog(commands.Cog):
                     ),
                     ephemeral=True,
                 )
-                if source == "raid_panel":
-                    await self.send_ephemeral_raid_panel(interaction)
                 return
 
         vc = interaction.guild.get_channel(raid["vc_id"]) if interaction.guild else None
@@ -1685,6 +1837,14 @@ class RaidCog(commands.Cog):
             targets = filtered
         else:
             if member.bot:
+                await respond_popup(
+                    create_error_embed(
+                        "Invalid Target",
+                        "DKP cannot be adjusted for bot accounts.",
+                    )
+                )
+                if source == "raid_popup":
+                    return
                 await interaction.followup.send(
                     embed=create_error_embed(
                         "Invalid Target",
@@ -1692,8 +1852,6 @@ class RaidCog(commands.Cog):
                     ),
                     ephemeral=True,
                 )
-                if source == "raid_panel":
-                    await self.send_ephemeral_raid_panel(interaction)
                 return
             raid_member_ids = set()
             try:
@@ -1703,6 +1861,14 @@ class RaidCog(commands.Cog):
                 raid_member_ids = set()
 
             if member.id not in raid_member_ids:
+                await respond_popup(
+                    create_error_embed(
+                        "Invalid Target",
+                        "DKP can only be adjusted for approved raid members.",
+                    )
+                )
+                if source == "raid_popup":
+                    return
                 await interaction.followup.send(
                     embed=create_error_embed(
                         "Invalid Target",
@@ -1710,12 +1876,18 @@ class RaidCog(commands.Cog):
                     ),
                     ephemeral=True,
                 )
-                if source == "raid_panel":
-                    await self.send_ephemeral_raid_panel(interaction)
                 return
             targets = [member]
 
         if not targets:
+            await respond_popup(
+                create_error_embed(
+                    "No Eligible Targets",
+                    "No eligible raid members were found to adjust DKP for.",
+                )
+            )
+            if source == "raid_popup":
+                return
             await interaction.followup.send(
                 embed=create_error_embed(
                     "No Eligible Targets",
@@ -1723,8 +1895,6 @@ class RaidCog(commands.Cog):
                 ),
                 ephemeral=True,
             )
-            if source == "raid_panel":
-                await self.send_ephemeral_raid_panel(interaction)
             return
 
         for m in targets:
@@ -1761,30 +1931,146 @@ class RaidCog(commands.Cog):
             embed = create_error_embed(f"DKP {action_word}!", description)
         else:
             embed = create_success_embed(f"DKP {action_word}!", description)
-        await interaction.followup.send(embed=embed)
 
+        # Post a short public audit line in the raid thread (Option 2).
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                short_reason = (reason or "").strip()
+                if len(short_reason) > 200:
+                    short_reason = short_reason[:197] + "..."
+
+                if member:
+                    public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to {member.mention}. ({short_reason})"
+                else:
+                    public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})"
+
+                await interaction.channel.send(public_line)
+        except Exception:
+            logging.exception("Failed to send public DKP audit line")
+
+        # In popup mode, keep the result inside the popup when possible.
+        if source == "raid_popup":
+            admin_ok = await is_admin(interaction)
+            is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
+            can_manage = bool(is_leader or admin_ok)
+            officer_ok = await is_officer(interaction)
+            can_rename_thread = bool(can_manage or officer_ok)
+
+            popup_view = RaidPopupView(
+                self.bot,
+                mode=("manage" if can_manage else "main"),
+                can_manage=can_manage,
+                can_rename_thread=can_rename_thread,
+            )
+
+            try:
+                target_msg = popup_message or getattr(interaction, "message", None)
+                if target_msg is not None:
+                    await target_msg.edit(embed=embed, view=popup_view)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=popup_view)
+
+                try:
+                    if interaction.type == discord.InteractionType.modal_submit:
+                        await interaction.delete_original_response()
+                except Exception:
+                    pass
+            except Exception:
+                return
+            return
+
+        # Default behavior: show detailed result in-channel (non-ephemeral) and
+        # periodically re-show the leader's ephemeral panel.
+        await interaction.followup.send(embed=embed)
         await self.maybe_send_control_panel_ephemeral(interaction, raid=raid)
 
-    async def rename_raid_thread(self, interaction: discord.Interaction, raid_id: int, new_name: str):
+    async def rename_raid_thread(
+        self,
+        interaction: discord.Interaction,
+        raid_id: int,
+        new_name: str,
+        *,
+        source: str | None = None,
+        popup_can_manage: bool = False,
+        popup_can_rename_thread: bool = False,
+        popup_message: discord.Message | None = None,
+    ):
         """Rename the raid thread if the user is authorized and the raid is still active."""
-        await interaction.response.defer(ephemeral=True)
+        async def respond_popup(message: str, *, title: str = "Rename Thread"):
+            if source != "raid_popup":
+                return
+
+            embed = create_info_embed(title, message)
+            popup_view = RaidPopupView(
+                self.bot,
+                mode=("manage" if popup_can_manage else "main"),
+                can_manage=popup_can_manage,
+                can_rename_thread=popup_can_rename_thread,
+            )
+
+            try:
+                target_msg = popup_message or getattr(interaction, "message", None)
+                if target_msg is not None:
+                    await target_msg.edit(embed=embed, view=popup_view)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=popup_view)
+
+                try:
+                    if interaction.type == discord.InteractionType.modal_submit:
+                        await interaction.delete_original_response()
+                except Exception:
+                    pass
+            except Exception:
+                return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        desired_input = (new_name or "").strip()
+        if not desired_input:
+            await respond_popup("Thread name cannot be empty.", title="Error")
+            try:
+                if source != "raid_popup":
+                    await interaction.followup.send("Thread name cannot be empty.", ephemeral=True)
+            except Exception:
+                pass
+            return
+
         raid = await self.bot.db.fetchone("SELECT * FROM raids WHERE id = ?", (raid_id,))
         if not raid or not raid["is_active"]:
+            await respond_popup("This raid is no longer active.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send("This raid is no longer active.", ephemeral=True)
 
         # Authorization: raid leader, officer, or admin
         if not await is_officer(interaction) and interaction.user.id != raid["leader_id"]:
+            await respond_popup("You don't have permission to rename this thread.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send("You don't have permission to rename this thread.", ephemeral=True)
 
         thread = interaction.guild.get_thread(raid["thread_id"])
         if not thread:
+            await respond_popup("Raid thread not found.", title="Error")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send("Raid thread not found.", ephemeral=True)
 
         try:
-            desired = self._format_raid_log_thread_name(interaction.guild, raid, new_name)
+            desired = self._format_raid_log_thread_name(interaction.guild, raid, desired_input)
             await thread.edit(name=desired)
+            await respond_popup("Thread renamed successfully.")
+            if source == "raid_popup":
+                return
             await interaction.followup.send("Thread renamed successfully.", ephemeral=True)
         except discord.HTTPException:
+            await respond_popup("Failed to rename the thread. Check my permissions.", title="Error")
+            if source == "raid_popup":
+                return
             await interaction.followup.send("Failed to rename the thread. Check my permissions.", ephemeral=True)
 
     async def _copy_thread_to_completed_channel(
@@ -1887,7 +2173,34 @@ class RaidCog(commands.Cog):
 
         return dest_thread
 
-    async def close_raid(self, interaction: discord.Interaction):
+    async def close_raid(
+        self,
+        interaction: discord.Interaction,
+        *,
+        source: str | None = None,
+        popup_can_manage: bool = False,
+        popup_can_rename_thread: bool = False,
+        popup_message: discord.Message | None = None,
+    ):
+        async def respond_popup(message: str, *, title: str = "Close Raid"):
+            if source != "raid_popup":
+                return
+
+            embed = create_info_embed(title, message)
+            popup_view = RaidPopupView(
+                self.bot,
+                mode=("manage" if popup_can_manage else "main"),
+                can_manage=popup_can_manage,
+                can_rename_thread=popup_can_rename_thread,
+            )
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=embed, view=popup_view)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=popup_view)
+            except Exception:
+                return
+
         if not interaction.guild:
             return
 
@@ -1899,6 +2212,9 @@ class RaidCog(commands.Cog):
 
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
+            await respond_popup("This raid is already closed or does not exist.", title="Close Raid")
+            if source == "raid_popup":
+                return
             return await interaction.followup.send("This raid is already closed or does not exist.", ephemeral=True)
         thread = interaction.channel
         # Deactivate raid in DB
@@ -2132,20 +2448,20 @@ class RaidCog(commands.Cog):
         # deferred button interaction is replaced.
         try:
             if move_error:
-                await interaction.followup.send(
-                    f"Raid has been closed, but it was not moved to completed raids. {move_error}",
-                    ephemeral=True,
-                )
+                message = f"Raid has been closed, but it was not moved to completed raids. {move_error}"
+                await respond_popup(message, title="Close Raid")
+                if source != "raid_popup":
+                    await interaction.followup.send(message, ephemeral=True)
             elif completed_thread is not None:
-                await interaction.followup.send(
-                    f"Raid has been closed and moved to {completed_thread.mention}.",
-                    ephemeral=True,
-                )
+                message = f"Raid has been closed and moved to {completed_thread.mention}."
+                await respond_popup(message, title="Close Raid")
+                if source != "raid_popup":
+                    await interaction.followup.send(message, ephemeral=True)
             else:
-                await interaction.followup.send(
-                    "Raid has been closed and the raid log thread has been archived.",
-                    ephemeral=True,
-                )
+                message = "Raid has been closed and the raid log thread has been archived."
+                await respond_popup(message, title="Close Raid")
+                if source != "raid_popup":
+                    await interaction.followup.send(message, ephemeral=True)
         except discord.HTTPException:
             # If the interaction has expired or the followup webhook is gone,
             # the public log message above is still sufficient feedback.

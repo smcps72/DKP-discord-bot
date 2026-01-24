@@ -12,6 +12,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         member: discord.Member | None = None,
         group_number: int | None = None,
         source: str | None = None,
+        popup_message: discord.Message | None = None,
     ):
         super().__init__()
         self.action = action
@@ -19,6 +20,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         self.target_member_obj = member  # The member passed from the command
         self.group_number = group_number
         self.source = source
+        self.popup_message = popup_message
 
         self.amount = TextInput(
             label="Amount of DKP",
@@ -38,7 +40,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
 
         # Only add the text input if no member was pre-selected
         self.target_member_input = None
-        if member is None and source != "raid_panel":
+        if member is None and source not in ("raid_panel", "raid_popup"):
             self.target_member_input = TextInput(
                 label="Target Member Name (optional)",
                 placeholder="Leave blank to adjust everyone in raid",
@@ -91,9 +93,33 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                         member = interaction.guild.get_member(member_id)
 
                 if member is None:
+                    if self.source == "raid_popup" and self.popup_message is not None:
+                        try:
+                            if not interaction.response.is_done():
+                                await interaction.response.defer(ephemeral=True)
+                        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                            pass
+                        try:
+                            embed = discord.Embed(
+                                title="DKP Adjustment",
+                                description=(
+                                    f"Member '{target_value}' not found. Please use their exact Discord name, nickname, or ID."
+                                ),
+                                color=discord.Color.red(),
+                            )
+                            await self.popup_message.edit(embed=embed)
+                            try:
+                                if interaction.type == discord.InteractionType.modal_submit:
+                                    await interaction.delete_original_response()
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                        return
+
                     return await interaction.response.send_message(
                         f"Member '{target_value}' not found. Please use their exact Discord name, nickname, or ID.",
-                        ephemeral=True
+                        ephemeral=True,
                     )
 
         exclude_group_numbers: set[int] | None = None
@@ -146,13 +172,22 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             self.source,
             exclude_member_ids=exclude_member_ids,
             exclude_group_numbers=exclude_group_numbers,
+            popup_message=self.popup_message,
         )
 
 
 class RaidTimedAwardModal(Modal, title="Timed Raid DKP"):
-    def __init__(self, raid_cog):
+    def __init__(
+        self,
+        raid_cog,
+        *,
+        source: str | None = None,
+        popup_message: discord.Message | None = None,
+    ):
         super().__init__()
         self.raid_cog = raid_cog
+        self.source = source
+        self.popup_message = popup_message
 
         self.amount = TextInput(
             label="DKP per interval",
@@ -173,23 +208,56 @@ class RaidTimedAwardModal(Modal, title="Timed Raid DKP"):
         self.add_item(self.interval_minutes)
 
     async def on_submit(self, interaction: discord.Interaction):
+        async def respond_error(message: str):
+            if self.source == "raid_popup" and self.popup_message is not None:
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.defer(ephemeral=True)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    pass
+
+                try:
+                    embed = discord.Embed(title="Timed DKP", description=message, color=discord.Color.red())
+                    await self.popup_message.edit(embed=embed)
+                    try:
+                        if interaction.type == discord.InteractionType.modal_submit:
+                            await interaction.delete_original_response()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                return
+
+            try:
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message(message, ephemeral=True)
+                return await interaction.followup.send(message, ephemeral=True)
+            except Exception:
+                return
+
         raw_amount = (self.amount.value or "").strip()
         raw_interval = (self.interval_minutes.value or "").strip()
         try:
             amount = int(raw_amount)
         except ValueError:
-            return await interaction.response.send_message("Amount must be a whole number.", ephemeral=True)
+            return await respond_error("Amount must be a whole number.")
         try:
             interval = int(raw_interval)
         except ValueError:
-            return await interaction.response.send_message("Interval must be a whole number.", ephemeral=True)
+            return await respond_error("Interval must be a whole number.")
 
         if amount <= 0:
-            return await interaction.response.send_message("Amount must be greater than 0.", ephemeral=True)
+            return await respond_error("Amount must be greater than 0.")
         if interval <= 0:
-            return await interaction.response.send_message("Interval must be greater than 0.", ephemeral=True)
+            return await respond_error("Interval must be greater than 0.")
 
-        await self.raid_cog.configure_timed_award(interaction, amount=amount, interval_minutes=interval)
+        await self.raid_cog.configure_timed_award(
+            interaction,
+            amount=amount,
+            interval_minutes=interval,
+            source=self.source,
+            popup_message=self.popup_message,
+        )
 
 
 class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
@@ -364,9 +432,21 @@ class RaidGroupCountModal(Modal, title="Set Raid Groups"):
 
 
 class AuctionStartModal(Modal, title="Start New Auction"):
-    def __init__(self, auction_cog):
+    def __init__(
+        self,
+        auction_cog,
+        *,
+        source: str | None = None,
+        popup_can_manage: bool = False,
+        popup_can_rename_thread: bool = False,
+        popup_message: discord.Message | None = None,
+    ):
         super().__init__()
         self.auction_cog = auction_cog
+        self.source = source
+        self.popup_can_manage = bool(popup_can_manage)
+        self.popup_can_rename_thread = bool(popup_can_rename_thread)
+        self.popup_message = popup_message
         self.item_name = TextInput(
             label="Item Name to Auction",
             placeholder="e.g., Thunderfury, Blessed Blade of the Windseeker",
@@ -382,7 +462,14 @@ class AuctionStartModal(Modal, title="Start New Auction"):
             item_name = "Item"
         if len(item_name) > 100:
             item_name = item_name[:100]
-        await self.auction_cog.process_auction_start(interaction, item_name)
+        await self.auction_cog.process_auction_start(
+            interaction,
+            item_name,
+            source=self.source,
+            popup_can_manage=self.popup_can_manage,
+            popup_can_rename_thread=self.popup_can_rename_thread,
+            popup_message=self.popup_message,
+        )
 
 class BidModal(Modal, title="Place Your Bid"):
     def __init__(self, auction_cog, auction_id: int):
@@ -475,10 +562,23 @@ class RaidRulesModal(Modal, title="Edit Raid Rules"):
         )
 
 class ThreadRenameModal(discord.ui.Modal):
-    def __init__(self, raid_cog, raid_id: int):
+    def __init__(
+        self,
+        raid_cog,
+        raid_id: int,
+        *,
+        source: str | None = None,
+        popup_can_manage: bool = False,
+        popup_can_rename_thread: bool = False,
+        popup_message: discord.Message | None = None,
+    ):
         super().__init__(title="Rename Raid Thread")
         self.raid_cog = raid_cog
         self.raid_id = raid_id
+        self.source = source
+        self.popup_can_manage = bool(popup_can_manage)
+        self.popup_can_rename_thread = bool(popup_can_rename_thread)
+        self.popup_message = popup_message
 
         self.new_name = discord.ui.TextInput(
             label="New thread name",
@@ -490,10 +590,15 @@ class ThreadRenameModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         new_name = self.new_name.value.strip()
-        if not new_name:
-            await interaction.response.send_message("Thread name cannot be empty.", ephemeral=True)
-            return
-        await self.raid_cog.rename_raid_thread(interaction, self.raid_id, new_name)
+        await self.raid_cog.rename_raid_thread(
+            interaction,
+            self.raid_id,
+            new_name,
+            source=self.source,
+            popup_can_manage=self.popup_can_manage,
+            popup_can_rename_thread=self.popup_can_rename_thread,
+            popup_message=self.popup_message,
+        )
 
 
 class RaidGroupSetupModal(Modal, title="Set Up Raid Groups"):
