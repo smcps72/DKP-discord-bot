@@ -63,7 +63,8 @@ def _openai_chat_completion(prompt: str, timeout: float = 45) -> str | None:
     if not api_key:
         return None
 
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    base_url_raw = (os.getenv("OPENAI_BASE_URL") or "").strip()
+    base_url = (base_url_raw or "https://api.openai.com/v1").rstrip("/")
     model = os.getenv("OPENAI_MODEL", "o3-mini")
     is_o_series = model.lower().startswith("o")
 
