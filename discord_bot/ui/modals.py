@@ -259,6 +259,18 @@ class RaidTimedAwardModal(Modal, title="Timed Raid DKP"):
             popup_message=self.popup_message,
         )
 
+        try:
+            from ..ui.views import RaidTimedAwardControlView
+
+            view = RaidTimedAwardControlView(getattr(self.raid_cog, "bot", None))
+            await interaction.followup.send(
+                "Timed DKP controls:",
+                view=view,
+                ephemeral=True,
+            )
+        except Exception:
+            pass
+
 
 class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
     def __init__(self, admin_cog, member: discord.Member):

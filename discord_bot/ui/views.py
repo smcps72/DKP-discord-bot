@@ -420,6 +420,53 @@ class ChangelogView(discord.ui.View):
         await interaction.response.edit_message(view=None)
 
 
+class RaidTimedAwardControlView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=600)
+        self.bot = bot
+
+    @discord.ui.button(
+        label="Stop Timed DKP",
+        style=discord.ButtonStyle.danger,
+        custom_id="raid_timed_dkp_stop_from_modal",
+        row=0,
+    )
+    async def stop_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message(
+                        "Raid module is currently offline.",
+                        ephemeral=True,
+                    )
+                return await interaction.followup.send(
+                    "Raid module is currently offline.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                return
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        await raid_cog.disable_timed_award(interaction)
+
+        try:
+            msg = getattr(interaction, "message", None)
+            if msg is not None:
+                await msg.edit(view=None)
+        except discord.HTTPException:
+            pass
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_timed_dkp_modal_close", row=1)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
+
+
 class WelcomeLegacyView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -805,6 +852,7 @@ class RaidMemberClearGroupSelect(Select):
     async def callback(self, interaction: discord.Interaction):
         view = self.view
         return_to_popup = bool(getattr(view, "return_to_popup", False))
+        return_to_group_signup = bool(getattr(view, "return_to_group_signup", False))
         popup_can_manage = bool(getattr(view, "popup_can_manage", False))
         popup_can_rename_thread = bool(getattr(view, "popup_can_rename_thread", False))
 
@@ -884,6 +932,35 @@ class RaidMemberClearGroupSelect(Select):
 
         embed = create_info_embed("Remove from Group", f"Cleared group assignment for {mention}.")
 
+        if return_to_group_signup:
+            raid_cog = self.bot.get_cog("RaidCog")
+            if raid_cog and interaction.guild:
+                try:
+                    raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                    raid_dict = raid
+                    if raid is not None and not isinstance(raid, dict):
+                        raid_dict = dict(raid)
+                    group_count = 0
+                    if isinstance(raid_dict, dict):
+                        group_count = int(raid_dict.get("group_count") or 0)
+                    signup_embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                    signup_view = RaidGroupSignupModalView(
+                        self.bot,
+                        group_count=group_count,
+                        can_manage=bool(getattr(view, "group_signup_can_manage", False)),
+                        return_to_popup=bool(getattr(view, "group_signup_return_to_popup", False)),
+                        popup_can_manage=bool(getattr(view, "group_signup_popup_can_manage", False)),
+                        popup_can_rename_thread=bool(getattr(view, "group_signup_popup_can_rename_thread", False)),
+                    )
+                    await interaction.response.edit_message(
+                        content=f"Cleared group assignment for {mention}.",
+                        embed=signup_embed,
+                        view=signup_view,
+                    )
+                    return
+                except Exception:
+                    pass
+
         if return_to_popup:
             panel_view = RaidPopupView(
                 self.bot,
@@ -919,6 +996,11 @@ class RaidMemberClearGroupView(discord.ui.View):
         return_to_popup: bool = False,
         popup_can_manage: bool = False,
         popup_can_rename_thread: bool = False,
+        return_to_group_signup: bool = False,
+        group_signup_can_manage: bool = False,
+        group_signup_return_to_popup: bool = False,
+        group_signup_popup_can_manage: bool = False,
+        group_signup_popup_can_rename_thread: bool = False,
     ):
         super().__init__(timeout=None)
         self.bot = bot
@@ -927,6 +1009,11 @@ class RaidMemberClearGroupView(discord.ui.View):
         self.return_to_popup = bool(return_to_popup)
         self.popup_can_manage = bool(popup_can_manage)
         self.popup_can_rename_thread = bool(popup_can_rename_thread)
+        self.return_to_group_signup = bool(return_to_group_signup)
+        self.group_signup_can_manage = bool(group_signup_can_manage)
+        self.group_signup_return_to_popup = bool(group_signup_return_to_popup)
+        self.group_signup_popup_can_manage = bool(group_signup_popup_can_manage)
+        self.group_signup_popup_can_rename_thread = bool(group_signup_popup_can_rename_thread)
 
         self.add_item(
             RaidMemberClearGroupSelect(
@@ -952,6 +1039,11 @@ class RaidMemberClearGroupView(discord.ui.View):
                 return_to_popup=self.return_to_popup,
                 popup_can_manage=self.popup_can_manage,
                 popup_can_rename_thread=self.popup_can_rename_thread,
+                return_to_group_signup=self.return_to_group_signup,
+                group_signup_can_manage=self.group_signup_can_manage,
+                group_signup_return_to_popup=self.group_signup_return_to_popup,
+                group_signup_popup_can_manage=self.group_signup_popup_can_manage,
+                group_signup_popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
             )
             try:
                 await interaction.response.edit_message(view=new_view)
@@ -960,6 +1052,42 @@ class RaidMemberClearGroupView(discord.ui.View):
 
         toggle_btn.callback = _toggle_cb
         self.add_item(toggle_btn)
+
+        if self.return_to_group_signup:
+            back_btn = discord.ui.Button(
+                label="Back",
+                style=discord.ButtonStyle.secondary,
+                custom_id="raid_group_signup_modal_back_from_clear",
+                row=2,
+            )
+
+            async def _back_cb(interaction: discord.Interaction):
+                raid_cog = self.bot.get_cog("RaidCog")
+                if not raid_cog or interaction.guild is None:
+                    return
+
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+
+                group_count = 0
+                if isinstance(raid_dict, dict):
+                    group_count = int(raid_dict.get("group_count") or 0)
+
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                view = RaidGroupSignupModalView(
+                    self.bot,
+                    group_count=group_count,
+                    can_manage=self.group_signup_can_manage,
+                    return_to_popup=self.group_signup_return_to_popup,
+                    popup_can_manage=self.group_signup_popup_can_manage,
+                    popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
+                )
+                await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+            back_btn.callback = _back_cb
+            self.add_item(back_btn)
 
 
 class RaidMemberAssignGroupMemberSelect(Select):
@@ -1131,6 +1259,7 @@ class RaidMemberAssignGroupNumberSelect(Select):
             logging.exception("Failed to send group assignment message to raid thread")
 
         return_to_popup = bool(getattr(view, "return_to_popup", False))
+        return_to_group_signup = bool(getattr(view, "return_to_group_signup", False))
         popup_can_manage = bool(getattr(view, "popup_can_manage", False))
         popup_can_rename_thread = bool(getattr(view, "popup_can_rename_thread", False))
 
@@ -1140,6 +1269,35 @@ class RaidMemberAssignGroupNumberSelect(Select):
         else:
             embed = create_info_embed("Set Group", f"Assigned {mention} to **Group {int(group_number)}**.")
             content = f"Assigned {mention} to **Group {int(group_number)}**."
+
+        if return_to_group_signup:
+            raid_cog = self.bot.get_cog("RaidCog")
+            if raid_cog and interaction.guild:
+                try:
+                    raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                    raid_dict = raid
+                    if raid is not None and not isinstance(raid, dict):
+                        raid_dict = dict(raid)
+                    group_count = 0
+                    if isinstance(raid_dict, dict):
+                        group_count = int(raid_dict.get("group_count") or 0)
+                    signup_embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                    signup_view = RaidGroupSignupModalView(
+                        self.bot,
+                        group_count=group_count,
+                        can_manage=bool(getattr(view, "group_signup_can_manage", False)),
+                        return_to_popup=bool(getattr(view, "group_signup_return_to_popup", False)),
+                        popup_can_manage=bool(getattr(view, "group_signup_popup_can_manage", False)),
+                        popup_can_rename_thread=bool(getattr(view, "group_signup_popup_can_rename_thread", False)),
+                    )
+                    await interaction.response.edit_message(
+                        content=content,
+                        embed=signup_embed,
+                        view=signup_view,
+                    )
+                    return
+                except Exception:
+                    pass
 
         if return_to_popup:
             panel_view = RaidPopupView(
@@ -1178,6 +1336,11 @@ class RaidMemberAssignGroupView(discord.ui.View):
         return_to_popup: bool = False,
         popup_can_manage: bool = False,
         popup_can_rename_thread: bool = False,
+        return_to_group_signup: bool = False,
+        group_signup_can_manage: bool = False,
+        group_signup_return_to_popup: bool = False,
+        group_signup_popup_can_manage: bool = False,
+        group_signup_popup_can_rename_thread: bool = False,
     ):
         super().__init__(timeout=None)
         self.bot = bot
@@ -1189,6 +1352,11 @@ class RaidMemberAssignGroupView(discord.ui.View):
         self.return_to_popup = bool(return_to_popup)
         self.popup_can_manage = bool(popup_can_manage)
         self.popup_can_rename_thread = bool(popup_can_rename_thread)
+        self.return_to_group_signup = bool(return_to_group_signup)
+        self.group_signup_can_manage = bool(group_signup_can_manage)
+        self.group_signup_return_to_popup = bool(group_signup_return_to_popup)
+        self.group_signup_popup_can_manage = bool(group_signup_popup_can_manage)
+        self.group_signup_popup_can_rename_thread = bool(group_signup_popup_can_rename_thread)
 
         self.add_item(
             RaidMemberAssignGroupMemberSelect(
@@ -1217,6 +1385,11 @@ class RaidMemberAssignGroupView(discord.ui.View):
                 return_to_popup=self.return_to_popup,
                 popup_can_manage=self.popup_can_manage,
                 popup_can_rename_thread=self.popup_can_rename_thread,
+                return_to_group_signup=self.return_to_group_signup,
+                group_signup_can_manage=self.group_signup_can_manage,
+                group_signup_return_to_popup=self.group_signup_return_to_popup,
+                group_signup_popup_can_manage=self.group_signup_popup_can_manage,
+                group_signup_popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
             )
             new_view.selected_member_id = self.selected_member_id
             try:
@@ -1226,6 +1399,42 @@ class RaidMemberAssignGroupView(discord.ui.View):
 
         toggle_btn.callback = _toggle_cb
         self.add_item(toggle_btn)
+
+        if self.return_to_group_signup:
+            back_btn = discord.ui.Button(
+                label="Back",
+                style=discord.ButtonStyle.secondary,
+                custom_id="raid_group_signup_modal_back_from_assign",
+                row=3,
+            )
+
+            async def _back_cb(interaction: discord.Interaction):
+                raid_cog = self.bot.get_cog("RaidCog")
+                if not raid_cog or interaction.guild is None:
+                    return
+
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+
+                group_count = 0
+                if isinstance(raid_dict, dict):
+                    group_count = int(raid_dict.get("group_count") or 0)
+
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                view = RaidGroupSignupModalView(
+                    self.bot,
+                    group_count=group_count,
+                    can_manage=self.group_signup_can_manage,
+                    return_to_popup=self.group_signup_return_to_popup,
+                    popup_can_manage=self.group_signup_popup_can_manage,
+                    popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
+                )
+                await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+            back_btn.callback = _back_cb
+            self.add_item(back_btn)
 
 
 class DKPAdjustmentView(discord.ui.View):
@@ -1703,6 +1912,7 @@ class RaidPopupView(discord.ui.View):
             hide_ids |= {
                 "raid_popup_award_dkp",
                 "raid_popup_deduct_dkp",
+                "raid_popup_timed_dkp",
                 "raid_popup_start_auction",
                 "raid_popup_end_auction",
                 "raid_popup_update_team",
@@ -1983,71 +2193,53 @@ class RaidPopupView(discord.ui.View):
         if not raid or interaction.guild is None:
             return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
 
-        members_by_id: dict[int, discord.Member] = {}
+        raid_dict = raid
         try:
-            member_rows = await self.bot.db.get_raid_members(raid["id"])
+            if raid is not None and not isinstance(raid, dict):
+                raid_dict = dict(raid)
         except Exception:
-            member_rows = []
+            raid_dict = raid
 
-        for row in member_rows:
-            user_id = row["user_id"]
-            if user_id in members_by_id:
-                continue
-            gm = interaction.guild.get_member(user_id) if interaction.guild else None
-            if gm and not gm.bot:
-                members_by_id[user_id] = gm
-
-        if not members_by_id:
-            embed = create_info_embed("Raid Groups", "No raid members were found.")
-            view = RaidPopupInfoView(self.bot, can_manage=self.can_manage, can_rename_thread=self.can_rename_thread)
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(embed=embed, view=view)
-                else:
-                    msg = getattr(interaction, "message", None)
-                    if msg is not None:
-                        await msg.edit(embed=embed, view=view)
-            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-                return
-            return
-
+        group_count = 0
         try:
-            group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
-        except Exception:
-            group_rows = []
-
-        member_to_group: dict[int, int] = {}
-        for row in group_rows:
-            try:
-                member_to_group[int(row["user_id"])] = int(row["group_number"])
-            except Exception:
-                continue
-
-        groups: dict[str, list[str]] = {}
-        for uid, member in members_by_id.items():
-            grp = member_to_group.get(uid)
-            key = f"Group {grp}" if grp is not None else "Ungrouped"
-            groups.setdefault(key, []).append(member.mention)
-
-        lines: list[str] = []
-        for key in sorted(groups.keys(), key=lambda k: (k == "Ungrouped", k)):
-            lines.append(f"**{key}**: {', '.join(groups[key])}")
-
-        description = "\n".join(lines)
-        if len(description) > 4096:
-            description = description[:4090] + "..."
-
-        embed = create_info_embed("Raid Groups", description)
-        view = RaidPopupInfoView(self.bot, can_manage=self.can_manage, can_rename_thread=self.can_rename_thread)
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.edit_message(embed=embed, view=view)
+            if isinstance(raid_dict, dict):
+                group_count = int(raid_dict.get("group_count") or 0)
             else:
+                group_count = int(raid["group_count"])
+        except Exception:
+            group_count = 0
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await self._popup_notice(interaction, "Raid module is currently offline.", mode="main")
+
+        if group_count <= 0:
+            if self.can_manage:
+                modal = RaidGroupSetupModal(raid_cog=raid_cog)
+                try:
+                    return await interaction.response.send_modal(modal)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    return await self._popup_notice(interaction, "Please try again.", mode="main")
+            return await self._popup_notice(interaction, "Raid groups have not been created yet.", mode="main")
+
+        embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+        view = RaidGroupSignupModalView(
+            self.bot,
+            group_count=group_count,
+            can_manage=self.can_manage,
+            return_to_popup=True,
+            popup_can_manage=self.can_manage,
+            popup_can_rename_thread=self.can_rename_thread,
+        )
+        try:
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            try:
                 msg = getattr(interaction, "message", None)
                 if msg is not None:
-                    await msg.edit(embed=embed, view=view)
-        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-            return
+                    await msg.edit(content=None, embed=embed, view=view)
+            except Exception:
+                return
 
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_popup_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2170,6 +2362,28 @@ class RaidPopupView(discord.ui.View):
         embed = create_info_embed("Deduct DKP", "Who do you want to deduct DKP from?")
         await interaction.response.edit_message(embed=embed, view=view)
 
+    @discord.ui.button(label="Timed DKP", style=discord.ButtonStyle.primary, custom_id="raid_popup_timed_dkp", row=1)
+    async def timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
+        if not raid:
+            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+        if not can_manage:
+            return await self._popup_notice(interaction, "You don't have permission to do that.", mode="main")
+
+        self.can_manage = bool(can_manage)
+        self.can_rename_thread = bool(can_rename_thread)
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            return await self._popup_notice(interaction, "Raid module is currently offline.", mode="manage")
+
+        modal = RaidTimedAwardModal(
+            raid_cog=raid_cog,
+            source="raid_popup",
+            popup_message=getattr(interaction, "message", None),
+        )
+        await interaction.response.send_modal(modal)
+
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_popup_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
@@ -2188,7 +2402,7 @@ class RaidPopupView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
 
-    @discord.ui.button(label="End Auction", style=discord.ButtonStyle.primary, custom_id="raid_popup_end_auction", row=1)
+    @discord.ui.button(label="End Auction", style=discord.ButtonStyle.primary, custom_id="raid_popup_end_auction", row=4)
     async def end_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -2473,10 +2687,6 @@ class RaidControlView(discord.ui.View):
                 "raid_update_team",
                 "raid_sync_voice",
                 "raid_remove_raider",
-                "raid_remove_from_group",
-                "raid_set_group",
-                "raid_timed_dkp",
-                "raid_stop_timed_dkp",
                 "raid_start_auction",
                 "raid_end_auction",
                 "raid_close_raid",
@@ -2510,10 +2720,8 @@ class RaidControlView(discord.ui.View):
         # modals must be sent via the initial interaction response.
         if interaction.type != discord.InteractionType.modal_submit and custom_id not in (
             "raid_add_rule",
-            "raid_set_group",
             "raid_start_auction",
             "raid_show_groups",
-            "raid_timed_dkp",
             "raid_rename_thread",
         ):
             # Only defer if the interaction hasn't already been acknowledged
@@ -3327,114 +3535,6 @@ class RaidControlView(discord.ui.View):
                 ephemeral=True,
             )
 
-    @discord.ui.button(label="Remove from group", style=discord.ButtonStyle.secondary, custom_id="raid_remove_from_group", row=3)
-    async def remove_from_group(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        if not raid:
-            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
-
-        members_by_id: dict[int, discord.Member] = {}
-        try:
-            member_rows = await self.bot.db.get_raid_members(raid["id"])
-        except Exception:
-            member_rows = []
-
-        for row in member_rows:
-            user_id = row["user_id"]
-            if user_id in members_by_id:
-                continue
-            gm = interaction.guild.get_member(user_id) if interaction.guild else None
-            if gm and not gm.bot:
-                members_by_id[user_id] = gm
-
-        members = list(members_by_id.values())
-        if not members:
-            return await interaction.followup.send("No raid members were found.", ephemeral=True)
-
-        member_list_order = "name"
-        try:
-            if interaction.guild:
-                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
-                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
-                    raw = config["raid_member_list_order"]
-                    if raw:
-                        member_list_order = str(raw)
-        except Exception:
-            pass
-
-        view = RaidMemberClearGroupView(self.bot, members, member_list_order=member_list_order)
-        if not interaction.response.is_done():
-            await interaction.response.send_message(
-                "Who do you want to remove from their group?",
-                view=view,
-                ephemeral=True,
-            )
-        else:
-            await interaction.followup.send(
-                "Who do you want to remove from their group?",
-                view=view,
-                ephemeral=True,
-            )
-
-    @discord.ui.button(label="Set group", style=discord.ButtonStyle.secondary, custom_id="raid_set_group", row=4)
-    async def set_group(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        if not raid:
-            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
-
-        try:
-            group_count = await self.bot.db.get_raid_group_count(int(raid["id"]))
-        except Exception:
-            group_count = None
-
-        if not group_count:
-            return await interaction.followup.send(
-                "Raid groups have not been configured yet.",
-                ephemeral=True,
-            )
-
-        members_by_id: dict[int, discord.Member] = {}
-        try:
-            member_rows = await self.bot.db.get_raid_members(raid["id"])
-        except Exception:
-            member_rows = []
-
-        for row in member_rows:
-            user_id = row["user_id"]
-            if user_id in members_by_id:
-                continue
-            gm = interaction.guild.get_member(user_id) if interaction.guild else None
-            if gm and not gm.bot:
-                members_by_id[user_id] = gm
-
-        members = list(members_by_id.values())
-        if not members:
-            return await interaction.followup.send("No raid members were found.", ephemeral=True)
-
-        member_list_order = "name"
-        try:
-            if interaction.guild:
-                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
-                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
-                    raw = config["raid_member_list_order"]
-                    if raw:
-                        member_list_order = str(raw)
-        except Exception:
-            pass
-
-        view = RaidMemberAssignGroupView(
-            self.bot,
-            int(raid["id"]),
-            members,
-            int(group_count),
-            member_list_order=member_list_order,
-        )
-        return await interaction.followup.send(
-            "Select a member, then select a group:",
-            view=view,
-            ephemeral=True,
-        )
-
     @discord.ui.button(label="Remove Raider", style=discord.ButtonStyle.danger, custom_id="raid_remove_raider", row=2)
     async def remove_raider(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_remove_raider(interaction)
@@ -3494,7 +3594,17 @@ class RaidControlView(discord.ui.View):
 
         if group_count > 0 and interaction.guild:
             embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
-            view = RaidGroupSignupView(self.bot, group_count=group_count)
+            can_manage = False
+            try:
+                can_manage = bool(int(interaction.user.id) == int(raid["leader_id"]) or await is_admin(interaction))
+            except Exception:
+                can_manage = False
+
+            view = RaidGroupSignupModalView(
+                self.bot,
+                group_count=group_count,
+                can_manage=can_manage,
+            )
 
             responded = False
             try:
@@ -3516,32 +3626,6 @@ class RaidControlView(discord.ui.View):
                 pass
 
         await raid_cog.show_raid_groups(interaction)
-    @discord.ui.button(label="Timed DKP", style=discord.ButtonStyle.primary, custom_id="raid_timed_dkp", row=3)
-    async def timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_cog = self.bot.get_cog("RaidCog")
-        if not raid_cog:
-            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
-
-        modal = RaidTimedAwardModal(raid_cog=raid_cog)
-        try:
-            await interaction.response.send_modal(modal)
-        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-            try:
-                await interaction.followup.send("Please try again.", ephemeral=True)
-            except Exception:
-                pass
-
-    @discord.ui.button(
-        label="Stop Timed DKP",
-        style=discord.ButtonStyle.secondary,
-        custom_id="raid_stop_timed_dkp",
-        row=3,
-    )
-    async def stop_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_cog = self.bot.get_cog("RaidCog")
-        if not raid_cog:
-            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
-        await raid_cog.disable_timed_award(interaction)
 
     @discord.ui.button(label="Groups", style=discord.ButtonStyle.secondary, custom_id="raid_show_groups", row=2)
     async def show_groups(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3641,8 +3725,6 @@ class RaidControlView(discord.ui.View):
                 "",
                 "**Award DKP / Deduct DKP** (leader/admin): Pick a raid member, then enter the DKP amount + reason.",
                 "**Set group** (leader/admin): Assign a raid member to a group (or ungroup them).",
-                "**Timed DKP** (leader/admin): Configure an automatic DKP award every X minutes.",
-                "**Stop Timed DKP** (leader/admin): Disable automatic timed DKP awards for this raid.",
                 "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Update Team** or have people **Join Raid** first).",
                 "**End Auction** (leader/admin): Ends the current auction for this raid.",
                 "**Close Raid** (leader/admin): Closes out the raid when finished.",
@@ -3978,6 +4060,247 @@ class RaidOpenPanelView(discord.ui.View):
                 ephemeral=True,
             )
         await raid_cog.send_ephemeral_raid_panel(interaction)
+
+
+class RaidGroupSignupModalSelect(discord.ui.Select):
+    def __init__(self, bot, group_count: int | None = None):
+        self.bot = bot
+        max_groups = 25
+        try:
+            if group_count is not None:
+                max_groups = max(1, min(int(group_count), 25))
+        except Exception:
+            max_groups = 25
+
+        options = [
+            discord.SelectOption(label=f"Group {i}", value=str(i))
+            for i in range(1, max_groups + 1)
+        ]
+
+        super().__init__(
+            placeholder="Select a group...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="raid_group_modal_select",
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await ensure_allowed_guild(interaction):
+            return
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        value = None
+        try:
+            value = self.values[0]
+        except Exception:
+            value = None
+
+        await raid_cog.handle_group_signup(interaction, value)
+
+        try:
+            raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+            raid_dict = raid
+            if raid is not None and not isinstance(raid, dict):
+                raid_dict = dict(raid)
+            embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+            msg = getattr(interaction, "message", None)
+            if msg is not None:
+                await msg.edit(embed=embed, view=getattr(self, "view", None))
+        except Exception:
+            pass
+
+
+class RaidGroupSignupModalView(discord.ui.View):
+    def __init__(
+        self,
+        bot,
+        *,
+        group_count: int | None = None,
+        can_manage: bool = False,
+        return_to_popup: bool = False,
+        popup_can_manage: bool = False,
+        popup_can_rename_thread: bool = False,
+    ):
+        super().__init__(timeout=600)
+        self.bot = bot
+        self.group_count = group_count
+        self.can_manage = bool(can_manage)
+        self.return_to_popup = bool(return_to_popup)
+        self.popup_can_manage = bool(popup_can_manage)
+        self.popup_can_rename_thread = bool(popup_can_rename_thread)
+
+        self.add_item(RaidGroupSignupModalSelect(bot, group_count=group_count))
+
+    @discord.ui.button(label="Leave group", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_leave", row=1)
+    async def leave_group(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        await raid_cog.handle_group_signup(interaction, "0")
+
+        try:
+            raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+            raid_dict = raid
+            if raid is not None and not isinstance(raid, dict):
+                raid_dict = dict(raid)
+            embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+            msg = getattr(interaction, "message", None)
+            if msg is not None:
+                await msg.edit(embed=embed, view=self)
+        except Exception:
+            pass
+
+    @discord.ui.button(label="Remove from group", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_remove", row=2)
+    async def remove_from_group(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage:
+            return await interaction.response.send_message("You don't have permission to do that.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        members_by_id: dict[int, discord.Member] = {}
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        members = list(members_by_id.values())
+        if not members:
+            return await interaction.response.send_message("No raid members were found.", ephemeral=True)
+
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        view = RaidMemberClearGroupView(
+            self.bot,
+            members,
+            member_list_order=member_list_order,
+            return_to_group_signup=True,
+            group_signup_can_manage=self.can_manage,
+            group_signup_return_to_popup=self.return_to_popup,
+            group_signup_popup_can_manage=self.popup_can_manage,
+            group_signup_popup_can_rename_thread=self.popup_can_rename_thread,
+        )
+
+        embed = create_info_embed("Remove from Group", "Who do you want to remove from their group?")
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    @discord.ui.button(label="Set group", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_set", row=3)
+    async def set_group(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage:
+            return await interaction.response.send_message("You don't have permission to do that.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        group_count = 0
+        try:
+            group_count = int(raid.get("group_count") if isinstance(raid, dict) else raid["group_count"])
+        except Exception:
+            group_count = 0
+        if group_count <= 0:
+            return await interaction.response.send_message("Raid groups have not been configured yet.", ephemeral=True)
+
+        members_by_id: dict[int, discord.Member] = {}
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        members = list(members_by_id.values())
+        if not members:
+            return await interaction.response.send_message("No raid members were found.", ephemeral=True)
+
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        view = RaidMemberAssignGroupView(
+            self.bot,
+            int(raid["id"]),
+            members,
+            int(group_count),
+            member_list_order=member_list_order,
+            return_to_group_signup=True,
+            group_signup_can_manage=self.can_manage,
+            group_signup_return_to_popup=self.return_to_popup,
+            group_signup_popup_can_manage=self.popup_can_manage,
+            group_signup_popup_can_rename_thread=self.popup_can_rename_thread,
+        )
+        embed = create_info_embed("Set Group", "Select a member, then select a group:")
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_back", row=4)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.return_to_popup:
+            return await interaction.response.edit_message(view=None)
+
+        view = RaidPopupView(
+            self.bot,
+            mode=("manage" if self.popup_can_manage else "main"),
+            can_manage=self.popup_can_manage,
+            can_rename_thread=self.popup_can_rename_thread,
+        )
+        embed = view._manage_embed(interaction) if self.popup_can_manage else view._main_embed(interaction, can_manage=self.popup_can_manage)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_close", row=4)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
 
 
 class RaidGroupSignupSelect(discord.ui.Select):

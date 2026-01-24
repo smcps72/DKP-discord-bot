@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import discord
 
-from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, DkpPanelView, RaidGroupSignupView
+from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, DkpPanelView, RaidGroupSignupModalView
 
 # Mock objects for testing
 class MockGuild(MagicMock):
@@ -298,11 +298,11 @@ class TestRaidControlView:
         assert "Group 1" in labels
         assert "Group 2" in labels
 
-    async def test_remove_from_group_button(self, mock_bot, mock_raid_control_interaction):
-        view = RaidControlView(bot=mock_bot)
+    async def test_group_signup_modal_remove_from_group_opens_clear_group_view_for_leader(self, mock_bot, mock_raid_control_interaction):
         mock_bot.db = MagicMock()
         mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
-        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id, "group_count": 3})
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
 
         member1 = MagicMock()
         member1.bot = False
@@ -310,23 +310,22 @@ class TestRaidControlView:
         member2 = MagicMock()
         member2.bot = False
         member2.id = 2
-
-        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
         mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member1 if uid == 1 else (member2 if uid == 2 else None)
 
-        await view.remove_from_group.callback(mock_raid_control_interaction)
+        mock_raid_control_interaction.response.edit_message = AsyncMock()
 
-        mock_raid_control_interaction.response.send_message.assert_called_once()
-        _args, kwargs = mock_raid_control_interaction.response.send_message.call_args
-        assert kwargs.get("ephemeral") is True
+        modal_view = RaidGroupSignupModalView(mock_bot, group_count=3, can_manage=True)
+        await modal_view.remove_from_group.callback(mock_raid_control_interaction)
+
+        mock_raid_control_interaction.response.edit_message.assert_awaited_once()
+        _args, kwargs = mock_raid_control_interaction.response.edit_message.call_args
         assert isinstance(kwargs.get("view"), RaidMemberClearGroupView)
 
-    async def test_set_group_button_opens_assign_group_view(self, mock_bot, mock_raid_control_interaction):
-        view = RaidControlView(bot=mock_bot)
+    async def test_group_signup_modal_set_group_opens_assign_group_view_for_leader(self, mock_bot, mock_raid_control_interaction):
         mock_bot.db = MagicMock()
         mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
-        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id})
-        mock_bot.db.get_raid_group_count = AsyncMock(return_value=2)
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id, "group_count": 3})
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
 
         member1 = MagicMock()
         member1.bot = False
@@ -334,16 +333,15 @@ class TestRaidControlView:
         member2 = MagicMock()
         member2.bot = False
         member2.id = 2
-
-        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
         mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member1 if uid == 1 else (member2 if uid == 2 else None)
 
-        await view.set_group.callback(mock_raid_control_interaction)
+        mock_raid_control_interaction.response.edit_message = AsyncMock()
 
-        mock_raid_control_interaction.followup.send.assert_called_once()
-        args, kwargs = mock_raid_control_interaction.followup.send.call_args
-        assert "Select a member" in args[0]
-        assert kwargs.get("ephemeral") is True
+        modal_view = RaidGroupSignupModalView(mock_bot, group_count=3, can_manage=True)
+        await modal_view.set_group.callback(mock_raid_control_interaction)
+
+        mock_raid_control_interaction.response.edit_message.assert_awaited_once()
+        _args, kwargs = mock_raid_control_interaction.response.edit_message.call_args
         assert isinstance(kwargs.get("view"), RaidMemberAssignGroupView)
 
     async def test_start_auction_button(self, mock_bot, mock_raid_control_interaction):
@@ -518,7 +516,7 @@ class TestRaidControlView:
         _, kwargs = mock_raid_control_interaction.response.send_message.call_args
         assert kwargs.get("embed") == "embed_content"
         assert kwargs.get("ephemeral") is True
-        assert isinstance(kwargs.get("view"), RaidGroupSignupView)
+        assert isinstance(kwargs.get("view"), RaidGroupSignupModalView)
 
     async def test_groups_button_shows_signup_panel_for_non_leader(self, mock_bot, mock_raid_control_interaction):
         view = RaidControlView(bot=mock_bot)
@@ -549,8 +547,8 @@ class TestRaidControlView:
         _, kwargs = mock_raid_control_interaction.response.send_message.call_args
         assert kwargs.get("embed") == "embed_content"
         assert kwargs.get("ephemeral") is True
-        # Validate we got the group signup view, not the raid control view
-        assert isinstance(kwargs.get("view"), RaidGroupSignupView)
+        # Validate we got the group signup modal-like view, not the raid control view
+        assert isinstance(kwargs.get("view"), RaidGroupSignupModalView)
 
 
 @patch('discord_bot.ui.views.ensure_allowed_guild', new_callable=AsyncMock)
