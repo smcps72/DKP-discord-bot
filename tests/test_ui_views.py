@@ -3,7 +3,14 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import discord
 
-from discord_bot.ui.views import WelcomeView, WelcomeLegacyView, DkpPanelView, RaidGroupSignupModalView
+from discord_bot.ui.views import (
+    WelcomeView,
+    WelcomeLegacyView,
+    DkpPanelView,
+    RaidGroupSignupModalView,
+    RaidPopupView,
+    RaidPopupTimedDKPView,
+)
 
 # Mock objects for testing
 class MockGuild(MagicMock):
@@ -157,6 +164,49 @@ async def test_dkp_panel_view_hides_create_raid_for_non_officer_non_admin():
     view = DkpPanelView(bot=bot, admin_ok=False, officer_ok=False)
     ids = {getattr(c, "custom_id", None) for c in view.children}
     assert "dkp_panel_create_raid" not in ids
+
+
+@patch("discord_bot.ui.views.ensure_allowed_guild", new_callable=AsyncMock)
+@patch("discord_bot.ui.views.is_officer", new_callable=AsyncMock)
+@patch("discord_bot.ui.views.is_admin", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_raid_popup_timed_dkp_opens_control_view(mock_is_admin, mock_is_officer, mock_ensure_allowed_guild):
+    mock_ensure_allowed_guild.return_value = True
+    mock_is_admin.return_value = True
+    mock_is_officer.return_value = False
+
+    bot = MagicMock()
+    bot.db = MagicMock()
+    bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": 456})
+    bot.db.get_raid_timed_award = AsyncMock(return_value={"amount": 5, "interval_minutes": 30, "is_enabled": 1})
+    bot.get_cog.return_value = MagicMock()
+
+    guild = MockGuild(id=123)
+    user = MockUser(id=456)
+    interaction = MockInteraction(guild=guild, user=user)
+    interaction.channel = MagicMock()
+    interaction.channel.id = 789
+    interaction.response.edit_message = AsyncMock()
+
+    view = RaidPopupView(bot=bot, mode="manage", can_manage=True, can_rename_thread=True)
+    await view.timed_dkp.callback(interaction)
+
+    interaction.response.edit_message.assert_awaited_once()
+    _args, kwargs = interaction.response.edit_message.call_args
+    assert isinstance(kwargs.get("view"), RaidPopupTimedDKPView)
+
+    embed = kwargs.get("embed")
+    assert isinstance(embed, discord.Embed)
+    assert embed.title == "Timed DKP"
+    assert "Currently enabled" in (embed.description or "")
+
+    btn_ids = {
+        getattr(c, "custom_id", None)
+        for c in kwargs.get("view").children
+        if isinstance(c, discord.ui.Button)
+    }
+    assert "raid_popup_timed_dkp_configure" in btn_ids
+    assert "raid_popup_timed_dkp_stop" in btn_ids
 
 
 # Tests for RaidControlView

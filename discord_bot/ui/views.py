@@ -2377,12 +2377,59 @@ class RaidPopupView(discord.ui.View):
         if not raid_cog:
             return await self._popup_notice(interaction, "Raid module is currently offline.", mode="manage")
 
-        modal = RaidTimedAwardModal(
-            raid_cog=raid_cog,
-            source="raid_popup",
-            popup_message=getattr(interaction, "message", None),
+        row = None
+        try:
+            row = await self.bot.db.get_raid_timed_award(int(raid["id"]))
+        except Exception:
+            row = None
+
+        amount = None
+        interval_minutes = None
+        is_enabled = None
+        try:
+            if isinstance(row, dict):
+                amount = row.get("amount")
+                interval_minutes = row.get("interval_minutes")
+                is_enabled = row.get("is_enabled")
+            elif row is not None:
+                amount = row["amount"]
+                interval_minutes = row["interval_minutes"]
+                is_enabled = row["is_enabled"]
+        except Exception:
+            amount = None
+            interval_minutes = None
+            is_enabled = None
+
+        if row is None:
+            description = "Timed DKP is not configured for this raid yet."
+        else:
+            try:
+                enabled = bool(int(is_enabled)) if is_enabled is not None else False
+            except Exception:
+                enabled = bool(is_enabled)
+
+            if enabled and amount is not None and interval_minutes is not None:
+                description = f"Currently enabled: **+{int(amount)} DKP** every **{int(interval_minutes)} minutes**."
+            elif amount is not None and interval_minutes is not None:
+                description = f"Currently disabled. Last settings: **+{int(amount)} DKP** every **{int(interval_minutes)} minutes**."
+            else:
+                description = "Timed DKP is configured, but its current settings could not be loaded."
+
+        embed = create_info_embed("Timed DKP", description)
+        view = RaidPopupTimedDKPView(
+            self.bot,
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
         )
-        await interaction.response.send_modal(modal)
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            try:
+                msg = getattr(interaction, "message", None)
+                if msg is not None:
+                    await msg.edit(embed=embed, view=view)
+            except Exception:
+                return
 
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_popup_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2664,6 +2711,101 @@ class RaidPopupDKPSelectView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_dkp_close", row=2)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
+
+
+class RaidPopupTimedDKPView(discord.ui.View):
+    def __init__(self, bot, *, can_manage: bool, can_rename_thread: bool):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.can_manage = bool(can_manage)
+        self.can_rename_thread = bool(can_rename_thread)
+
+    @discord.ui.button(
+        label="Configure Timed DKP",
+        style=discord.ButtonStyle.primary,
+        custom_id="raid_popup_timed_dkp_configure",
+        row=0,
+    )
+    async def configure_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message(
+                        "Raid module is currently offline.",
+                        ephemeral=True,
+                    )
+                return await interaction.followup.send(
+                    "Raid module is currently offline.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                return
+
+        modal = RaidTimedAwardModal(
+            raid_cog=raid_cog,
+            source="raid_popup",
+            popup_message=getattr(interaction, "message", None),
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="Stop Timed DKP",
+        style=discord.ButtonStyle.danger,
+        custom_id="raid_popup_timed_dkp_stop",
+        row=0,
+    )
+    async def stop_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message(
+                        "Raid module is currently offline.",
+                        ephemeral=True,
+                    )
+                return await interaction.followup.send(
+                    "Raid module is currently offline.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                return
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        await raid_cog.disable_timed_award(interaction)
+
+        try:
+            msg = getattr(interaction, "message", None)
+            if msg is not None:
+                embed = create_info_embed("Timed DKP", "Timed DKP disabled.")
+                await msg.edit(embed=embed, view=self)
+        except discord.HTTPException:
+            pass
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_timed_dkp_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = RaidPopupView(
+            self.bot,
+            mode=("manage" if self.can_manage else "main"),
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
+        )
+        embed = create_info_embed(
+            "Raid Leader Tools" if self.can_manage else "Raid Panel",
+            "Use the buttons below to manage DKP, auctions, and roster actions."
+            if self.can_manage
+            else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you.",
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_timed_dkp_close", row=1)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
