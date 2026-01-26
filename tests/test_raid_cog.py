@@ -37,11 +37,12 @@ def mock_interaction(mock_thread):
     interaction.user.id = 42
     interaction.user.display_name = "Leader"
 
-    interaction.response = AsyncMock()
-    interaction.response.is_done.return_value = True
+    interaction.response = MagicMock()
+    interaction.response.is_done = MagicMock(return_value=True)
     interaction.response.defer = AsyncMock()
+    interaction.response.send_message = AsyncMock()
 
-    interaction.followup = AsyncMock()
+    interaction.followup = MagicMock()
     interaction.followup.send = AsyncMock()
     return interaction
 
