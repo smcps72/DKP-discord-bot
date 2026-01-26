@@ -1936,11 +1936,17 @@ class RaidCog(commands.Cog):
                 amount,
                 f"{action}: {reason} (Raid)",
             )
+            new_total = None
+            try:
+                new_total = await self.bot.db.get_user_dkp(m.id, interaction.guild.id)
+            except Exception:
+                new_total = None
             await send_dkp_change_dm(
                 m,
                 interaction.guild,
                 amount,
                 f"{action}: {reason} (Raid)",
+                new_total=new_total,
             )
 
         action_word = "Awarded" if action == "Award" else "Deducted"

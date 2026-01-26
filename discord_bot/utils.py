@@ -202,7 +202,7 @@ async def send_dkp_change_dm(
     if reason:
         lines.append(f"Reason: {reason}")
     if new_total is not None:
-        lines.append(f"New total: `{new_total}` DKP")
+        lines.append(f"Current DKP count: `{new_total}` DKP")
     message = "\n".join(lines)
     try:
         await member.send(message)
