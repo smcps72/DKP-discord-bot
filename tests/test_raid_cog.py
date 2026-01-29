@@ -458,6 +458,78 @@ async def test_process_dkp_adjustment_excludes_members_and_groups(raid_cog, mock
 
 
 @pytest.mark.asyncio
+async def test_process_dkp_adjustment_includes_groups(raid_cog, mock_interaction, mock_thread):
+    raid = {
+        "id": 1,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "vc_id": 999,
+        "group_count": 2,
+    }
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+
+    m1 = MagicMock(spec=discord.Member)
+    m1.id = 111
+    m1.bot = False
+    m1.mention = f"<@{m1.id}>"
+    m1.display_name = "A"
+
+    m2 = MagicMock(spec=discord.Member)
+    m2.id = 222
+    m2.bot = False
+    m2.mention = f"<@{m2.id}>"
+    m2.display_name = "B"
+
+    m3 = MagicMock(spec=discord.Member)
+    m3.id = 333
+    m3.bot = False
+    m3.mention = f"<@{m3.id}>"
+    m3.display_name = "C"
+
+    raid_cog.bot.db.get_raid_members = AsyncMock(
+        return_value=[{"user_id": m1.id}, {"user_id": m2.id}, {"user_id": m3.id}]
+    )
+    raid_cog.bot.db.get_raid_member_groups = AsyncMock(
+        return_value=[
+            {"user_id": m1.id, "group_number": 1},
+            {"user_id": m2.id, "group_number": 2},
+            {"user_id": m3.id, "group_number": 1},
+        ]
+    )
+
+    def get_member_side_effect(user_id):
+        if int(user_id) == m1.id:
+            return m1
+        if int(user_id) == m2.id:
+            return m2
+        if int(user_id) == m3.id:
+            return m3
+        return None
+
+    mock_interaction.guild.get_member.side_effect = get_member_side_effect
+    raid_cog.bot.db.modify_user_dkp = AsyncMock()
+    mock_interaction.response.is_done.return_value = True
+
+    await raid_cog.process_dkp_adjustment(
+        mock_interaction,
+        action="Award",
+        amount_str="5",
+        reason="Mass award include group 2",
+        member=None,
+        include_group_numbers={2},
+    )
+
+    # include group 2 should only award m2
+    raid_cog.bot.db.modify_user_dkp.assert_awaited_once()
+    raid_cog.bot.db.modify_user_dkp.assert_awaited_once_with(
+        m2.id,
+        mock_interaction.guild.id,
+        5,
+        "Award: Mass award include group 2 (Raid)",
+    )
+
+
+@pytest.mark.asyncio
 async def test_update_team_from_voice_channel_skips_excluded_members(raid_cog, mock_interaction, mock_thread):
     raid = {
         "id": 1,

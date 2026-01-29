@@ -10,6 +10,7 @@ from discord_bot.ui.views import (
     RaidGroupSignupModalView,
     RaidPopupView,
     RaidPopupTimedDKPView,
+    RaidPopupDKPSelectView,
 )
 
 # Mock objects for testing
@@ -207,6 +208,38 @@ async def test_raid_popup_timed_dkp_opens_control_view(mock_is_admin, mock_is_of
     }
     assert "raid_popup_timed_dkp_configure" in btn_ids
     assert "raid_popup_timed_dkp_stop" in btn_ids
+
+
+@pytest.mark.asyncio
+async def test_raid_popup_dkp_picker_is_limited_to_raid_members():
+    bot = MagicMock()
+    member1 = MagicMock(spec=discord.Member)
+    member1.id = 111
+    member1.bot = False
+    member1.display_name = "Alpha"
+
+    member2 = MagicMock(spec=discord.Member)
+    member2.id = 222
+    member2.bot = False
+    member2.display_name = "Bravo"
+
+    view = RaidPopupDKPSelectView(
+        bot=bot,
+        action="Award",
+        members=[member1, member2],
+        can_manage=True,
+        can_rename_thread=True,
+    )
+
+    # Ensure the picker is not a guild-wide UserSelect.
+    assert not any(isinstance(c, discord.ui.UserSelect) for c in view.children)
+
+    selects = [c for c in view.children if isinstance(c, discord.ui.Select)]
+    assert len(selects) == 1
+    picker = selects[0]
+
+    option_values = {o.value for o in picker.options}
+    assert option_values == {"111", "222"}
 
 
 # Tests for RaidControlView

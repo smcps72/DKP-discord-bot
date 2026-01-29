@@ -59,6 +59,7 @@ export default defineConfig({
         ],
   use: {
     headless: true,
+    channel: 'chrome',
     storageState: storageStatePath,
   },
 });

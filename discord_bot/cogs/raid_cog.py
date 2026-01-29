@@ -104,15 +104,15 @@ class RaidCog(commands.Cog):
             )
 
         try:
-            amount = int(amount)
-            interval_minutes = int(interval_minutes)
+            amount_int = int(amount)
+            interval_int = int(interval_minutes)
         except Exception:
             await respond_popup("Invalid timed DKP settings.", title="Error")
             if source == "raid_popup":
                 return
             return await interaction.followup.send("Invalid timed DKP settings.", ephemeral=True)
 
-        if amount <= 0 or interval_minutes <= 0:
+        if amount_int <= 0 or interval_int <= 0:
             await respond_popup("Invalid timed DKP settings.", title="Error")
             if source == "raid_popup":
                 return
@@ -121,8 +121,8 @@ class RaidCog(commands.Cog):
         try:
             await self.bot.db.set_raid_timed_award(
                 int(raid["id"]),
-                amount=int(amount),
-                interval_minutes=int(interval_minutes),
+                amount=int(amount_int),
+                interval_minutes=int(interval_int),
                 is_enabled=True,
             )
         except Exception:
@@ -138,20 +138,196 @@ class RaidCog(commands.Cog):
         try:
             if isinstance(interaction.channel, discord.Thread):
                 await interaction.channel.send(
-                    f"Timed DKP enabled: **+{int(amount)} DKP** every **{int(interval_minutes)} minutes** (awarded to raid members)."
+                    f"Timed DKP enabled: **+{int(amount_int)} DKP** every **{int(interval_int)} minutes** (awarded to raid members)."
                 )
         except Exception:
             logging.exception("Failed to announce timed award settings")
 
         await respond_popup(
-            f"Timed DKP configured: **+{int(amount)}** every **{int(interval_minutes)}m**.",
+            f"Timed DKP configured: **+{int(amount_int)}** every **{int(interval_int)}m**.",
             title="Timed DKP",
         )
         if source == "raid_popup":
             return
 
         return await interaction.followup.send(
-            f"Timed DKP configured: **+{int(amount)}** every **{int(interval_minutes)}m**.",
+            f"Timed DKP configured: **+{int(amount_int)}** every **{int(interval_int)}m**.",
+            ephemeral=True,
+        )
+
+    async def show_raid_points(
+        self,
+        interaction: discord.Interaction,
+        *,
+        scope: str = "raid",
+        sort: str = "dkp",
+    ):
+        if interaction.guild is None:
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+
+        required_role_id = None
+        try:
+            config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+            if config and ("raider_role_id" in getattr(config, "keys", lambda: [])()):
+                required_role_id = config["raider_role_id"]
+        except Exception:
+            required_role_id = None
+        try:
+            required_role_id = int(required_role_id) if required_role_id else None
+        except Exception:
+            required_role_id = None
+        required_role = interaction.guild.get_role(required_role_id) if required_role_id else None
+        guild = interaction.guild
+
+        scope_norm = (scope or "").strip().lower()
+        if scope_norm not in ("raid", "total"):
+            scope_norm = "raid"
+
+        sort_norm = (sort or "").strip().lower()
+        if sort_norm not in ("dkp", "name"):
+            sort_norm = "dkp"
+
+        user_ids: set[int] = set()
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid_id)
+            user_ids |= {int(r["user_id"]) for r in list(member_rows or [])}
+        except Exception:
+            pass
+        try:
+            user_ids |= {int(x) for x in await self.bot.db.get_raid_member_history_user_ids(raid_id)}
+        except Exception:
+            pass
+        try:
+            user_ids |= set(await self.bot.db.get_raid_dkp_participant_user_ids(raid_id))
+        except Exception:
+            pass
+
+        if not user_ids:
+            return await interaction.followup.send("No raid participants were recorded for this raid.", ephemeral=True)
+
+        raid_totals_by_id: dict[int, int] = {}
+        try:
+            totals = await self.bot.db.get_raid_dkp_totals(raid_id)
+        except Exception:
+            totals = []
+        for row in list(totals or []):
+            try:
+                raid_totals_by_id[int(row["user_id"])] = int(row["raid_dkp"])  # type: ignore[index]
+            except Exception:
+                continue
+
+        entries: list[tuple[str, int]] = []
+        for uid in sorted(user_ids):
+            gm = guild.get_member(int(uid))
+            name = (getattr(gm, "display_name", None) or getattr(gm, "name", None) or f"Unknown User ({uid})")
+            if scope_norm == "total":
+                try:
+                    value = int(await self.bot.db.get_user_dkp(int(uid), int(guild.id)))
+                except Exception:
+                    value = 0
+            else:
+                value = int(raid_totals_by_id.get(int(uid), 0))
+            entries.append((str(name), value))
+
+        if sort_norm == "name":
+            entries.sort(key=lambda x: (x[0] or "").casefold())
+        else:
+            entries.sort(key=lambda x: x[1], reverse=True)
+
+        lines = [f"{name}  **{val} DKP**" for (name, val) in entries]
+        description = "\n".join(lines)
+        if len(description) > 4096:
+            description = description[:4090] + "..."
+
+        title = "Raid Points" if scope_norm == "raid" else "Total DKP (Raid Participants)"
+        embed = create_info_embed(title, description)
+        return await interaction.followup.send(embed=embed, ephemeral=True)
+
+    async def reverse_raid_dkp(
+        self,
+        interaction: discord.Interaction,
+        *,
+        confirm: str,
+        reason: str,
+    ):
+        if interaction.guild is None:
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        if (confirm or "").strip().upper() != "CONFIRM":
+            return await interaction.followup.send("Confirmation text did not match.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.followup.send(
+                "You must be the raid leader or a bot admin to reverse raid DKP.",
+                ephemeral=True,
+            )
+
+        raid_id = int(raid["id"])
+        guild_id = int(interaction.guild.id)
+
+        try:
+            totals = await self.bot.db.get_raid_dkp_totals(raid_id)
+        except Exception:
+            totals = []
+
+        reversals: list[tuple[int, int]] = []
+        for row in list(totals or []):
+            try:
+                uid = int(row["user_id"])
+                amt = int(row["raid_dkp"])
+            except Exception:
+                continue
+            if amt == 0:
+                continue
+            reversals.append((uid, -amt))
+
+        if not reversals:
+            return await interaction.followup.send("No raid DKP transactions were found to reverse.", ephemeral=True)
+
+        applied = 0
+        for uid, delta in reversals:
+            try:
+                await self.bot.db.modify_user_dkp(uid, guild_id, delta, f"Reverse Raid DKP: {reason}")
+            except Exception:
+                continue
+            try:
+                await self.bot.db.record_raid_dkp_transaction(
+                    raid_id,
+                    guild_id,
+                    uid,
+                    delta,
+                    f"Reverse Raid DKP: {reason}",
+                    actor_id=int(interaction.user.id),
+                )
+            except Exception:
+                pass
+            applied += 1
+
+        return await interaction.followup.send(
+            f"Reversed raid DKP for **{applied}** participant(s).",
             ephemeral=True,
         )
 
@@ -671,6 +847,19 @@ class RaidCog(commands.Cog):
 
         raid_id = int(raid["id"])
 
+        required_role_id = None
+        try:
+            config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+            if config and ("raider_role_id" in getattr(config, "keys", lambda: [])()):
+                required_role_id = config["raider_role_id"]
+        except Exception:
+            required_role_id = None
+        try:
+            required_role_id = int(required_role_id) if required_role_id else None
+        except Exception:
+            required_role_id = None
+        required_role = interaction.guild.get_role(required_role_id) if required_role_id else None
+
         try:
             removed = await self.bot.db.remove_raid_member(raid_id, int(member.id))
         except Exception:
@@ -951,6 +1140,19 @@ class RaidCog(commands.Cog):
 
         raid_id = int(raid["id"])
 
+        required_role_id = None
+        try:
+            config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+            if config and ("raider_role_id" in getattr(config, "keys", lambda: [])()):
+                required_role_id = config["raider_role_id"]
+        except Exception:
+            required_role_id = None
+        try:
+            required_role_id = int(required_role_id) if required_role_id else None
+        except Exception:
+            required_role_id = None
+        required_role = interaction.guild.get_role(required_role_id) if required_role_id else None
+
         try:
             await self.bot.db.execute(
                 "UPDATE raids SET vc_id = ? WHERE id = ?",
@@ -991,6 +1193,16 @@ class RaidCog(commands.Cog):
                 inserted = False
             if inserted:
                 added += 1
+            if required_role is not None:
+                try:
+                    is_eligible = required_role in list(getattr(member, "roles", []) or [])
+                except Exception:
+                    is_eligible = True
+                if not is_eligible:
+                    try:
+                        await self.bot.db.set_raid_member_group(raid_id, int(member.id), 0)
+                    except Exception:
+                        pass
 
         if added:
             vc_mentions = ", ".join([v.mention for v in linked_vcs])
@@ -1083,6 +1295,19 @@ class RaidCog(commands.Cog):
                 "This raid is not currently associated with any voice channels.",
                 ephemeral=True,
             )
+
+        required_role_id = None
+        try:
+            config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+            if config and ("raider_role_id" in getattr(config, "keys", lambda: [])()):
+                required_role_id = config["raider_role_id"]
+        except Exception:
+            required_role_id = None
+        try:
+            required_role_id = int(required_role_id) if required_role_id else None
+        except Exception:
+            required_role_id = None
+        required_role = interaction.guild.get_role(required_role_id) if required_role_id else None
 
         voice_members_by_id: dict[int, discord.Member] = {}
         for vc in linked_vcs:
@@ -1290,11 +1515,14 @@ class RaidCog(commands.Cog):
         groups: dict[str, list[str]] = {}
         for uid, member in members_by_id.items():
             grp = member_to_group.get(uid)
-            key = f"Group {grp}" if grp is not None else "Ungrouped"
+            if grp is not None and int(grp) == 0:
+                key = "Not in raid"
+            else:
+                key = f"Group {grp}" if grp is not None else "Not in raid"
             groups.setdefault(key, []).append(member.mention)
 
         lines: list[str] = []
-        for key in sorted(groups.keys(), key=lambda k: (k == "Ungrouped", k)):
+        for key in sorted(groups.keys(), key=lambda k: (k == "Not in raid", k)):
             lines.append(f"**{key}**: {', '.join(groups[key])}")
 
         embed = create_info_embed("Raid Groups", "\n".join(lines))
@@ -1344,22 +1572,24 @@ class RaidCog(commands.Cog):
         groups: dict[str, list[str]] = {}
         for i in range(1, max(group_count, 0) + 1):
             groups[f"Group {i}"] = []
-        groups["Ungrouped"] = []
+        groups["Not in raid"] = []
 
         for uid, member in members_by_id.items():
             grp = member_to_group.get(uid)
-            if grp is not None and 1 <= int(grp) <= group_count:
+            if grp is not None and int(grp) == 0:
+                groups.setdefault("Not in raid", []).append(member.mention)
+            elif grp is not None and 1 <= int(grp) <= group_count:
                 groups.setdefault(f"Group {int(grp)}", []).append(member.mention)
             else:
-                groups.setdefault("Ungrouped", []).append(member.mention)
+                groups.setdefault("Not in raid", []).append(member.mention)
 
         lines: list[str] = []
         if group_count > 0:
             for i in range(1, group_count + 1):
                 mentions = ", ".join(groups.get(f"Group {i}") or [])
                 lines.append(f"**Group {i}**: {mentions if mentions else '—'}")
-        ungrouped = ", ".join(groups.get("Ungrouped") or [])
-        lines.append(f"**Ungrouped**: {ungrouped if ungrouped else '—'}")
+        not_in_raid = ", ".join(groups.get("Not in raid") or [])
+        lines.append(f"**Not in raid**: {not_in_raid if not_in_raid else '—'}")
 
         description = "\n".join(lines)
         if len(description) > 4096:
@@ -1512,14 +1742,14 @@ class RaidCog(commands.Cog):
             return await interaction.followup.send("Groups have not been set up for this raid yet.", ephemeral=True)
 
         group_number: int | None
-        if selected_value in (None, "", "0"):
-            group_number = None
+        if selected_value in (None, ""):
+            group_number = 0
         else:
             try:
                 group_number = int(selected_value)
             except ValueError:
                 return await interaction.followup.send("Invalid group selection.", ephemeral=True)
-            if group_number < 1 or group_number > group_count:
+            if group_number != 0 and (group_number < 1 or group_number > group_count):
                 return await interaction.followup.send(f"Please select a group between 1 and {group_count}.", ephemeral=True)
 
         await self.bot.db.set_raid_member_group(raid_id, user_id, group_number)
@@ -1537,8 +1767,8 @@ class RaidCog(commands.Cog):
             except Exception:
                 pass
 
-        if group_number is None:
-            return await interaction.followup.send("You have left your group.", ephemeral=True)
+        if group_number == 0:
+            return await interaction.followup.send("You are in **Not in raid**.", ephemeral=True)
         return await interaction.followup.send(f"You joined **Group {group_number}**.", ephemeral=True)
 
     async def update_team_list(self, interaction: discord.Interaction):
@@ -1602,6 +1832,7 @@ class RaidCog(commands.Cog):
         member: discord.Member | None = None,
         group_number: int | None = None,
         source: str | None = None,
+        include_group_numbers: set[int] | None = None,
         exclude_member_ids: set[int] | None = None,
         exclude_group_numbers: set[int] | None = None,
         popup_message: discord.Message | None = None,
@@ -1757,6 +1988,24 @@ class RaidCog(commands.Cog):
             except Exception:
                 group_number = None
 
+        if group_number == 0:
+            await respond_popup(
+                create_error_embed(
+                    "Invalid Group",
+                    "Not in raid members cannot receive DKP.",
+                )
+            )
+            if source == "raid_popup":
+                return
+            await interaction.followup.send(
+                embed=create_error_embed(
+                    "Invalid Group",
+                    "Not in raid members cannot receive DKP.",
+                ),
+                ephemeral=True,
+            )
+            return
+
         if group_number is not None:
             group_count = 0
             try:
@@ -1785,7 +2034,7 @@ class RaidCog(commands.Cog):
                 )
                 return
 
-            if group_number < 1 or group_number > group_count:
+            if group_number != 0 and (group_number < 1 or group_number > group_count):
                 await respond_popup(
                     create_error_embed(
                         "Invalid Group",
@@ -1798,6 +2047,53 @@ class RaidCog(commands.Cog):
                     embed=create_error_embed(
                         "Invalid Group",
                         f"Group number must be between 1 and {group_count}.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+        if include_group_numbers:
+            group_count = 0
+            try:
+                group_count = int(raid["group_count"])
+            except Exception:
+                try:
+                    group_count = int(dict(raid).get("group_count") or 0)
+                except Exception:
+                    group_count = 0
+
+            if group_count <= 0:
+                await respond_popup(
+                    create_error_embed(
+                        "Groups Not Set Up",
+                        "Groups have not been set up for this raid yet.",
+                    )
+                )
+                if source == "raid_popup":
+                    return
+                await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Groups Not Set Up",
+                        "Groups have not been set up for this raid yet.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+            invalid = sorted([g for g in include_group_numbers if int(g) < 1 or int(g) > int(group_count)])
+            if invalid:
+                await respond_popup(
+                    create_error_embed(
+                        "Invalid Group",
+                        f"Included group number(s) must be between 1 and {group_count}.",
+                    )
+                )
+                if source == "raid_popup":
+                    return
+                await interaction.followup.send(
+                    embed=create_error_embed(
+                        "Invalid Group",
+                        f"Included group number(s) must be between 1 and {group_count}.",
                     ),
                     ephemeral=True,
                 )
@@ -1824,7 +2120,7 @@ class RaidCog(commands.Cog):
                     targets_by_id[user_id] = gm
 
             member_to_group: dict[int, int] = {}
-            if group_number is not None or exclude_group_numbers:
+            if group_number is not None or include_group_numbers or exclude_group_numbers:
                 try:
                     group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
                 except Exception:
@@ -1838,6 +2134,13 @@ class RaidCog(commands.Cog):
                         continue
                     member_to_group[uid] = grp
 
+            # Exclude non-raid members (group 0) from mass awards by default.
+            if member_to_group:
+                for uid in list(targets_by_id.keys()):
+                    grp = member_to_group.get(int(uid))
+                    if grp is not None and int(grp) == 0:
+                        targets_by_id.pop(uid, None)
+
             if exclude_member_ids:
                 for uid in list(targets_by_id.keys()):
                     if int(uid) in exclude_member_ids:
@@ -1847,6 +2150,12 @@ class RaidCog(commands.Cog):
                 for uid in list(targets_by_id.keys()):
                     grp = member_to_group.get(int(uid))
                     if grp is not None and int(grp) in exclude_group_numbers:
+                        targets_by_id.pop(uid, None)
+
+            if include_group_numbers:
+                for uid in list(targets_by_id.keys()):
+                    grp = member_to_group.get(int(uid))
+                    if grp is None or int(grp) not in include_group_numbers:
                         targets_by_id.pop(uid, None)
 
             if group_number is not None:
@@ -1936,6 +2245,21 @@ class RaidCog(commands.Cog):
                 amount,
                 f"{action}: {reason} (Raid)",
             )
+            try:
+                await self.bot.db.record_raid_dkp_transaction(
+                    int(raid["id"]),
+                    int(interaction.guild.id),
+                    int(m.id),
+                    int(amount),
+                    f"{action}: {reason}",
+                    actor_id=int(getattr(interaction.user, "id", 0)) if getattr(interaction, "user", None) else None,
+                )
+            except Exception:
+                logging.exception(
+                    "Failed to record raid DKP transaction raid_id=%s user_id=%s",
+                    raid.get("id") if isinstance(raid, dict) else None,
+                    getattr(m, "id", None),
+                )
             new_total = None
             try:
                 new_total = await self.bot.db.get_user_dkp(m.id, interaction.guild.id)

@@ -1,9 +1,13 @@
 import { test, expect } from '@playwright/test';
+import dotenv from 'dotenv';
 import fs from 'fs';
+import path from 'path';
 import { qase } from 'playwright-qase-reporter';
 
-const guildId = (process.env.DISCORD_TEST_GUILD_ID || '1383966524150124604').trim();
-const channelId = (process.env.DISCORD_TEST_CHANNEL_ID || '1459606597528715307').trim();
+dotenv.config({ path: path.resolve(process.cwd(), '../.env'), override: true });
+
+const SERVER = (process.env.DISCORD_TEST_SERVER_NAME || '').trim();
+const CHANNEL = (process.env.DISCORD_TEST_CHANNEL_NAME || '').trim();
 
 function ensureAuthState() {
   if (!fs.existsSync('discord-auth.json')) {
@@ -15,26 +19,69 @@ function ensureAuthState() {
 }
 
 async function openChannel(page) {
-  await page.goto(`https://discord.com/channels/${guildId}/${channelId}`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('heading', { name: /dkp-system/i }).first().waitFor({ state: 'visible', timeout: 45000 });
-  await page.waitForTimeout(5000);
+  if (!SERVER || !CHANNEL) {
+    throw new Error('DISCORD_TEST_SERVER_NAME and DISCORD_TEST_CHANNEL_NAME must be set.');
+  }
 
+  await page.goto('https://discord.com/app', { timeout: 60_000, waitUntil: 'domcontentloaded' });
   const loginHeading = page.getByRole('heading', { name: 'Welcome back!' });
   if (await loginHeading.isVisible({ timeout: 1500 }).catch(() => false)) {
     throw new Error('Discord login page detected. The storageState did not load; regenerate discord-auth.json.');
   }
+
+  const serverTreeItem = page.getByRole('treeitem', { name: SERVER });
+  await serverTreeItem.first().waitFor({ state: 'visible', timeout: 45_000 });
+  await serverTreeItem.first().click({ timeout: 45_000 });
+  await page.waitForTimeout(1500);
+
+  const channelPattern = new RegExp(`^(unread,\\s*)?${CHANNEL}(\\b|\\s|\\().*`, 'i');
+  const channelLink = page.getByRole('link', { name: channelPattern }).first();
+  await channelLink.waitFor({ state: 'visible', timeout: 45_000 });
+  await channelLink.click({ timeout: 45_000 });
+  await page.waitForTimeout(1500);
+
+  await expect
+    .poll(
+      async () => {
+        const openPanelCount = await page.getByRole('button', { name: /Open DKP Panel/i }).count();
+        if (openPanelCount > 0) return true;
+        const pinnedCount = await page.getByRole('button', { name: /Pinned Messages/i }).count();
+        if (pinnedCount > 0) return true;
+        const mainCount = await page.locator('div[role="main"], main').count();
+        return mainCount > 0;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe(true);
+
+  await page.waitForTimeout(2000);
 }
 
 async function openDkpPanel(page) {
   await openChannel(page);
 
-  const openPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+  let openPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+  if (!(await openPanelButton.isVisible({ timeout: 6000 }).catch(() => false))) {
+    const dkpSystemChannel = page.getByRole('link', { name: /(unread,\s*)?dkp-system/i }).first();
+    if (await dkpSystemChannel.isVisible({ timeout: 8000 }).catch(() => false)) {
+      await dkpSystemChannel.click({ timeout: 15_000 });
+      await page.waitForTimeout(1500);
+      openPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+    }
+  }
+
   if (await openPanelButton.isVisible({ timeout: 15000 }).catch(() => false)) {
     await openPanelButton.click({ timeout: 15000 });
   } else {
-    const pinnedButton = page.getByRole('button', { name: /Pinned Messages/i }).first();
+    const pinnedButton = page.getByRole('button', { name: /pinned/i }).first();
     await pinnedButton.waitFor({ state: 'visible', timeout: 15000 });
     await pinnedButton.click({ timeout: 15000 });
+
+    const welcomeText = page.getByText('Welcome to the DKP Bot!', { exact: false }).first();
+    if (await welcomeText.isVisible({ timeout: 15_000 }).catch(() => false)) {
+      await welcomeText.click({ timeout: 15_000 });
+      await page.waitForTimeout(1000);
+    }
 
     const pinnedOpenPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
     await pinnedOpenPanelButton.waitFor({ state: 'visible', timeout: 45000 });
@@ -42,6 +89,12 @@ async function openDkpPanel(page) {
   }
 
   const panelTitle = page.getByText(/DKP Panel for/i).last();
+  if (!(await panelTitle.isVisible({ timeout: 10_000 }).catch(() => false))) {
+    const retryOpen = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+    if (await retryOpen.isVisible({ timeout: 8000 }).catch(() => false)) {
+      await retryOpen.click({ timeout: 15_000 });
+    }
+  }
   await panelTitle.waitFor({ state: 'visible', timeout: 45000 });
   const panel = panelTitle.locator('xpath=ancestor::li[1]');
 
