@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DKP-Corp Bot Simulation</title>
+    <style>
+        :root {
+            --bg-tertiary: #1e1f22;
+            --bg-secondary: #2b2d31;
+            --bg-primary: #313338;
+            --channel-text: #949ba4;
+            --channel-text-hover: #dbdee1;
+            --header-primary: #f2f3f5;
+            --header-secondary: #b5bac1;
+            --text-normal: #dbdee1;
+            --interactive-normal: #b5bac1;
+            --interactive-hover: #dbdee1;
+            --interactive-active: #fff;
+            --blurple: #5865F2;
+            --blurple-hover: #4752C4;
+            --green: #248046;
+            --green-hover: #1a6334;
+            --red: #da373c;
+            --red-hover: #a1282c;
+            --button-secondary: #4e5058;
+            --button-secondary-hover: #6d6f78;
+            --brand-experiment: #5865F2; 
+            --background-modifier-selected: rgba(79, 84, 92, 0.32);
+            --info-warning-foreground: #f0b232;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'gg sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        body { background-color: var(--bg-primary); color: var(--text-normal); height: 100vh; display: flex; overflow: hidden; }
+
+        /* Sidebar */
+        .sidebar { width: 240px; background-color: var(--bg-secondary); display: flex; flex-direction: column; padding-top: 10px; flex-shrink: 0; }
+        .server-name { padding: 0 16px 16px; font-weight: bold; color: var(--header-primary); font-size: 16px; box-shadow: 0 1px 0 rgba(4,4,5,0.2); margin-bottom: 8px;}
+        .category { text-transform: uppercase; font-size: 12px; font-weight: 700; color: var(--channel-text); padding: 18px 8px 4px 16px; cursor: pointer; }
+        .category:hover { color: var(--channel-text-hover); }
+        .channel { display: flex; align-items: center; padding: 6px 8px; margin: 1px 8px; border-radius: 4px; cursor: pointer; color: var(--channel-text); font-weight: 500; }
+        .channel:hover { background-color: var(--background-modifier-selected); color: var(--channel-text-hover); }
+        .channel.active { background-color: rgba(79, 84, 92, 0.48); color: white; }
+        .channel svg { width: 20px; height: 20px; margin-right: 6px; fill: currentColor; }
+        .thread-spine { margin-left: 26px; border-left: 2px solid var(--button-secondary); border-bottom: 2px solid var(--button-secondary); width: 12px; height: 12px; border-bottom-left-radius: 6px; margin-bottom: 8px; display:inline-block;}
+
+        /* Main Chat */
+        .chat-area { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--bg-primary); }
+        .top-bar { height: 48px; border-bottom: 1px solid rgba(4,4,5,0.2); display: flex; align-items: center; padding: 0 16px; font-size: 16px; font-weight: bold; color: var(--header-primary); background-color: var(--bg-primary); }
+        .hashtag { color: var(--channel-text); margin-right: 8px; }
+        .messages-wrapper { flex-grow: 1; overflow-y: auto; padding: 16px 0; display: flex; flex-direction: column; scroll-behavior: smooth; }
+        
+        /* Messages */
+        .message { padding: 2px 16px; margin-top: 10px; display: flex; position: relative; }
+        .message:hover { background-color: rgba(4,4,5,0.07); }
+        .avatar { width: 40px; height: 40px; border-radius: 50%; background-color: #5865F2; margin-right: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px;}
+        .avatar.bot { background-color: #5865F2; }
+        .message-content { width: 100%; }
+        .username { font-weight: 500; color: var(--header-primary); display: inline-flex; align-items: center; }
+        .timestamp { font-size: 0.75rem; color: var(--header-secondary); margin-left: 0.5rem; font-weight: 400; }
+        .bot-tag { background-color: #5865F2; color: white; font-size: 10px; padding: 1px 4px; border-radius: 3px; margin-left: 4px; display: inline-flex; align-items: center; height: 15px; vertical-align: middle; line-height: 1;}
+        .bot-tag svg { margin-left: 2px; }
+
+        /* Embeds & Components */
+        .embed { background-color: var(--bg-secondary); border-left: 4px solid var(--blurple); border-radius: 4px; padding: 12px; margin-top: 8px; max-width: 520px; }
+        .embed-title { font-weight: bold; color: var(--header-primary); margin-bottom: 8px; font-size: 15px; }
+        .embed-desc { font-size: 14px; line-height: 1.4; white-space: pre-wrap; }
+        .code-block { background-color: #1e1f22; padding: 4px; border-radius: 3px; font-family: monospace; font-size: 13px; }
+        
+        .ephemeral { margin-top: 4px; }
+        .ephemeral-notice { font-size: 12px; color: var(--header-secondary); margin-top: 8px; display: flex; align-items: center; }
+        .ephemeral-notice svg { margin-right: 4px; width: 14px; }
+        .dismiss-link { color: var(--blurple); cursor: pointer; }
+        .dismiss-link:hover { text-decoration: underline; }
+
+        .header-hint { font-size: 0.75rem; color: var(--header-secondary); margin-left: 0.5rem; font-style: italic; display: inline-flex; align-items: center; gap: 6px; }
+        .attachment-icon { font-size: 0.85rem; opacity: 0.9; }
+
+        .thread-link { color: #00a8fc; cursor: pointer; }
+        .thread-link:hover { text-decoration: underline; }
+
+        .thread-banner { padding: 10px 0 18px; margin: 0 16px 4px; border-bottom: 1px solid rgba(4,4,5,0.2); }
+        .thread-title { font-weight: 800; font-size: 28px; color: var(--header-primary); letter-spacing: -0.5px; }
+        .thread-subtitle { margin-top: 6px; font-size: 14px; color: var(--header-secondary); }
+        
+        /* Button Grid */
+        .component-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+        .btn { border: none; border-radius: 3px; padding: 8px 16px; color: white; font-weight: 500; font-size: 14px; cursor: pointer; transition: background-color 0.17s; display: flex; align-items: center;}
+        .btn-blurple { background-color: var(--blurple); } .btn-blurple:hover { background-color: var(--blurple-hover); }
+        .btn-green { background-color: var(--green); } .btn-green:hover { background-color: var(--green-hover); }
+        .btn-red { background-color: var(--red); } .btn-red:hover { background-color: var(--red-hover); }
+        .btn-grey { background-color: var(--button-secondary); } .btn-grey:hover { background-color: var(--button-secondary-hover); }
+        .btn svg { margin-right: 6px; fill: white; width: 16px; height: 16px; }
+
+        /* Modal */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; display: none; align-items: center; justify-content: center; }
+        .modal { background-color: var(--bg-primary); width: 440px; border-radius: 5px; padding: 16px; box-shadow: 0 0 10px rgba(0,0,0,0.5); transform: scale(0.95); opacity: 0; transition: all 0.2s; }
+        .modal.active { transform: scale(1); opacity: 1; }
+        .modal-header { font-size: 20px; font-weight: bold; margin-bottom: 16px; color: var(--header-primary); }
+        .modal-body { margin-bottom: 20px; }
+        .input-group label { display: block; color: var(--header-secondary); text-transform: uppercase; font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+        .input-field { width: 100%; background-color: #1e1f22; border: 1px solid transparent; border-radius: 3px; padding: 10px; color: var(--text-normal); outline: none; font-size: 16px; }
+        .input-field:focus { border-color: var(--blurple); }
+        .modal-footer { background-color: var(--bg-secondary); margin: -16px -16px -16px -16px; padding: 16px; border-radius: 0 0 5px 5px; text-align: right; display: flex; justify-content: flex-end; gap: 10px;}
+        
+        .notification-bar {
+            background-color: var(--brand-experiment);
+            color: white;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 8px 8px 0 0; 
+            margin: 10px 16px 0;
+            display: none;
+        }
+
+        /* Utility */
+        .emoji { width: 18px; vertical-align: text-bottom; margin-right: 2px;}
+        .mention { background-color: rgba(88, 101, 242, 0.3); color: #dee0fc; border-radius: 3px; padding: 0 2px; cursor: pointer; }
+        .mention:hover { background-color: var(--blurple); color: white; }
+    </style>
+</head>
+<body>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+        <div class="server-name">DKP Guild Server</div>
+        
+        <div class="category">DKP-active-raids</div>
+        <div class="channel active" id="chan-dkp-system" onclick="switchChannel('dkp-system')">
+            <svg viewBox="0 0 24 24"><path d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.2855 20.4126L13.89 17H7.89001L7.25323 20.5874C7.21086 20.8261 7.00336 21 6.76093 21H5.88657ZM9.41001 15H15.41L16.47 9H10.47L9.41001 15Z"></path></svg>
+            dkp-system
+        </div>
+        <div class="channel" id="chan-active-raids" onclick="switchChannel('active-raids')">
+            <svg viewBox="0 0 24 24"><path d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.2855 20.4126L13.89 17H7.89001L7.25323 20.5874C7.21086 20.8261 7.00336 21 6.76093 21H5.88657ZM9.41001 15H15.41L16.47 9H10.47L9.41001 15Z"></path></svg>
+            active-raids
+        </div>
+        <!-- Dynamic Raid Thread -->
+        <div id="raid-thread-container" style="display:none;">
+            <div style="display:flex; align-items:center;">
+                <span class="thread-spine"></span>
+                <div class="channel" id="chan-raid-log" style="width:180px; margin-left:4px;" onclick="switchChannel('raid-log')">
+                    <svg viewBox="0 0 24 24"><path d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.2855 20.4126L13.89 17H7.89001L7.25323 20.5874C7.21086 20.8261 7.00336 21 6.76093 21H5.88657ZM9.41001 15H15.41L16.47 9H10.47L9.41001 15Z"></path></svg>
+                    Raid Log
+                </div>
+            </div>
+        </div>
+
+        <div class="category">DKP-archive</div>
+        <div class="channel" id="chan-completed" onclick="switchChannel('completed-raids')">
+             <svg viewBox="0 0 24 24"><path d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.2855 20.4126L13.89 17H7.89001L7.25323 20.5874C7.21086 20.8261 7.00336 21 6.76093 21H5.88657ZM9.41001 15H15.41L16.47 9H10.47L9.41001 15Z"></path></svg>
+            completed-raids
+        </div>
+    </div>
+
+    <!-- MAIN CHAT AREA -->
+    <div class="chat-area">
+        <div class="top-bar">
+            <span class="hashtag" id="channel-icon">#</span>
+            <span id="header-title">dkp-system</span>
+        </div>
+        
+        <div class="notification-bar" id="timed-dkp-bar">
+            <span>Timed DKP Enabled: +1 DKP every 1 minute</span>
+            <div style="font-size:10px; opacity:0.8;">(Simulated)</div>
+        </div>
+
+        <div class="messages-wrapper" id="messages-container">
+            <!-- Messages injected via JS -->
+        </div>
+    </div>
+
+    <!-- MODALS -->
+    <!-- Create Raid Modal -->
+    <div class="modal-overlay" id="modal-create-raid">
+        <div class="modal">
+            <div class="modal-header">Create New Raid</div>
+            <div class="modal-body">
+                <div style="background-color:rgba(240,178,50,0.1); border-left:4px solid #f0b232; padding:10px; margin-bottom:15px; color:#dbdee1; font-size:14px;">
+                    This form will be submitted to DKP-Corp Bot.
+                </div>
+                <div class="input-group">
+                    <label>Raid Name *</label>
+                    <input type="text" id="raid-name-input" class="input-field" placeholder="e.g., MC Progression, Weekly PUG">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-create-raid')">Cancel</button>
+                <button class="btn btn-blurple" onclick="submitCreateRaid()">Submit</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Start Auction Modal -->
+    <div class="modal-overlay" id="modal-start-auction">
+        <div class="modal">
+            <div class="modal-header">Start Auction</div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>Item Name *</label>
+                    <input type="text" id="item-name-input" class="input-field" placeholder="e.g., Thunderfury">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-start-auction')">Cancel</button>
+                <button class="btn btn-blurple" onclick="submitStartAuction()">Start</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bid Modal -->
+    <div class="modal-overlay" id="modal-bid">
+        <div class="modal">
+            <div class="modal-header">Place Bid</div>
+            <div class="modal-body">
+                <p style="margin-bottom:10px;">Current Balance: <span id="modal-balance-display">0</span> DKP</p>
+                <div class="input-group">
+                    <label>Bid Amount *</label>
+                    <input type="number" id="bid-amount-input" class="input-field" placeholder="Amount">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-bid')">Cancel</button>
+                <button class="btn btn-blurple" onclick="submitBid()">Submit Bid</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Award DKP Modal -->
+    <div class="modal-overlay" id="modal-award-dkp">
+        <div class="modal">
+            <div class="modal-header">Award DKP</div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>Raider Name *</label>
+                    <input type="text" id="award-raider-input" class="input-field" placeholder="e.g., Weyland">
+                </div>
+                <div class="input-group" style="margin-top:12px;">
+                    <label>Amount *</label>
+                    <input type="number" id="award-amount-input" class="input-field" placeholder="e.g., 5">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-award-dkp')">Cancel</button>
+                <button class="btn btn-green" onclick="submitAwardDkp()">Award</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deduct DKP Modal -->
+    <div class="modal-overlay" id="modal-deduct-dkp">
+        <div class="modal">
+            <div class="modal-header">Deduct DKP</div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>Raider Name *</label>
+                    <input type="text" id="deduct-raider-input" class="input-field" placeholder="e.g., Weyland">
+                </div>
+                <div class="input-group" style="margin-top:12px;">
+                    <label>Amount *</label>
+                    <input type="number" id="deduct-amount-input" class="input-field" placeholder="e.g., 5">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-deduct-dkp')">Cancel</button>
+                <button class="btn btn-red" onclick="submitDeductDkp()">Deduct</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Thread Modal -->
+    <div class="modal-overlay" id="modal-rename-thread">
+        <div class="modal">
+            <div class="modal-header">Rename Thread</div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>New Raid Name *</label>
+                    <input type="text" id="rename-thread-input" class="input-field" placeholder="e.g., MC Progression">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-rename-thread')">Cancel</button>
+                <button class="btn btn-blurple" onclick="submitRenameThread()">Rename</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Remove Raider Modal -->
+    <div class="modal-overlay" id="modal-remove-raider">
+        <div class="modal">
+            <div class="modal-header">Remove Raider</div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>Raider Name *</label>
+                    <input type="text" id="remove-raider-input" class="input-field" placeholder="e.g., PlayerOne">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-remove-raider')">Cancel</button>
+                <button class="btn btn-red" onclick="submitRemoveRaider()">Remove</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Set Group Modal -->
+    <div class="modal-overlay" id="modal-set-group">
+        <div class="modal">
+            <div class="modal-header">Set group</div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>Raider Name *</label>
+                    <input type="text" id="set-group-raider-input" class="input-field" placeholder="e.g., Weyland">
+                </div>
+                <div class="input-group" style="margin-top:12px;">
+                    <label>Group Name *</label>
+                    <input type="text" id="set-group-name-input" class="input-field" placeholder="e.g., Group 1">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-set-group')">Cancel</button>
+                <button class="btn btn-blurple" onclick="submitSetGroup()">Set</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Remove from group Modal -->
+    <div class="modal-overlay" id="modal-remove-from-group">
+        <div class="modal">
+            <div class="modal-header">Remove from group</div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>Raider Name *</label>
+                    <input type="text" id="remove-group-raider-input" class="input-field" placeholder="e.g., Weyland">
+                </div>
+                <div class="input-group" style="margin-top:12px;">
+                    <label>Group Name *</label>
+                    <input type="text" id="remove-group-name-input" class="input-field" placeholder="e.g., Group 1">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-grey" onclick="closeModal('modal-remove-from-group')">Cancel</button>
+                <button class="btn btn-red" onclick="submitRemoveFromGroup()">Remove</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // --- STATE & DATA ---
+        const CONTROL_PANEL_ID = "control-panel";
+
+        let currentState = {
+            user: "Weyland",
+            activeChannel: "dkp-system",
+
+            // DKP is tracked per user (so Award/Deduct DKP can target different raiders)
+            dkpLedger: { "Weyland": 50 },
+
+            // Raid
+            raidActive: false,
+            raidName: "",
+            raidStartTime: null,
+            raidRoster: [],
+            groups: {},
+
+            // Auction
+            auctionActive: false,
+            currentItem: "",
+            currentHighBid: 0,
+            currentHighBidder: "",
+
+            // Timed DKP
+            timedDkpActive: false,
+            timerInterval: null,
+            timerTimeout: null,
+
+            // SINGLE Ephemeral Control Panel (edited in place)
+            panelOpen: false,
+            panelChannel: null,     // channel id where the panel is currently displayed
+            panelScreen: "raid",    // raid | auction | dkp | roster | admin
+            panelNotice: "",        // status line displayed within panel
+            panelConfirm: null       // e.g., 'close_raid'
+        };
+
+        const HASH_SVG = `<svg viewBox="0 0 24 24" style="width:20px;height:20px;margin-right:6px;fill:currentColor"><path d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.2855 20.4126L13.89 17H7.89001L7.25323 20.5874C7.21086 20.8261 7.00336 21 6.76093 21H5.88657ZM9.41001 15H15.41L16.47 9H10.47L9.41001 15Z"></path></svg>`;
+
+        const SVGS = {
+            bot: `<svg aria-hidden="true" role="img" width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M13.6004 3.20039C13.0672 2.76672 12.3337 2.45005 11.5504 2.30005C11.5504 2.30005 11.4171 2.61672 11.3171 2.86672C10.5504 2.75005 9.80039 2.75005 9.05039 2.75005C8.30039 2.75005 7.53372 2.75005 6.78372 2.86672C6.68372 2.61672 6.53372 2.30005 6.53372 2.30005C5.75039 2.45005 5.01706 2.76672 4.48372 3.20039C3.40039 4.81706 3.10039 7.96706 3.25039 11.1004C4.26706 11.8504 5.25039 12.3004 6.21706 12.6004C6.46706 12.2671 6.68372 11.9004 6.86706 11.5171C6.51706 11.3837 6.18372 11.2171 5.86706 11.0337C5.95039 10.9671 6.03372 10.9004 6.10039 10.8337C8.61706 12.0004 11.3337 12.0004 13.8337 10.8337C13.9171 10.9004 14.0004 10.9671 14.0837 11.0337C13.7504 11.2171 13.4171 11.3837 13.0671 11.5171C13.2504 11.9171 13.4671 12.2837 13.7004 12.6004C14.6671 12.3004 15.6504 11.8504 16.6671 11.1004C16.8504 7.83372 16.3337 4.83372 13.6004 3.20039ZM7.16706 9.38372C6.41706 9.38372 5.80039 8.68372 5.80039 7.83372C5.80039 6.98372 6.40039 6.28372 7.16706 6.28372C7.93372 6.28372 8.55039 6.98372 8.55039 7.83372C8.53372 8.68372 7.93372 9.38372 7.16706 9.38372ZM10.9337 9.38372C10.1837 9.38372 9.56706 8.68372 9.56706 7.83372C9.56706 6.98372 10.1671 6.28372 10.9337 6.28372C11.7004 6.28372 12.3171 6.98372 12.3171 7.83372C12.3171 8.68372 11.7171 9.38372 10.9337 9.38372Z"></path></svg>`,
+            castle: `<svg viewBox="0 0 24 24"><path d="M2 22H22V20H20V16H22V14H18V12H20V8H18V2H14V6H10V2H6V8H4V12H6V14H2V16H4V20H2V22ZM8 8H16V10H8V8ZM8 12H16V14H8V12Z" fill="white"/></svg>`,
+            money: `<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12.19 18.5H11.16V17.07C10.04 16.86 9.25 16.14 9.25 14.88V14.77H11.23V14.82C11.23 15.42 11.58 15.63 12.16 15.63C12.78 15.63 13.14 15.34 13.14 14.83C13.14 14.28 12.83 14.07 11.55 13.56C10.15 13 9.37 12.28 9.37 10.96C9.37 9.58 10.45 8.7 11.66 8.52V7H12.69V8.52C13.55 8.68 14.25 9.21 14.41 10.36H12.44C12.38 9.77 12.11 9.53 11.63 9.53C11.08 9.53 10.74 9.84 10.74 10.32C10.74 10.8 11.04 11.01 12.25 11.5C13.78 12.12 14.52 12.87 14.52 14.22C14.52 15.7 13.51 16.66 12.19 16.89V18.5Z" fill="white"/></svg>`,
+            help: `<svg viewBox="0 0 24 24"><path d="M11 18H13V16H11V18ZM12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C9.79 6 8 7.79 8 10H10C10 8.9 10.9 8 12 8C13.1 8 14 8.9 14 10C14 12 11 11.75 11 15H13C13 12.75 16 12.5 16 10C16 7.79 14.21 6 12 6Z" fill="white"/></svg>`,
+            admin: `<svg viewBox="0 0 24 24"><path d="M19.14 12.94C19.16 12.78 19.17 12.61 19.17 12.45C19.17 12.29 19.16 12.12 19.14 11.96L21.16 10.39C21.34 10.25 21.39 10 21.28 9.79L19.35 6.46C19.24 6.25 18.99 6.17 18.78 6.24L16.41 7.19C15.91 6.81 15.38 6.49 14.81 6.25L14.45 3.73C14.42 3.5 14.22 3.33 13.99 3.33H10.02C9.79 3.33 9.6 3.5 9.56 3.73L9.2 6.25C8.63 6.49 8.1 6.81 7.6 7.19L5.23 6.24C5.01 6.17 4.77 6.25 4.66 6.46L2.73 9.79C2.61 10 2.67 10.24 2.85 10.39L4.87 11.96C4.85 12.12 4.84 12.29 4.84 12.45C4.84 12.61 4.85 12.78 4.87 12.94L2.85 14.51C2.67 14.65 2.61 14.89 2.73 15.1L4.66 18.43C4.77 18.64 5.02 18.72 5.23 18.65L7.6 17.7C8.1 18.08 8.63 18.4 9.2 18.64L9.56 21.16C9.59 21.39 9.79 21.56 10.02 21.56H13.98C14.21 21.56 14.41 21.39 14.44 21.16L14.8 18.64C15.37 18.4 15.9 18.08 16.4 17.7L18.77 18.65C18.99 18.72 19.23 18.64 19.34 18.43L21.27 15.1C21.38 14.89 21.33 14.65 21.15 14.51L19.14 12.94ZM12.01 15.5C10.35 15.5 9.01 14.16 9.01 12.5C9.01 10.84 10.35 9.5 12.01 9.5C13.66 9.5 15.01 10.84 15.01 12.5C15.01 14.16 13.66 15.5 12.01 15.5Z" fill="white"/></svg>`,
+            diamond: `<svg viewBox="0 0 24 24"><path d="M19,3H5C3.9,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M19 19H5V5H19V19M11.25 12.08L9.04 15.25L6 11.25L10 6L13 10L18 4L15.96 12.08L19 16.5L13 18L11.25 12.08Z" fill="white"/></svg>`,
+            voice: `<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>`
+        };
+
+        const channelData = {
+            "dkp-system": [
+                { type: "system", content: "Welcome to #dkp-system!" },
+                {
+                    type: "message",
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    content: "Pinned a message to this channel.",
+                    system: true
+                },
+                {
+                    type: "message",
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    embed: {
+                        title: "Welcome to the DKP Bot!",
+                        desc: "This bot helps you manage your guild's Dragon Kill Points system right here in Discord.\n\n**Button:**\n**Open DKP Panel**: Opens a private (ephemeral) control panel that updates in-place (Discord best practice).",
+                        color: "blurple"
+                    },
+                    components: [
+                        { label: "Open DKP Panel", style: "blurple", action: "open_panel" }
+                    ]
+                }
+            ],
+            "active-raids": [
+                { type: "system", content: "Welcome to #active-raids!" }
+            ],
+            "raid-log": [],
+            "completed-raids": [
+                {
+                    type: "message",
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    embed: {
+                        title: "Raid Completed",
+                        desc: "Raid log thread: 🧵 [Closed] MC Run - Jan 22\nClosed by: @Weyland at Jan 22, 2026",
+                        color: "grey"
+                    }
+                }
+            ]
+        };
+
+        // --- DOM ELEMENTS ---
+        const messagesContainer = document.getElementById('messages-container');
+        const headerTitle = document.getElementById('header-title');
+        const channelIcon = document.getElementById('channel-icon');
+        const raidThreadContainer = document.getElementById('raid-thread-container');
+        const timedDkpBar = document.getElementById('timed-dkp-bar');
+
+        // --- UTILS ---
+
+        function getThreadName() {
+            if (!currentState.raidName) return "Raid Log";
+            return `${currentState.raidName} - Raid Log - ${currentState.user}`;
+        }
+
+        function formatRaidStart(dt) {
+            if (!dt) return "";
+            const datePart = dt.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            const timePart = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            return `${datePart} ${timePart}`;
+        }
+
+        function formatTime(dt) {
+            const d = (dt instanceof Date) ? dt : new Date(dt);
+            return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        }
+
+        function normalizeName(input) {
+            if (!input) return "";
+            return input.toString().trim().replace(/^@/, "").trim();
+        }
+
+        function getUserDkp(name) {
+            const n = normalizeName(name);
+            if (!n) return 0;
+            return Number(currentState.dkpLedger[n] ?? 0);
+        }
+
+        function setUserDkp(name, value) {
+            const n = normalizeName(name);
+            if (!n) return;
+            const v = Math.max(0, Number(value) || 0);
+            currentState.dkpLedger[n] = v;
+        }
+
+        function ensureRosterMember(name) {
+            const n = normalizeName(name);
+            if (!n) return;
+            if (!currentState.raidRoster.includes(n)) currentState.raidRoster.push(n);
+            if (currentState.dkpLedger[n] === undefined) currentState.dkpLedger[n] = 0;
+        }
+
+        function removeRosterMember(name) {
+            const n = normalizeName(name);
+            if (!n) return;
+
+            currentState.raidRoster = currentState.raidRoster.filter(r => r !== n);
+
+            // Remove from any groups
+            Object.keys(currentState.groups).forEach(g => {
+                currentState.groups[g] = (currentState.groups[g] || []).filter(r => r !== n);
+                if (currentState.groups[g].length === 0) delete currentState.groups[g];
+            });
+        }
+
+        function clearInput(id) {
+            const el = document.getElementById(id);
+            if (el) el.value = "";
+        }
+
+        function refreshThreadUI() {
+            const threadName = getThreadName();
+            const threadEl = document.querySelector('#chan-raid-log');
+            if (threadEl) {
+                threadEl.innerHTML = `${HASH_SVG} ${threadName}`;
+            }
+
+            // Update header if we're in the thread
+            if (currentState.activeChannel === 'raid-log') {
+                if (channelIcon) channelIcon.textContent = "🧵";
+                if (headerTitle) headerTitle.textContent = threadName;
+            }
+        }
+
+        function getLogChannel() {
+            // Prefer logging raid actions in the raid thread if it exists; otherwise log in the current channel.
+            if (currentState.raidActive) return 'raid-log';
+            return currentState.activeChannel;
+        }
+
+        // --- RENDER FUNCTIONS ---
+
+        function switchChannel(channelId) {
+            currentState.activeChannel = channelId;
+
+            // Update UI sidebar classes
+            document.querySelectorAll('.channel').forEach(el => el.classList.remove('active'));
+            const activeEl = document.getElementById(`chan-${channelId}`);
+            if (activeEl) activeEl.classList.add('active');
+
+            // Update Header
+            let displayTitle = channelId;
+            let iconText = "#";
+
+            if (channelId === 'raid-log') {
+                displayTitle = getThreadName();
+                iconText = "🧵";
+            }
+
+            if (channelIcon) channelIcon.textContent = iconText;
+            headerTitle.textContent = displayTitle;
+
+            renderMessages();
+        }
+
+        function renderMessages() {
+            messagesContainer.innerHTML = '';
+            const messages = channelData[currentState.activeChannel] || [];
+
+            // Thread banner
+            if (currentState.activeChannel === 'raid-log' && currentState.raidActive) {
+                const banner = document.createElement('div');
+                banner.classList.add('thread-banner');
+                banner.innerHTML = `
+                    <div class="thread-title">${getThreadName()}</div>
+                    <div class="thread-subtitle">Started by <strong>DKP-Corp Bot</strong></div>
+                `;
+                messagesContainer.appendChild(banner);
+            }
+
+            messages.forEach(msg => {
+                const msgEl = document.createElement('div');
+                msgEl.classList.add('message');
+                if (msg.id) msgEl.dataset.msgId = msg.id;
+
+                if (msg.type === "system") {
+                    msgEl.innerHTML = `<div style="font-weight:bold; font-size:1.5rem; color:var(--header-primary); padding:20px;">${msg.content}</div>`;
+                } else {
+                    const avatarHTML = msg.bot
+                        ? `<div class="avatar bot">${SVGS.bot}</div>`
+                        : `<div class="avatar">${msg.user.substring(0,2)}</div>`;
+
+                    const botTag = msg.bot ? `<span class="bot-tag">${SVGS.bot} APP</span>` : '';
+                    const headerHint = msg.headerHint ? `<span class="header-hint">${msg.headerHint}</span>` : '';
+
+                    const timeLabel = msg.ts ? formatTime(msg.ts) : formatTime(new Date());
+
+                    let contentHTML = '';
+                    if (msg.content) contentHTML += `<div style="margin-bottom:4px;">${msg.content}</div>`;
+
+                    if (msg.embed) {
+                        const embedBorder = ({
+                            blurple: '#5865F2',
+                            grey: '#4e5058',
+                            green: '#248046',
+                            red: '#da373c'
+                        })[msg.embed.color] || '#5865F2';
+
+                        contentHTML += `
+                        <div class="embed" style="border-left-color: ${embedBorder}">
+                            ${msg.embed.title ? `<div class="embed-title">${msg.embed.title}</div>` : ''}
+                            <div class="embed-desc">${msg.embed.desc}</div>
+                        </div>`;
+                    }
+
+                    // Components can be a flat list (single row) or a list of rows
+                    if (msg.components) {
+                        const rows = (Array.isArray(msg.components[0])) ? msg.components : [msg.components];
+                        rows.forEach(row => {
+                            if (!row || !row.length) return;
+                            contentHTML += `<div class="component-row">`;
+                            row.forEach(btn => {
+                                let icon = "";
+                                if (btn.icon) icon = SVGS[btn.icon] || "";
+                                const disabledAttr = btn.disabled ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : '';
+                                const onClick = btn.disabled ? '' : `onclick="handleAction('${btn.action}')"`;
+                                contentHTML += `<button class="btn btn-${btn.style}" ${disabledAttr} ${onClick}>${icon}${btn.label}</button>`;
+                            });
+                            contentHTML += `</div>`;
+                        });
+                    }
+
+                    if (msg.ephemeral) {
+                        contentHTML = `
+                        <div class="ephemeral">
+                            ${contentHTML}
+                            <div class="ephemeral-notice">
+                                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 17C10.9 17 10 16.1 10 15C10 13.9 10.9 13 12 13C13.1 13 14 13.9 14 15C14 16.1 13.1 17 12 17ZM13 11H11V5H13V11Z"/></svg>
+                                <span>Only you can see this • <span class="dismiss-link" onclick="dismissEphemeral(this)">Dismiss message</span></span>
+                            </div>
+                        </div>
+                        `;
+                    }
+
+                    msgEl.innerHTML = `
+                        ${avatarHTML}
+                        <div class="message-content">
+                            <div>
+                                <span class="username">${msg.user} ${botTag}</span>
+                                ${headerHint}
+                                <span class="timestamp">${timeLabel}</span>
+                            </div>
+                            ${contentHTML}
+                        </div>
+                    `;
+                }
+
+                messagesContainer.appendChild(msgEl);
+            });
+
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // --- MESSAGE HELPERS ---
+
+        function addMessage(channel, data) {
+            if (!channelData[channel]) channelData[channel] = [];
+            if (!data.ts) data.ts = new Date();
+            channelData[channel].push(data);
+            if (currentState.activeChannel === channel) renderMessages();
+        }
+
+        function upsertMessageById(channel, id, data) {
+            if (!channelData[channel]) channelData[channel] = [];
+            const list = channelData[channel];
+            const idx = list.findIndex(m => m.id === id);
+            const msg = Object.assign({ id, ts: new Date() }, data);
+            if (idx >= 0) list[idx] = msg;
+            else list.push(msg);
+        }
+
+        function removeMessageById(channel, id) {
+            const list = channelData[channel] || [];
+            const idx = list.findIndex(m => m.id === id);
+            if (idx >= 0) list.splice(idx, 1);
+        }
+
+        function dismissEphemeral(el) {
+            const msgEl = el.closest('.message');
+            if (!msgEl) return;
+
+            const msgId = msgEl.dataset.msgId;
+            if (msgId) {
+                // Remove from backing data so it stays dismissed
+                removeMessageById(currentState.activeChannel, msgId);
+                if (msgId === CONTROL_PANEL_ID) {
+                    currentState.panelOpen = false;
+                    currentState.panelChannel = null;
+                    currentState.panelConfirm = null;
+                }
+                renderMessages();
+            } else {
+                msgEl.style.display = 'none';
+            }
+        }
+
+        // --- CONTROL PANEL HELPERS (Discord-realistic: single ephemeral panel updated in-place) ---
+
+        function openControlPanel(channel, screen) {
+            // Move panel to the channel where the user is interacting.
+            const targetChannel = channel || currentState.activeChannel;
+
+            if (currentState.panelOpen && currentState.panelChannel && currentState.panelChannel !== targetChannel) {
+                removeMessageById(currentState.panelChannel, CONTROL_PANEL_ID);
+            }
+
+            currentState.panelOpen = true;
+            currentState.panelChannel = targetChannel;
+            if (screen) currentState.panelScreen = screen;
+            currentState.panelConfirm = null;
+
+            refreshControlPanel();
+        }
+
+        function closeControlPanel() {
+            if (currentState.panelChannel) {
+                removeMessageById(currentState.panelChannel, CONTROL_PANEL_ID);
+            }
+            currentState.panelOpen = false;
+            currentState.panelChannel = null;
+            currentState.panelConfirm = null;
+            renderMessages();
+        }
+
+        function setPanelNotice(text) {
+            currentState.panelNotice = (text || "").toString();
+        }
+
+        function buildPanelNav(screen) {
+            const is = (s) => (s === screen);
+            return [
+                { label: "Raid", style: is("raid") ? "blurple" : "grey", action: "panel_nav_raid", icon: "castle" },
+                { label: "Auction", style: is("auction") ? "blurple" : "grey", action: "panel_nav_auction", icon: "diamond" },
+                { label: "DKP", style: is("dkp") ? "blurple" : "grey", action: "panel_nav_dkp", icon: "money" },
+                { label: "Roster", style: is("roster") ? "blurple" : "grey", action: "panel_nav_roster", icon: "voice" },
+                { label: "Admin", style: is("admin") ? "blurple" : "grey", action: "panel_nav_admin", icon: "admin" }
+            ];
+        }
+
+        function buildControlPanelMessage(screen) {
+            const navRow = buildPanelNav(screen);
+            const notice = currentState.panelNotice ? `\n\n<strong>Last action:</strong> ${currentState.panelNotice}` : "";
+
+            // Confirmation overlay inside the panel (Discord-possible via message edit)
+            if (currentState.panelConfirm === 'close_raid') {
+                const title = "Confirm Close Raid";
+                const desc = `You are about to close and archive this raid.\n\nThis will stop Timed DKP and lock the raid log thread.${notice}`;
+                return {
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    ephemeral: true,
+                    embed: { title, desc, color: "red" },
+                    components: [
+                        navRow,
+                        [
+                            { label: "Confirm Close Raid", style: "red", action: "close_raid" },
+                            { label: "Cancel", style: "grey", action: "cancel_confirm" }
+                        ],
+                        [
+                            { label: "Clear Status", style: "grey", action: "panel_clear_notice" },
+                            { label: "Close Panel", style: "red", action: "panel_close" }
+                        ]
+                    ]
+                };
+            }
+
+            let title = "Control Panel";
+            let desc = "";
+            let actionRows = [];
+
+            if (screen === 'raid') {
+                title = "Control Panel — Raid";
+
+                if (!currentState.raidActive) {
+                    desc = `No active raid.\n\nCreate a raid to open a log thread and enable roster/auction tooling.${notice}`;
+                    actionRows = [
+                        [
+                            { label: "Create Raid", style: "green", action: "modal_create_raid", icon: "castle" }
+                        ]
+                    ];
+                } else {
+                    const inRoster = currentState.raidRoster.includes(normalizeName(currentState.user));
+                    const rosterCount = currentState.raidRoster.length;
+
+                    desc = `Active raid: <strong>${currentState.raidName}</strong>\nThread: 🧵 ${getThreadName()}\nStarted: ${formatRaidStart(currentState.raidStartTime)}\nRoster: ${rosterCount} member(s)\nTimed DKP: ${currentState.timedDkpActive ? "Enabled" : "Disabled"}${notice}`;
+
+                    const joinLeave = inRoster
+                        ? { label: "Leave Raid", style: "grey", action: "leave_raid" }
+                        : { label: "Join Raid", style: "green", action: "join_raid" };
+
+                    const timedLabel = currentState.timedDkpActive ? "Stop Timed DKP" : "Start Timed DKP";
+                    const timedStyle = currentState.timedDkpActive ? "grey" : "blurple";
+
+                    actionRows = [
+                        [
+                            joinLeave,
+                            { label: "Go to Raid Log", style: "grey", action: "switch_to_raid" },
+                            { label: "Start Auction", style: "green", action: "modal_start_auction", icon: "diamond" },
+                            { label: timedLabel, style: timedStyle, action: "toggle_timed_dkp" }
+                        ],
+                        [
+                            { label: "Rename Thread", style: "grey", action: "modal_rename_thread" },
+                            { label: "Remove Raider", style: "red", action: "modal_remove_raider" },
+                            { label: "Close Raid", style: "red", action: "confirm_close_raid" }
+                        ]
+                    ];
+                }
+            }
+
+            if (screen === 'auction') {
+                title = "Control Panel — Auction";
+
+                if (!currentState.raidActive) {
+                    desc = `Auctions require an active raid.${notice}`;
+                    actionRows = [
+                        [
+                            { label: "Go to Raid", style: "grey", action: "panel_nav_raid", icon: "castle" }
+                        ]
+                    ];
+                } else if (!currentState.auctionActive) {
+                    desc = `No active auction.\n\nStart an auction to collect bids via a modal popup.${notice}`;
+                    actionRows = [
+                        [
+                            { label: "Start Auction", style: "green", action: "modal_start_auction", icon: "diamond" }
+                        ]
+                    ];
+                } else {
+                    const bidderText = currentState.currentHighBidder ? ` by <span class="mention">@${currentState.currentHighBidder}</span>` : "";
+                    desc = `Item: <strong>${currentState.currentItem}</strong>\nHighest bid: <strong>${currentState.currentHighBid} DKP</strong>${bidderText}\n\nBidding opens a modal popup.${notice}`;
+                    actionRows = [
+                        [
+                            { label: "Place Bid", style: "green", action: "open_bid_modal", icon: "money" },
+                            { label: "End Auction", style: "red", action: "end_auction" }
+                        ]
+                    ];
+                }
+            }
+
+            if (screen === 'dkp') {
+                title = "Control Panel — DKP";
+                const bal = getUserDkp(currentState.user);
+                desc = `Your current DKP balance: <strong>${bal} DKP</strong>\n\nAward/Deduct DKP uses modals (Discord popup input).${notice}`;
+                actionRows = [
+                    [
+                        { label: "Award DKP", style: "green", action: "modal_award_dkp", icon: "money" },
+                        { label: "Deduct DKP", style: "red", action: "modal_deduct_dkp", icon: "money" }
+                    ]
+                ];
+            }
+
+            if (screen === 'roster') {
+                title = "Control Panel — Roster";
+
+                if (!currentState.raidActive) {
+                    desc = `Roster management is available once a raid is active.${notice}`;
+                    actionRows = [
+                        [
+                            { label: "Go to Raid", style: "grey", action: "panel_nav_raid", icon: "castle" }
+                        ]
+                    ];
+                } else {
+                    const rosterLines = currentState.raidRoster.length
+                        ? currentState.raidRoster.map(r => `• <span class="mention">@${r}</span> (${getUserDkp(r)} DKP)`).join('\n')
+                        : "• (empty)";
+
+                    const groupNames = Object.keys(currentState.groups);
+                    const groupsBlock = groupNames.length
+                        ? groupNames.map(g => {
+                            const members = (currentState.groups[g] || []).map(r => `<span class="mention">@${r}</span>`).join(', ') || '(empty)';
+                            return `• <strong>${g}</strong>: ${members}`;
+                        }).join('\n')
+                        : "• (no groups configured)";
+
+                    desc = `Roster (${currentState.raidRoster.length}):\n${rosterLines}\n\nGroups:\n${groupsBlock}\n\nGroup actions use modals.${notice}`;
+                    actionRows = [
+                        [
+                            { label: "Set Group", style: "grey", action: "modal_set_group" },
+                            { label: "Remove From Group", style: "grey", action: "modal_remove_from_group" },
+                            { label: "Remove Raider", style: "red", action: "modal_remove_raider" }
+                        ]
+                    ];
+                }
+            }
+
+            if (screen === 'admin') {
+                title = "Control Panel — Admin";
+                desc = `Discord UI is intentionally constrained.\n\nBest practice is to keep admin workflows minimal here and push complex tasks into a web dashboard.\n\nThis mockup keeps admin actions inside the tabbed Control Panel, so you don't accumulate multiple dialog messages.${notice}`;
+                actionRows = [
+                    [
+                        { label: "Clear Status", style: "grey", action: "panel_clear_notice" },
+                        { label: "Help", style: "grey", action: "panel_help", icon: "help" }
+                    ]
+                ];
+            }
+
+            // Footer row
+            const footerRow = [
+                { label: "Clear Status", style: "grey", action: "panel_clear_notice" },
+                { label: "Close Panel", style: "red", action: "panel_close" }
+            ];
+
+            return {
+                user: "DKP-Corp Bot",
+                bot: true,
+                ephemeral: true,
+                embed: { title, desc, color: "blurple" },
+                components: [
+                    navRow,
+                    ...(actionRows || []),
+                    footerRow
+                ]
+            };
+        }
+
+        function refreshControlPanel() {
+            if (!currentState.panelOpen) return;
+
+            const channel = currentState.panelChannel || currentState.activeChannel;
+            const screen = currentState.panelScreen || 'raid';
+
+            const msg = buildControlPanelMessage(screen);
+            upsertMessageById(channel, CONTROL_PANEL_ID, msg);
+
+            if (currentState.activeChannel === channel) {
+                renderMessages();
+            }
+        }
+
+        // --- ACTIONS HANDLER ---
+
+        function handleAction(action) {
+            // Open panel (single message edited in place)
+            if (action === "open_panel") {
+                openControlPanel(currentState.activeChannel, currentState.panelScreen || 'raid');
+                return;
+            }
+            if (action === "open_panel_raid") {
+                openControlPanel(currentState.activeChannel, 'raid');
+                return;
+            }
+            if (action === "open_panel_auction") {
+                openControlPanel(currentState.activeChannel, 'auction');
+                return;
+            }
+
+            // Panel navigation & housekeeping
+            if (action === "panel_close") {
+                closeControlPanel();
+                return;
+            }
+            if (action === "panel_clear_notice") {
+                setPanelNotice("");
+                refreshControlPanel();
+                return;
+            }
+            if (action === "panel_help") {
+                setPanelNotice("Tip: Use the tabs to navigate. Buttons update this panel in-place. Input actions open a modal popup.");
+                refreshControlPanel();
+                return;
+            }
+            if (action === "cancel_confirm") {
+                currentState.panelConfirm = null;
+                refreshControlPanel();
+                return;
+            }
+            if (action === "confirm_close_raid") {
+                currentState.panelConfirm = 'close_raid';
+                refreshControlPanel();
+                return;
+            }
+
+            if (action.startsWith('panel_nav_')) {
+                currentState.panelConfirm = null;
+                currentState.panelScreen = action.replace('panel_nav_', '');
+                refreshControlPanel();
+                return;
+            }
+
+            // Modal triggers (Discord-realistic popup)
+            if (action === "modal_create_raid") return openModal('modal-create-raid', '#raid-name-input');
+            if (action === "modal_start_auction") return openModal('modal-start-auction', '#item-name-input');
+            if (action === "open_bid_modal") return openBidModal();
+            if (action === "modal_award_dkp") return openModal('modal-award-dkp', '#award-raider-input');
+            if (action === "modal_deduct_dkp") return openModal('modal-deduct-dkp', '#deduct-raider-input');
+            if (action === "modal_rename_thread") return openModal('modal-rename-thread', '#rename-thread-input');
+            if (action === "modal_remove_raider") return openModal('modal-remove-raider', '#remove-raider-input');
+            if (action === "modal_set_group") return openModal('modal-set-group', '#set-group-raider-input');
+            if (action === "modal_remove_from_group") return openModal('modal-remove-from-group', '#remove-group-raider-input');
+
+            // Non-modal actions
+            if (action === "switch_to_raid") {
+                if (!currentState.raidActive) {
+                    setPanelNotice("No active raid to jump to.");
+                    refreshControlPanel();
+                    return;
+                }
+                switchChannel('raid-log');
+                return;
+            }
+
+            if (action === "join_raid") {
+                joinRaid();
+                refreshControlPanel();
+                return;
+            }
+
+            if (action === "leave_raid") {
+                leaveRaid();
+                refreshControlPanel();
+                return;
+            }
+
+            if (action === "toggle_timed_dkp") {
+                toggleTimedDkp();
+                refreshControlPanel();
+                return;
+            }
+
+            if (action === "end_auction") {
+                endAuction(true);
+                refreshControlPanel();
+                return;
+            }
+
+            if (action === "close_raid") {
+                closeRaid();
+                currentState.panelConfirm = null;
+                refreshControlPanel();
+                return;
+            }
+
+            console.warn("Unknown action:", action);
+        }
+
+        // --- FEATURE LOGIC ---
+
+        function joinRaid() {
+            if (!currentState.raidActive) {
+                setPanelNotice("No active raid to join.");
+                return;
+            }
+
+            const n = normalizeName(currentState.user);
+            if (currentState.raidRoster.includes(n)) {
+                setPanelNotice("You are already in the raid roster.");
+                return;
+            }
+
+            ensureRosterMember(n);
+            addMessage('raid-log', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `<span class="mention">@${n}</span> joined the raid.`
+            });
+            setPanelNotice("Joined raid roster.");
+        }
+
+        function leaveRaid() {
+            const n = normalizeName(currentState.user);
+            if (!currentState.raidRoster.includes(n)) {
+                setPanelNotice("You are not currently in the raid roster.");
+                return;
+            }
+
+            removeRosterMember(n);
+            addMessage('raid-log', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `<span class="mention">@${n}</span> left the raid.`
+            });
+            setPanelNotice("Left raid roster.");
+        }
+
+        function openBidModal() {
+            if (!currentState.auctionActive) {
+                setPanelNotice("No active auction. Start one first.");
+                refreshControlPanel();
+                return;
+            }
+            document.getElementById('modal-balance-display').textContent = getUserDkp(currentState.user);
+            openModal('modal-bid', '#bid-amount-input');
+        }
+
+        function endAuction(showIfNone) {
+            if (!currentState.auctionActive) {
+                if (showIfNone) setPanelNotice("There is no active auction to end.");
+                return;
+            }
+
+            const winner = currentState.currentHighBidder || "No One";
+            const cost = currentState.currentHighBid;
+            const item = currentState.currentItem;
+
+            if (winner !== "No One" && cost > 0) {
+                setUserDkp(winner, getUserDkp(winner) - cost);
+            }
+
+            currentState.auctionActive = false;
+
+            addMessage(getLogChannel(), {
+                user: "DKP-Corp Bot",
+                bot: true,
+                embed: {
+                    title: `Auction Concluded: ${item}`,
+                    desc: `Congratulations to <span class="mention">@${winner}</span> for winning with a bid of **${cost} DKP**!`,
+                    color: "green"
+                }
+            });
+
+            if (winner !== "No One" && cost > 0) {
+                addMessage(getLogChannel(), {
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    embed: {
+                        title: "DKP Deducted!",
+                        desc: `**${cost} DKP** deducted from <span class="mention">@${winner}</span> for ${item}.`,
+                        color: "red"
+                    }
+                });
+            }
+
+            // Clear auction state
+            currentState.currentItem = "";
+            currentState.currentHighBid = 0;
+            currentState.currentHighBidder = "";
+
+            setPanelNotice("Auction ended.");
+        }
+
+        function toggleTimedDkp() {
+            const desired = !currentState.timedDkpActive;
+            currentState.timedDkpActive = desired;
+
+            // Clear any existing timers
+            if (currentState.timerInterval) {
+                clearInterval(currentState.timerInterval);
+                currentState.timerInterval = null;
+            }
+            if (currentState.timerTimeout) {
+                clearTimeout(currentState.timerTimeout);
+                currentState.timerTimeout = null;
+            }
+
+            if (currentState.timedDkpActive) {
+                timedDkpBar.style.display = 'flex';
+                addMessage(getLogChannel(), {
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    content: "Timed DKP enabled: **+1 DKP** every **1 minute** (awarded to raid members)."
+                });
+
+                const awardTick = () => {
+                    const count = currentState.raidRoster.length;
+                    currentState.raidRoster.forEach(r => setUserDkp(r, getUserDkp(r) + 1));
+                    addMessage(getLogChannel(), {
+                        user: "DKP-Corp Bot",
+                        bot: true,
+                        content: `Timed award: **+1 DKP** to **${count}** raid member(s).`
+                    });
+                };
+
+                // Quick simulated first tick
+                currentState.timerTimeout = setTimeout(() => {
+                    if (currentState.timedDkpActive) awardTick();
+                }, 3000);
+
+                // Then repeat every 1 minute
+                currentState.timerInterval = setInterval(() => {
+                    if (currentState.timedDkpActive) awardTick();
+                }, 60000);
+
+                setPanelNotice("Timed DKP started.");
+            } else {
+                timedDkpBar.style.display = 'none';
+                addMessage(getLogChannel(), {
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    content: "Timed DKP disabled."
+                });
+                setPanelNotice("Timed DKP stopped.");
+            }
+        }
+
+        function closeRaid() {
+            // Stop timed DKP
+            currentState.timedDkpActive = false;
+            timedDkpBar.style.display = 'none';
+
+            if (currentState.timerInterval) {
+                clearInterval(currentState.timerInterval);
+                currentState.timerInterval = null;
+            }
+            if (currentState.timerTimeout) {
+                clearTimeout(currentState.timerTimeout);
+                currentState.timerTimeout = null;
+            }
+
+            addMessage('raid-log', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `Raid closed by <span class="mention">@${currentState.user}</span>. This thread is now locked.`
+            });
+
+            const closedThreadName = getThreadName();
+
+            // Simulate archive
+            currentState.raidActive = false;
+            raidThreadContainer.style.display = 'none';
+
+            addMessage('completed-raids', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                embed: {
+                    title: "Raid Completed",
+                    desc: `Raid log thread: 🧵 [Closed] ${closedThreadName}\nClosed by: @${currentState.user}`,
+                    color: "grey"
+                }
+            });
+
+            setPanelNotice("Raid closed and archived.");
+        }
+
+        // --- MODAL HELPERS ---
+
+        function openModal(overlayId, focusSelector) {
+            const overlay = document.getElementById(overlayId);
+            if (!overlay) return;
+
+            overlay.style.display = 'flex';
+
+            requestAnimationFrame(() => {
+                const modal = overlay.querySelector('.modal');
+                if (modal) modal.classList.add('active');
+
+                if (focusSelector) {
+                    const focusEl = overlay.querySelector(focusSelector) || document.querySelector(focusSelector);
+                    if (focusEl) focusEl.focus();
+                }
+            });
+        }
+
+        function closeModal(overlayId) {
+            const overlay = document.getElementById(overlayId);
+            if (!overlay) return;
+
+            const modal = overlay.querySelector('.modal');
+            if (modal) modal.classList.remove('active');
+
+            setTimeout(() => { overlay.style.display = 'none'; }, 200);
+        }
+
+        // --- MODAL SUBMISSIONS ---
+
+        function submitCreateRaid() {
+            const name = (document.getElementById('raid-name-input').value || '').trim();
+            if (!name) return;
+
+            currentState.raidName = name;
+            currentState.raidActive = true;
+            currentState.raidStartTime = new Date();
+
+            // Leader in roster by default
+            currentState.raidRoster = [];
+            currentState.groups = {};
+            ensureRosterMember(currentState.user);
+
+            // Reset auction state
+            currentState.auctionActive = false;
+            currentState.currentItem = "";
+            currentState.currentHighBid = 0;
+            currentState.currentHighBidder = "";
+
+            closeModal('modal-create-raid');
+            clearInput('raid-name-input');
+
+            const threadName = getThreadName();
+            const startText = formatRaidStart(currentState.raidStartTime);
+
+            const starterMessageHTML = `Raid '${name}' started by <span class="mention">@${currentState.user}</span> on <span class="code-block">${startText}</span><br><br>
+                Jump to the current raid log thread: <span class="thread-link" onclick="handleAction('switch_to_raid')">🧵 ${threadName}</span> <span style="color:var(--header-secondary); font-size:12px;">(edited)</span>`;
+
+            // 1. Announce in active-raids
+            addMessage('active-raids', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: starterMessageHTML,
+                ts: currentState.raidStartTime
+            });
+
+            // 2. Create the Thread (Simulated by enabling the sidebar item and populating data)
+            raidThreadContainer.style.display = 'block';
+            refreshThreadUI();
+
+            // 3. Initialize Thread Data
+            channelData['raid-log'] = [
+                {
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    content: starterMessageHTML,
+                    ts: currentState.raidStartTime
+                },
+                {
+                    user: "DKP-Corp Bot",
+                    bot: true,
+                    embed: {
+                        title: "Open Control Panel",
+                        desc: "Use the button below to open your private Control Panel.\n\nAll buttons update the panel in-place (no stacked dialog messages)."
+                    },
+                    components: [
+                        { label: "Open Control Panel", style: "blurple", action: "open_panel_raid" }
+                    ],
+                    ts: currentState.raidStartTime
+                }
+            ];
+
+            // Update panel state
+            setPanelNotice(`Raid created: ${name}`);
+            currentState.panelScreen = 'raid';
+            refreshControlPanel();
+        }
+
+        function submitStartAuction() {
+            const item = (document.getElementById('item-name-input').value || '').trim();
+            if (!item) return;
+
+            if (!currentState.raidActive) {
+                closeModal('modal-start-auction');
+                clearInput('item-name-input');
+                setPanelNotice("Start a raid before starting an auction.");
+                refreshControlPanel();
+                return;
+            }
+
+            currentState.auctionActive = true;
+            currentState.currentItem = item;
+            currentState.currentHighBid = 0;
+            currentState.currentHighBidder = "";
+
+            closeModal('modal-start-auction');
+            clearInput('item-name-input');
+
+            addMessage(getLogChannel(), {
+                user: "DKP-Corp Bot",
+                bot: true,
+                embed: {
+                    title: `💎 Auction Started: ${item}`,
+                    desc: "Bidding is now open!\n\nUse the Control Panel → Auction tab to place bids (modal popup).",
+                    color: "blurple"
+                },
+                components: [
+                    { label: "Open Panel (Auction)", style: "green", action: "open_panel_auction" }
+                ]
+            });
+
+            setPanelNotice(`Auction started: ${item}`);
+            currentState.panelScreen = 'auction';
+            refreshControlPanel();
+        }
+
+        function submitBid() {
+            const amount = parseInt(document.getElementById('bid-amount-input').value, 10);
+            if (!amount || amount <= 0) return;
+
+            const balance = getUserDkp(currentState.user);
+            if (amount > balance) {
+                setPanelNotice(`Bid failed: insufficient DKP (Balance: ${balance}).`);
+                refreshControlPanel();
+                return;
+            }
+
+            closeModal('modal-bid');
+            clearInput('bid-amount-input');
+
+            if (amount > currentState.currentHighBid) {
+                currentState.currentHighBid = amount;
+                currentState.currentHighBidder = normalizeName(currentState.user);
+                setPanelNotice(`Bid placed: ${amount} DKP on ${currentState.currentItem}.`);
+            } else {
+                setPanelNotice(`Bid too low. Current high: ${currentState.currentHighBid} DKP.`);
+            }
+
+            // Keep user on Auction screen
+            currentState.panelScreen = 'auction';
+            refreshControlPanel();
+        }
+
+        function submitAwardDkp() {
+            const raider = normalizeName(document.getElementById('award-raider-input').value);
+            const amount = parseInt(document.getElementById('award-amount-input').value, 10);
+
+            if (!raider || !amount || amount <= 0) return;
+
+            ensureRosterMember(raider);
+            setUserDkp(raider, getUserDkp(raider) + amount);
+
+            closeModal('modal-award-dkp');
+            clearInput('award-raider-input');
+            clearInput('award-amount-input');
+
+            addMessage(getLogChannel(), {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `Awarded **${amount} DKP** to <span class="mention">@${raider}</span>.`
+            });
+
+            setPanelNotice(`Awarded ${amount} DKP to @${raider}.`);
+            currentState.panelScreen = 'dkp';
+            refreshControlPanel();
+        }
+
+        function submitDeductDkp() {
+            const raider = normalizeName(document.getElementById('deduct-raider-input').value);
+            const amount = parseInt(document.getElementById('deduct-amount-input').value, 10);
+
+            if (!raider || !amount || amount <= 0) return;
+
+            ensureRosterMember(raider);
+            setUserDkp(raider, getUserDkp(raider) - amount);
+
+            closeModal('modal-deduct-dkp');
+            clearInput('deduct-raider-input');
+            clearInput('deduct-amount-input');
+
+            addMessage(getLogChannel(), {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `Deducted **${amount} DKP** from <span class="mention">@${raider}</span>.`
+            });
+
+            setPanelNotice(`Deducted ${amount} DKP from @${raider}.`);
+            currentState.panelScreen = 'dkp';
+            refreshControlPanel();
+        }
+
+        function submitRenameThread() {
+            const newName = (document.getElementById('rename-thread-input').value || '').trim();
+            if (!newName) return;
+
+            currentState.raidName = newName;
+            closeModal('modal-rename-thread');
+            clearInput('rename-thread-input');
+
+            refreshThreadUI();
+
+            addMessage(getLogChannel(), {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `Thread renamed to <strong>${getThreadName()}</strong>.`
+            });
+
+            setPanelNotice(`Thread renamed: ${newName}`);
+            currentState.panelScreen = 'raid';
+            refreshControlPanel();
+
+            renderMessages();
+        }
+
+        function submitRemoveRaider() {
+            const raider = normalizeName(document.getElementById('remove-raider-input').value);
+            if (!raider) return;
+
+            closeModal('modal-remove-raider');
+            clearInput('remove-raider-input');
+
+            if (!currentState.raidRoster.includes(raider)) {
+                setPanelNotice(`Raider @${raider} is not in the roster.`);
+                refreshControlPanel();
+                return;
+            }
+
+            removeRosterMember(raider);
+
+            addMessage('raid-log', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `Removed <span class="mention">@${raider}</span> from the raid.`
+            });
+
+            setPanelNotice(`Removed @${raider} from roster.`);
+            currentState.panelScreen = 'roster';
+            refreshControlPanel();
+        }
+
+        function submitSetGroup() {
+            const raider = normalizeName(document.getElementById('set-group-raider-input').value);
+            const group = (document.getElementById('set-group-name-input').value || "").trim();
+
+            if (!raider || !group) return;
+
+            ensureRosterMember(raider);
+
+            // Remove raider from any existing group first (single-group model)
+            Object.keys(currentState.groups).forEach(g => {
+                currentState.groups[g] = (currentState.groups[g] || []).filter(r => r !== raider);
+                if (currentState.groups[g].length === 0) delete currentState.groups[g];
+            });
+
+            if (!currentState.groups[group]) currentState.groups[group] = [];
+            if (!currentState.groups[group].includes(raider)) currentState.groups[group].push(raider);
+
+            closeModal('modal-set-group');
+            clearInput('set-group-raider-input');
+            clearInput('set-group-name-input');
+
+            addMessage('raid-log', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `Set group for <span class="mention">@${raider}</span> to <strong>${group}</strong>.`
+            });
+
+            setPanelNotice(`Set @${raider} → ${group}.`);
+            currentState.panelScreen = 'roster';
+            refreshControlPanel();
+        }
+
+        function submitRemoveFromGroup() {
+            const raider = normalizeName(document.getElementById('remove-group-raider-input').value);
+            const group = (document.getElementById('remove-group-name-input').value || "").trim();
+
+            if (!raider || !group) return;
+
+            closeModal('modal-remove-from-group');
+            clearInput('remove-group-raider-input');
+            clearInput('remove-group-name-input');
+
+            if (!currentState.groups[group] || !currentState.groups[group].includes(raider)) {
+                setPanelNotice(`@${raider} is not in ${group}.`);
+                refreshControlPanel();
+                return;
+            }
+
+            currentState.groups[group] = currentState.groups[group].filter(r => r !== raider);
+            if (currentState.groups[group].length === 0) delete currentState.groups[group];
+
+            addMessage('raid-log', {
+                user: "DKP-Corp Bot",
+                bot: true,
+                content: `Removed <span class="mention">@${raider}</span> from <strong>${group}</strong>.`
+            });
+
+            setPanelNotice(`Removed @${raider} from ${group}.`);
+            currentState.panelScreen = 'roster';
+            refreshControlPanel();
+        }
+
+        // --- INIT ---
+        window.onload = function() {
+            switchChannel('dkp-system');
+        };
+
+    </script>
+</body>
+</html>

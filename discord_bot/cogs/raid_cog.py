@@ -22,6 +22,152 @@ class RaidCog(commands.Cog):
         # Key: (guild_id, thread_id, leader_id) -> int count
         self._dkp_adjust_counts: dict[tuple[int, int, int], int] = {}
 
+    def _interaction_message_is_ephemeral(self, interaction: discord.Interaction) -> bool:
+        msg = getattr(interaction, "message", None)
+        if msg is None:
+            return False
+        flags = getattr(msg, "flags", None)
+        return bool(getattr(flags, "ephemeral", False))
+
+    async def _build_raid_panel_embed(
+        self,
+        interaction: discord.Interaction,
+        *,
+        can_manage: bool,
+        notice: str | None = None,
+    ) -> discord.Embed:
+        user = getattr(interaction, "user", None)
+        display_name = getattr(user, "display_name", None) or getattr(user, "name", None) or "User"
+        title = f"Raid Panel for {display_name}"
+
+        if interaction.guild is None or interaction.channel is None:
+            base = (
+                "Use the buttons below to manage your raid. This panel is only visible to you."
+                if can_manage
+                else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you."
+            )
+            if notice:
+                base = f"{notice}\n\n{base}"
+            return create_info_embed(title, base)
+
+        raid = None
+        try:
+            raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        except Exception:
+            raid = None
+
+        if not raid:
+            message = notice or "This is not an active raid thread."
+            return create_info_embed(title, message)
+
+        try:
+            raid_id = int(raid["id"])
+        except Exception:
+            raid_id = int(dict(raid).get("id") or 0) if raid else 0
+
+        roster_count = 0
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid_id)
+            roster_count = len(list(member_rows or []))
+        except Exception:
+            roster_count = 0
+
+        timed_text = "Disabled"
+        try:
+            timed_row = await self.bot.db.get_raid_timed_award(raid_id)
+        except Exception:
+            timed_row = None
+
+        if timed_row:
+            try:
+                enabled = bool(int(timed_row["is_enabled"]))
+            except Exception:
+                enabled = bool(getattr(timed_row, "is_enabled", False))
+
+            amount = None
+            interval = None
+            try:
+                amount = int(timed_row["amount"]) if timed_row["amount"] is not None else None
+            except Exception:
+                amount = None
+            try:
+                interval = int(timed_row["interval_minutes"]) if timed_row["interval_minutes"] is not None else None
+            except Exception:
+                interval = None
+
+            if enabled:
+                if amount is not None and interval is not None:
+                    timed_text = f"Enabled: +{amount} DKP / {interval}m"
+                else:
+                    timed_text = "Enabled"
+            else:
+                timed_text = "Disabled"
+
+        auction_text = "None"
+        try:
+            active_auction = await self.bot.db.get_active_auction(raid_id)
+        except Exception:
+            active_auction = None
+
+        if active_auction:
+            item_name = None
+            try:
+                item_name = str(active_auction.get("item_name") or "").strip() if isinstance(active_auction, dict) else None
+            except Exception:
+                item_name = None
+            auction_text = f"Active: {item_name}" if item_name else "Active"
+
+        started_at = None
+        try:
+            started_at = raid.get("created_at") if isinstance(raid, dict) else raid["created_at"]
+        except Exception:
+            started_at = None
+
+        started_line = ""
+        if started_at:
+            ts = None
+            if isinstance(started_at, (int, float)):
+                try:
+                    ts = int(started_at)
+                except Exception:
+                    ts = None
+            else:
+                try:
+                    raw = str(started_at).strip()
+                    if raw.endswith("Z"):
+                        raw = raw[:-1]
+                    ts = int(datetime.fromisoformat(raw).timestamp())
+                except Exception:
+                    ts = None
+            if ts:
+                started_line = f"Started: <t:{ts}:F>"
+
+        base = (
+            "Use the buttons below to manage your raid. This panel is only visible to you."
+            if can_manage
+            else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you."
+        )
+
+        lines: list[str] = []
+        if notice:
+            lines.append(str(notice))
+            lines.append("")
+        lines.append(base)
+        lines.append("")
+        if isinstance(interaction.channel, discord.Thread):
+            lines.append(f"Thread: {interaction.channel.mention}")
+        if started_line:
+            lines.append(started_line)
+        lines.append(f"Roster: **{roster_count}**")
+        lines.append(f"Timed DKP: {timed_text}")
+        lines.append(f"Auction: {auction_text}")
+
+        description = "\n".join([l for l in lines if l is not None])
+        if len(description) > 4096:
+            description = description[:4090] + "..."
+
+        return create_info_embed(title, description)
+
     async def configure_timed_award(
         self,
         interaction: discord.Interaction,
@@ -369,6 +515,31 @@ class RaidCog(commands.Cog):
         except Exception:
             logging.exception("Failed to announce timed award disable")
 
+        if self._interaction_message_is_ephemeral(interaction):
+            try:
+                admin_ok = await is_admin(interaction)
+                is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
+                can_manage = bool(is_leader or admin_ok)
+                officer_ok = await is_officer(interaction)
+                can_rename_thread = bool(can_manage or officer_ok)
+
+                embed = await self._build_raid_panel_embed(interaction, can_manage=can_manage, notice="Timed DKP disabled.")
+                view = RaidPopupView(
+                    self.bot,
+                    mode="main",
+                    can_manage=can_manage,
+                    can_rename_thread=can_rename_thread,
+                )
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=embed, view=view)
+                else:
+                    msg = getattr(interaction, "message", None)
+                    if msg is not None:
+                        await msg.edit(embed=embed, view=view)
+                return
+            except Exception:
+                pass
+
         return await interaction.followup.send("Timed DKP disabled.", ephemeral=True)
 
     @commands.Cog.listener()
@@ -449,6 +620,7 @@ class RaidCog(commands.Cog):
         raid: dict | None = None,
         *,
         throttle: bool = False,
+        notice: str | None = None,
     ):
         if not interaction.guild:
             return
@@ -478,11 +650,11 @@ class RaidCog(commands.Cog):
                 return
 
         try:
-            await self._send_control_panel_ephemeral(interaction, thread)
+            await self._send_control_panel_ephemeral(interaction, thread, notice=notice)
         except Exception:
             logging.exception("Failed to re-show raid control panel")
 
-    async def _send_control_panel_ephemeral(self, interaction: discord.Interaction, thread: discord.Thread):
+    async def _send_control_panel_ephemeral(self, interaction: discord.Interaction, thread: discord.Thread, *, notice: str | None = None):
         """Send the raid control panel as an ephemeral message to the raid leader.
 
         The raid log thread itself remains clean history ("Raid started by...",
@@ -492,22 +664,29 @@ class RaidCog(commands.Cog):
         """
         if not isinstance(interaction.user, discord.Member):
             return
-        control_embed = create_info_embed(
-            f"Raid Control Panel for {interaction.user.display_name}",
-            "Use the buttons below to manage your raid. This panel is only visible to you.",
-        )
+
+        control_embed = await self._build_raid_panel_embed(interaction, can_manage=True, notice=notice)
         view = RaidPopupView(
             self.bot,
             mode="main",
             can_manage=True,
             can_rename_thread=True,
         )
-        await interaction.followup.send(
-            f"Manage the raid in {thread.mention}.",
-            embed=control_embed,
-            view=view,
-            ephemeral=True,
-        )
+
+        content = f"Manage the raid in {thread.mention}."
+        if self._interaction_message_is_ephemeral(interaction):
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(content=content, embed=control_embed, view=view)
+                else:
+                    msg = getattr(interaction, "message", None)
+                    if msg is not None:
+                        await msg.edit(content=content, embed=control_embed, view=view)
+                return
+            except Exception:
+                pass
+
+        await interaction.followup.send(content, embed=control_embed, view=view, ephemeral=True)
 
     async def send_ephemeral_raid_panel(self, interaction: discord.Interaction):
         """Send an ephemeral raid panel adjusted for the current user.
@@ -546,14 +725,7 @@ class RaidCog(commands.Cog):
         officer_ok = await is_officer(interaction)
         can_rename_thread = can_manage or officer_ok
 
-        title = f"Raid Control Panel for {interaction.user.display_name}"
-        description = (
-            "Use the buttons below to manage your raid. This panel is only visible to you."
-            if can_manage
-            else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you."
-        )
-
-        embed = create_info_embed(title, description)
+        embed = await self._build_raid_panel_embed(interaction, can_manage=bool(can_manage))
         view = RaidPopupView(
             self.bot,
             mode="main",
@@ -561,23 +733,21 @@ class RaidCog(commands.Cog):
             can_rename_thread=can_rename_thread,
         )
 
-        # If the original interaction has not been responded to yet, send via
-        # the initial response; otherwise use a followup.
         try:
+            if self._interaction_message_is_ephemeral(interaction):
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=embed, view=view)
+                else:
+                    msg = getattr(interaction, "message", None)
+                    if msg is not None:
+                        await msg.edit(embed=embed, view=view)
+                return
+
             if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    embed=embed,
-                    view=view,
-                    ephemeral=True,
-                )
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             else:
-                await interaction.followup.send(
-                    embed=embed,
-                    view=view,
-                    ephemeral=True,
-                )
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         except discord.HTTPException:
-            # Interaction may have expired or otherwise failed; safe to ignore.
             return
 
     async def create_raid_from_interaction(self, interaction: discord.Interaction):
@@ -1204,11 +1374,23 @@ class RaidCog(commands.Cog):
                     except Exception:
                         pass
 
-        if added:
+        invoked_from_popup = self._interaction_message_is_ephemeral(interaction)
+
+        if added and not invoked_from_popup:
             vc_mentions = ", ".join([v.mention for v in linked_vcs])
             await interaction.followup.send(
                 f"Added **{added}** member(s) from linked voice channels to the raid: {vc_mentions}",
             )
+
+        if invoked_from_popup:
+            vc_mentions = ", ".join([v.mention for v in linked_vcs])
+            await self.maybe_send_control_panel_ephemeral(
+                interaction,
+                raid=raid,
+                throttle=False,
+                notice=f"Update Team complete. Added **{added}** from: {vc_mentions}",
+            )
+            return
 
         await self.update_team_list(interaction)
 
@@ -1775,6 +1957,15 @@ class RaidCog(commands.Cog):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        if self._interaction_message_is_ephemeral(interaction):
+            await self.maybe_send_control_panel_ephemeral(
+                interaction,
+                raid=raid,
+                throttle=False,
+                notice="Team updated.",
+            )
+            return
 
         members_by_id: dict[int, discord.Member] = {}
 
