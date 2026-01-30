@@ -2071,9 +2071,11 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_stop_timed_dkp",
                 "raid_popup_raid_points",
                 "raid_popup_reverse_dkp",
-                "raid_popup_close_raid",
                 "raid_popup_back_main",
             }
+
+        if self.mode not in ("main", "manage"):
+            hide_ids.add("raid_popup_close_raid")
 
         if self.mode != "help":
             hide_ids |= {"raid_popup_back_main_help"}
@@ -2084,6 +2086,7 @@ class RaidPopupView(discord.ui.View):
         if self.mode == "main" and not self.can_manage:
             hide_ids.add("raid_popup_open_manage")
             hide_ids.add("raid_popup_remove_raider")
+            hide_ids.add("raid_popup_close_raid")
 
         if self.mode == "manage" and not self.can_manage:
             hide_ids |= {
@@ -2815,7 +2818,7 @@ class RaidPopupView(discord.ui.View):
         self.can_rename_thread = bool(can_rename_thread)
         await self._edit_to(interaction, mode="main", embed=self._main_embed(interaction, can_manage=bool(can_manage)))
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_close", row=4)
+    @discord.ui.button(label="Close Panel", style=discord.ButtonStyle.secondary, custom_id="raid_popup_close", row=4)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
@@ -2838,7 +2841,7 @@ class RaidPopupInfoView(discord.ui.View):
         embed = view._main_embed(interaction, can_manage=self.can_manage)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_info_close", row=2)
+    @discord.ui.button(label="Close Panel", style=discord.ButtonStyle.secondary, custom_id="raid_popup_info_close", row=2)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
@@ -3785,7 +3788,7 @@ class RaidControlView(discord.ui.View):
             popup_message=getattr(interaction, "message", None),
         )
 
-    @discord.ui.button(label="Close Raid ", style=discord.ButtonStyle.danger, custom_id="raid_close_raid", row=1)
+    @discord.ui.button(label="Close Raid", style=discord.ButtonStyle.danger, custom_id="raid_close_raid", row=1)
     async def close_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_close_raid(interaction)
 
