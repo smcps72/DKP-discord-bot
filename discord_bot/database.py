@@ -124,7 +124,7 @@ class Database:
             ),
             (
                 "default_dkp_award",
-                "ALTER TABLE guilds ADD COLUMN default_dkp_award INTEGER DEFAULT 5",
+                "ALTER TABLE guilds ADD COLUMN default_dkp_award INTEGER DEFAULT 10",
             ),
             (
                 "archive_category_id",
@@ -194,7 +194,7 @@ class Database:
                     raider_role_id INTEGER,
                     raid_leader_role_id INTEGER,
                     raid_vc_template_id INTEGER,
-                    default_dkp_award INTEGER DEFAULT 5,
+                    default_dkp_award INTEGER DEFAULT 10,
                     raid_member_list_order TEXT DEFAULT 'name',
                     last_announced_version TEXT
                 )

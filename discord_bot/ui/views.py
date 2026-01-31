@@ -4,7 +4,7 @@ import re
 import random
 import subprocess
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, DefaultDKPAwardModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embed
@@ -2027,6 +2027,12 @@ class AdminPanelView(discord.ui.View):
             content="Type to search for a role to use as the Raider role:",
             view=view,
         )
+
+
+    @discord.ui.button(label="Default Timed DKP", style=discord.ButtonStyle.primary, row=2)
+    async def set_default_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        panel_message = getattr(interaction, "message", None)
+        await interaction.response.send_modal(DefaultDKPAwardModal(self.bot, panel_message=panel_message))
 
 
 class RaidPopupView(discord.ui.View):

@@ -721,3 +721,63 @@ class RaidGroupSetupModal(Modal, title="Set Up Raid Groups"):
             return await interaction.response.send_message("Group count must be between 1 and 25.", ephemeral=True)
 
         await self.raid_cog.setup_raid_groups(interaction, count)
+
+
+
+class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
+    def __init__(self, bot: commands.Bot, *, panel_message: discord.Message | None = None):
+        super().__init__()
+        self.bot = bot
+        self.panel_message = panel_message
+
+        self.amount = TextInput(
+            label="Default DKP per 60 minutes",
+            placeholder="e.g., 10",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=6,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "This can only be used inside a server.",
+                ephemeral=True,
+            )
+
+        raw_amount = (self.amount.value or "").strip()
+        try:
+            amount = int(raw_amount)
+        except ValueError:
+            return await interaction.response.send_message("Please enter a whole number.", ephemeral=True)
+
+        if amount <= 0:
+            return await interaction.response.send_message("Please enter a number greater than 0.", ephemeral=True)
+
+        try:
+            await self.bot.db.execute(
+                "INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)",
+                (int(interaction.guild.id),),
+            )
+        except Exception:
+            pass
+
+        await self.bot.db.execute(
+            "UPDATE guilds SET default_dkp_award = ? WHERE guild_id = ?",
+            (int(amount), int(interaction.guild.id)),
+        )
+
+        if self.panel_message is not None:
+            try:
+                await self.panel_message.edit(
+                    content=f"Default timed DKP set to {int(amount)} per 60 minutes.",
+                    view=None,
+                )
+            except Exception:
+                pass
+
+        return await interaction.response.send_message(
+            f"Default timed DKP is now set to `{int(amount)}` per 60 minutes.",
+            ephemeral=True,
+        )

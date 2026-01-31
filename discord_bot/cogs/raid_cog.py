@@ -875,15 +875,15 @@ class RaidCog(commands.Cog):
                 raid_row = await self.bot.db.fetchone("SELECT * FROM raids WHERE thread_id = ?", (thread.id,))
                 if raid_row is not None:
                     try:
-                        amount = 5
+                        amount = 10
                         if config and ("default_dkp_award" in getattr(config, "keys", lambda: [])()):
                             raw_amount = config["default_dkp_award"]
                             if raw_amount:
                                 amount = int(raw_amount)
                         if amount <= 0:
-                            amount = 5
+                            amount = 10
                     except Exception:
-                        amount = 5
+                        amount = 10
 
                     try:
                         await self.bot.db.set_raid_timed_award(
