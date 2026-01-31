@@ -2072,12 +2072,16 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_timed_dkp",
                 "raid_popup_start_auction",
                 "raid_popup_end_auction",
-                "raid_popup_update_team",
-                "raid_popup_sync_voice",
                 "raid_popup_stop_timed_dkp",
                 "raid_popup_raid_points",
                 "raid_popup_reverse_dkp",
                 "raid_popup_back_main",
+            }
+
+        if self.mode != "main":
+            hide_ids |= {
+                "raid_popup_update_team",
+                "raid_popup_sync_voice",
             }
 
         if self.mode not in ("main", "manage"):
@@ -2093,6 +2097,8 @@ class RaidPopupView(discord.ui.View):
             hide_ids.add("raid_popup_open_manage")
             hide_ids.add("raid_popup_remove_raider")
             hide_ids.add("raid_popup_close_raid")
+            hide_ids.add("raid_popup_update_team")
+            hide_ids.add("raid_popup_sync_voice")
 
         if self.mode == "manage" and not self.can_manage:
             hide_ids |= {
@@ -2100,8 +2106,6 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_deduct_dkp",
                 "raid_popup_start_auction",
                 "raid_popup_end_auction",
-                "raid_popup_update_team",
-                "raid_popup_sync_voice",
                 "raid_popup_remove_raider",
                 "raid_popup_close_raid",
             }
@@ -2117,6 +2121,26 @@ class RaidPopupView(discord.ui.View):
             for child in to_remove:
                 self.remove_item(child)
 
+        if self.mode == "main":
+            main_row_overrides: dict[str, int] = {
+                "raid_popup_update_team": 2,
+                "raid_popup_sync_voice": 2,
+                "raid_popup_remove_raider": 3,
+                "raid_popup_close_raid": 3,
+                "raid_popup_close": 4,
+            }
+
+            # Must remove and re-add buttons for row changes to take effect
+            buttons_to_move: list[discord.ui.Button] = []
+            for child in list(self.children):
+                if isinstance(child, discord.ui.Button) and child.custom_id in main_row_overrides:
+                    buttons_to_move.append(child)
+                    self.remove_item(child)
+
+            for btn in buttons_to_move:
+                btn.row = main_row_overrides[btn.custom_id]
+                self.add_item(btn)
+
         if self.mode == "manage":
             manage_row_overrides: dict[str, int] = {
                 "raid_popup_award_dkp": 0,
@@ -2124,8 +2148,6 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_timed_dkp": 0,
                 "raid_popup_stop_timed_dkp": 0,
                 "raid_popup_raid_points": 1,
-                "raid_popup_update_team": 1,
-                "raid_popup_sync_voice": 1,
                 "raid_popup_reverse_dkp": 2,
                 "raid_popup_start_auction": 2,
                 "raid_popup_end_auction": 2,
