@@ -7,6 +7,17 @@ All notable changes to this project will be documented in this file.
 - Validate the new pop-up raid panel flow under real-world usage.
 - Validate group-specific awarding flow end-to-end.
 
+## 0.1.0-alpha.4
+
+- Added bot profile selection UI for switching between bot instances (local dev).
+- Added admin-configurable default timed DKP amount (was hardcoded to 5, now defaults to 10).
+- Added current DKP total to raid award/deduct DM notifications.
+- Improved raid panel layout: reorganized button rows for better manage mode UX.
+- Improved raid panel close button visibility and labeling.
+- Enforced raider role eligibility across all raid operations (join, sync, award).
+- Improved group management and raid points display consolidation.
+- Improved E2E test reliability for Discord channel navigation.
+
 ## 0.1.0-alpha.3
 
 - Added raid team grouping plus group setup + signup UI.

@@ -61,6 +61,7 @@ class TestDKPAdjustmentModal:
             mock_member,
             None,
             None,
+            include_group_numbers=None,
             exclude_member_ids=None,
             exclude_group_numbers=None,
             popup_message=None,
@@ -81,6 +82,9 @@ class TestDKPAdjustmentModal:
         modal.exclude_groups_input = MagicMock()
         modal.exclude_groups_input.value = "1, 2"
 
+        modal.include_groups_input = MagicMock()
+        modal.include_groups_input.value = ""
+
         modal.exclude_members_input = MagicMock()
         modal.exclude_members_input.value = "<@123>, 456"
 
@@ -96,8 +100,48 @@ class TestDKPAdjustmentModal:
             None,
             None,
             None,
+            include_group_numbers=None,
             exclude_member_ids={123, 456},
             exclude_group_numbers={1, 2},
+            popup_message=None,
+        )
+
+    async def test_on_submit_parses_included_groups(self, mock_interaction, mock_raid_cog):
+        action = "Award"
+        modal = DKPAdjustmentModal(action=action, raid_cog=mock_raid_cog)
+
+        modal.amount = MagicMock()
+        modal.amount.value = "10"
+        modal.reason = MagicMock()
+        modal.reason.value = "Test Reason"
+
+        modal.target_member_input = MagicMock()
+        modal.target_member_input.value = ""
+
+        modal.include_groups_input = MagicMock()
+        modal.include_groups_input.value = "1, 2"
+
+        modal.exclude_groups_input = MagicMock()
+        modal.exclude_groups_input.value = ""
+
+        modal.exclude_members_input = MagicMock()
+        modal.exclude_members_input.value = ""
+
+        mock_interaction.guild = MagicMock()
+
+        await modal.on_submit(mock_interaction)
+
+        mock_raid_cog.process_dkp_adjustment.assert_called_once_with(
+            mock_interaction,
+            action,
+            "10",
+            "Test Reason",
+            None,
+            None,
+            None,
+            include_group_numbers={1, 2},
+            exclude_member_ids=None,
+            exclude_group_numbers=None,
             popup_message=None,
         )
 

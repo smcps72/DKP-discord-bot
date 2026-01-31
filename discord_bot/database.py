@@ -124,7 +124,7 @@ class Database:
             ),
             (
                 "default_dkp_award",
-                "ALTER TABLE guilds ADD COLUMN default_dkp_award INTEGER DEFAULT 5",
+                "ALTER TABLE guilds ADD COLUMN default_dkp_award INTEGER DEFAULT 10",
             ),
             (
                 "archive_category_id",
@@ -194,7 +194,7 @@ class Database:
                     raider_role_id INTEGER,
                     raid_leader_role_id INTEGER,
                     raid_vc_template_id INTEGER,
-                    default_dkp_award INTEGER DEFAULT 5,
+                    default_dkp_award INTEGER DEFAULT 10,
                     raid_member_list_order TEXT DEFAULT 'name',
                     last_announced_version TEXT
                 )
@@ -234,6 +234,17 @@ class Database:
                 CREATE TABLE IF NOT EXISTS raid_members (
                     raid_id INTEGER,
                     user_id INTEGER,
+                    PRIMARY KEY (raid_id, user_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_member_history (
+                    raid_id INTEGER,
+                    user_id INTEGER,
+                    first_joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (raid_id, user_id),
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
@@ -326,6 +337,20 @@ class Database:
                     change INTEGER,
                     reason TEXT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_dkp_transactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    raid_id INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    change INTEGER NOT NULL,
+                    reason TEXT,
+                    actor_id INTEGER,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
             """)
             await self.pool.commit()
@@ -738,6 +763,18 @@ class Database:
                 ) as cursor:
                     await self.pool.commit()
                     try:
+                        await self.pool.execute(
+                            "INSERT OR IGNORE INTO raid_member_history (raid_id, user_id) VALUES (?, ?)",
+                            (int(raid_id), int(user_id)),
+                        )
+                        await self.pool.execute(
+                            "UPDATE raid_member_history SET last_joined_at = CURRENT_TIMESTAMP WHERE raid_id = ? AND user_id = ?",
+                            (int(raid_id), int(user_id)),
+                        )
+                        await self.pool.commit()
+                    except Exception:
+                        pass
+                    try:
                         return int(cursor.rowcount) > 0
                     except Exception:
                         return False
@@ -770,6 +807,19 @@ class Database:
             "SELECT user_id FROM raid_members WHERE raid_id = ?",
             (raid_id,),
         )
+
+    async def get_raid_member_history_user_ids(self, raid_id: int):
+        rows = await self.fetchall(
+            "SELECT user_id FROM raid_member_history WHERE raid_id = ?",
+            (int(raid_id),),
+        )
+        out: list[int] = []
+        for r in list(rows or []):
+            try:
+                out.append(int(r["user_id"]))
+            except Exception:
+                continue
+        return out
 
     async def is_raid_member(self, raid_id: int, user_id: int) -> bool:
         row = await self.fetchone(
@@ -822,3 +872,48 @@ class Database:
             "SELECT vc_id FROM raid_voice_channels WHERE raid_id = ?",
             (int(raid_id),),
         )
+
+    async def record_raid_dkp_transaction(
+        self,
+        raid_id: int,
+        guild_id: int,
+        user_id: int,
+        change: int,
+        reason: str,
+        actor_id: int | None = None,
+    ):
+        await self.execute(
+            """
+            INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (int(raid_id), int(guild_id), int(user_id), int(change), str(reason), int(actor_id) if actor_id is not None else None),
+        )
+
+    async def get_raid_dkp_totals(self, raid_id: int):
+        return await self.fetchall(
+            """
+            SELECT user_id, COALESCE(SUM(change), 0) AS raid_dkp
+            FROM raid_dkp_transactions
+            WHERE raid_id = ?
+            GROUP BY user_id
+            """,
+            (int(raid_id),),
+        )
+
+    async def get_raid_dkp_participant_user_ids(self, raid_id: int) -> list[int]:
+        rows = await self.fetchall(
+            """
+            SELECT DISTINCT user_id
+            FROM raid_dkp_transactions
+            WHERE raid_id = ?
+            """,
+            (int(raid_id),),
+        )
+        out: list[int] = []
+        for r in list(rows or []):
+            try:
+                out.append(int(r["user_id"]))
+            except Exception:
+                continue
+        return out

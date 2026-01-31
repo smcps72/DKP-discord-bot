@@ -50,9 +50,18 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             )
             self.add_item(self.target_member_input)
 
+        self.include_groups_input = None
         self.exclude_groups_input = None
         self.exclude_members_input = None
         if member is None and group_number is None:
+            if source in ("raid_panel", "raid_popup"):
+                self.include_groups_input = TextInput(
+                    label="Include group number(s) (optional)",
+                    placeholder="e.g., 1, 2",
+                    style=discord.TextStyle.short,
+                    required=False,
+                    max_length=50,
+                )
             self.exclude_groups_input = TextInput(
                 label="Exclude group number(s) (optional)",
                 placeholder="e.g., 1, 2",
@@ -67,6 +76,8 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                 required=False,
                 max_length=200,
             )
+            if self.include_groups_input is not None:
+                self.add_item(self.include_groups_input)
             self.add_item(self.exclude_groups_input)
             self.add_item(self.exclude_members_input)
 
@@ -122,6 +133,22 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
                         ephemeral=True,
                     )
 
+        include_group_numbers: set[int] | None = None
+        if self.include_groups_input is not None:
+            raw = (self.include_groups_input.value or "").strip()
+            if raw:
+                include_group_numbers = set()
+                for token in raw.replace(";", ",").replace(" ", ",").split(","):
+                    token = token.strip()
+                    if not token:
+                        continue
+                    try:
+                        include_group_numbers.add(int(token))
+                    except ValueError:
+                        continue
+                if not include_group_numbers:
+                    include_group_numbers = None
+
         exclude_group_numbers: set[int] | None = None
         if self.exclude_groups_input is not None:
             raw = (self.exclude_groups_input.value or "").strip()
@@ -170,6 +197,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             member,
             self.group_number,
             self.source,
+            include_group_numbers=include_group_numbers,
             exclude_member_ids=exclude_member_ids,
             exclude_group_numbers=exclude_group_numbers,
             popup_message=self.popup_message,
@@ -259,17 +287,72 @@ class RaidTimedAwardModal(Modal, title="Timed Raid DKP"):
             popup_message=self.popup_message,
         )
 
-        try:
-            from ..ui.views import RaidTimedAwardControlView
 
-            view = RaidTimedAwardControlView(getattr(self.raid_cog, "bot", None))
-            await interaction.followup.send(
-                "Timed DKP controls:",
-                view=view,
-                ephemeral=True,
-            )
-        except Exception:
-            pass
+class RaidPointsModal(Modal, title="Raid Points"):
+    def __init__(self, raid_cog, *, source: str | None = None):
+        super().__init__()
+        self.raid_cog = raid_cog
+        self.source = source
+
+        self.scope = TextInput(
+            label="Scope (raid or total)",
+            placeholder="raid",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=10,
+        )
+        self.sort = TextInput(
+            label="Sort (name or dkp)",
+            placeholder="dkp",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=10,
+        )
+
+        self.add_item(self.scope)
+        self.add_item(self.sort)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        scope = (self.scope.value or "").strip().lower()
+        sort = (self.sort.value or "").strip().lower()
+        await self.raid_cog.show_raid_points(
+            interaction,
+            scope=scope,
+            sort=sort,
+        )
+
+
+class RaidReverseDKPModal(Modal, title="Reverse Raid DKP"):
+    def __init__(self, raid_cog):
+        super().__init__()
+        self.raid_cog = raid_cog
+
+        self.confirm = TextInput(
+            label="Type CONFIRM to reverse raid DKP",
+            placeholder="CONFIRM",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=20,
+        )
+        self.reason = TextInput(
+            label="Reason",
+            placeholder="This will remove all DKP given during the raid. e.g., Raid payout used DKP; reversing awards",
+            style=discord.TextStyle.long,
+            required=True,
+            max_length=300,
+        )
+
+        self.add_item(self.confirm)
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        confirm = (self.confirm.value or "").strip()
+        reason = (self.reason.value or "").strip()
+        await self.raid_cog.reverse_raid_dkp(
+            interaction,
+            confirm=confirm,
+            reason=reason,
+        )
 
 
 class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
@@ -638,3 +721,63 @@ class RaidGroupSetupModal(Modal, title="Set Up Raid Groups"):
             return await interaction.response.send_message("Group count must be between 1 and 25.", ephemeral=True)
 
         await self.raid_cog.setup_raid_groups(interaction, count)
+
+
+
+class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
+    def __init__(self, bot: commands.Bot, *, panel_message: discord.Message | None = None):
+        super().__init__()
+        self.bot = bot
+        self.panel_message = panel_message
+
+        self.amount = TextInput(
+            label="Default DKP per 60 minutes",
+            placeholder="e.g., 10",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=6,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "This can only be used inside a server.",
+                ephemeral=True,
+            )
+
+        raw_amount = (self.amount.value or "").strip()
+        try:
+            amount = int(raw_amount)
+        except ValueError:
+            return await interaction.response.send_message("Please enter a whole number.", ephemeral=True)
+
+        if amount <= 0:
+            return await interaction.response.send_message("Please enter a number greater than 0.", ephemeral=True)
+
+        try:
+            await self.bot.db.execute(
+                "INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)",
+                (int(interaction.guild.id),),
+            )
+        except Exception:
+            pass
+
+        await self.bot.db.execute(
+            "UPDATE guilds SET default_dkp_award = ? WHERE guild_id = ?",
+            (int(amount), int(interaction.guild.id)),
+        )
+
+        if self.panel_message is not None:
+            try:
+                await self.panel_message.edit(
+                    content=f"Default timed DKP set to {int(amount)} per 60 minutes.",
+                    view=None,
+                )
+            except Exception:
+                pass
+
+        return await interaction.response.send_message(
+            f"Default timed DKP is now set to `{int(amount)}` per 60 minutes.",
+            ephemeral=True,
+        )

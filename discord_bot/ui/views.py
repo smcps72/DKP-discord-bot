@@ -4,7 +4,7 @@ import re
 import random
 import subprocess
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, DefaultDKPAwardModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embed
@@ -416,6 +416,99 @@ class ChangelogView(discord.ui.View):
         return _create_changelog_embeds(version, self._entries)
 
     @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, row=1)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
+
+
+class RaidPointsScopeSelect(Select):
+    def __init__(self, *, default_value: str = "raid"):
+        options = [
+            discord.SelectOption(label="raid", value="raid", default=(default_value == "raid")),
+            discord.SelectOption(label="total", value="total", default=(default_value == "total")),
+        ]
+        super().__init__(
+            placeholder="Scope",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if not isinstance(view, RaidPointsOptionsView):
+            return
+        view.scope = self.values[0]
+        for option in self.options:
+            option.default = option.value == view.scope
+        await interaction.response.edit_message(view=view)
+
+
+class RaidPointsSortSelect(Select):
+    def __init__(self, *, default_value: str = "dkp"):
+        options = [
+            discord.SelectOption(label="dkp", value="dkp", default=(default_value == "dkp")),
+            discord.SelectOption(label="name", value="name", default=(default_value == "name")),
+        ]
+        super().__init__(
+            placeholder="Sort",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if not isinstance(view, RaidPointsOptionsView):
+            return
+        view.sort = self.values[0]
+        for option in self.options:
+            option.default = option.value == view.sort
+        await interaction.response.edit_message(view=view)
+
+
+class RaidPointsOptionsView(discord.ui.View):
+    def __init__(
+        self,
+        bot,
+        *,
+        raid_cog,
+        return_to_popup: bool,
+        popup_can_manage: bool = False,
+        popup_can_rename_thread: bool = False,
+    ):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.raid_cog = raid_cog
+        self.return_to_popup = bool(return_to_popup)
+        self.popup_can_manage = bool(popup_can_manage)
+        self.popup_can_rename_thread = bool(popup_can_rename_thread)
+
+        self.scope = "raid"
+        self.sort = "dkp"
+
+        self.add_item(RaidPointsScopeSelect(default_value=self.scope))
+        self.add_item(RaidPointsSortSelect(default_value=self.sort))
+
+    @discord.ui.button(label="Submit", style=discord.ButtonStyle.primary, row=2)
+    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.raid_cog.show_raid_points(interaction, scope=self.scope, sort=self.sort)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=3)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.return_to_popup:
+            return await interaction.response.edit_message(view=None)
+        view = RaidPopupView(
+            self.bot,
+            mode="manage",
+            can_manage=self.popup_can_manage,
+            can_rename_thread=self.popup_can_rename_thread,
+        )
+        embed = view._manage_embed(interaction)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, row=3)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
@@ -1174,7 +1267,7 @@ class RaidMemberAssignGroupNumberSelect(Select):
             discord.SelectOption(label=f"Group {i}", value=str(i))
             for i in range(1, min(self.group_count, 25) + 1)
         ]
-        options.append(discord.SelectOption(label="Ungrouped", value="0"))
+        options.append(discord.SelectOption(label="Ungrouped", value="ungrouped"))
 
         super().__init__(
             placeholder="Select a group...",
@@ -1206,12 +1299,14 @@ class RaidMemberAssignGroupNumberSelect(Select):
                 return
             return
 
-        try:
-            selected = int((self.values[0] or "").strip())
-        except Exception:
-            selected = 0
-
-        group_number = None if selected == 0 else selected
+        raw = (self.values[0] or "").strip()
+        if raw == "ungrouped":
+            group_number = None
+        else:
+            try:
+                group_number = int(raw)
+            except Exception:
+                group_number = None
         if group_number is not None and (group_number < 1 or group_number > view.group_count):
             try:
                 await interaction.response.edit_message(
@@ -1507,7 +1602,7 @@ class DKPAdjustmentView(discord.ui.View):
         toggle_btn.callback = _toggle_cb
         self.add_item(toggle_btn)
 
-    @discord.ui.button(label="All Raid Members", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="All/Some Raid members", style=discord.ButtonStyle.primary, row=1)
     async def all_in_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
         modal = DKPAdjustmentModal(
@@ -1857,6 +1952,53 @@ class OfficerRoleAssignView(discord.ui.View):
         self.add_item(OfficerRoleSelect(bot))
 
 
+class RaiderRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, bot: discord.Client):
+        self.bot = bot
+
+        super().__init__(
+            placeholder="Type to search for a role to use as Raiders...",
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        role = self.values[0]
+        if not isinstance(role, discord.Role):
+            return await interaction.response.edit_message(
+                content="Please select a role (not a category).",
+                view=self.view,
+            )
+        if role.is_default() or role.managed:
+            return await interaction.response.edit_message(
+                content="Please select a non-managed role.",
+                view=self.view,
+            )
+
+        admin_cog = self.view.bot.get_cog("AdminCog") if hasattr(self.view, "bot") else None
+        if not admin_cog:
+            return await interaction.response.edit_message(
+                content="Admin module is currently offline. Please try again later.",
+                view=None,
+            )
+
+        await admin_cog.set_role(interaction, "Raider", role)
+
+        await send_admin_confirmation(
+            interaction,
+            panel_text=f"Raider role set to {role.mention}.",
+            ephemeral_text=f"Raider role has been updated to {role.mention}.",
+        )
+
+
+class RaiderRoleAssignView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.add_item(RaiderRoleSelect(bot))
+
+
 class AdminPanelView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=180)
@@ -1877,6 +2019,20 @@ class AdminPanelView(discord.ui.View):
             content="Type to search for a role to use as the Officers role:",
             view=view,
         )
+
+    @discord.ui.button(label="Assign Raider Role Name", style=discord.ButtonStyle.primary, row=1)
+    async def assign_raider_role_name(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = RaiderRoleAssignView(self.bot)
+        await interaction.response.edit_message(
+            content="Type to search for a role to use as the Raider role:",
+            view=view,
+        )
+
+
+    @discord.ui.button(label="Default Timed DKP", style=discord.ButtonStyle.primary, row=2)
+    async def set_default_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        panel_message = getattr(interaction, "message", None)
+        await interaction.response.send_modal(DefaultDKPAwardModal(self.bot, panel_message=panel_message))
 
 
 class RaidPopupView(discord.ui.View):
@@ -1906,6 +2062,7 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_rename_thread",
                 "raid_popup_open_manage",
                 "raid_popup_open_help",
+                "raid_popup_remove_raider",
             }
 
         if self.mode != "manage":
@@ -1917,10 +2074,14 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_end_auction",
                 "raid_popup_update_team",
                 "raid_popup_sync_voice",
-                "raid_popup_remove_raider",
-                "raid_popup_close_raid",
+                "raid_popup_stop_timed_dkp",
+                "raid_popup_raid_points",
+                "raid_popup_reverse_dkp",
                 "raid_popup_back_main",
             }
+
+        if self.mode not in ("main", "manage"):
+            hide_ids.add("raid_popup_close_raid")
 
         if self.mode != "help":
             hide_ids |= {"raid_popup_back_main_help"}
@@ -1930,6 +2091,8 @@ class RaidPopupView(discord.ui.View):
 
         if self.mode == "main" and not self.can_manage:
             hide_ids.add("raid_popup_open_manage")
+            hide_ids.add("raid_popup_remove_raider")
+            hide_ids.add("raid_popup_close_raid")
 
         if self.mode == "manage" and not self.can_manage:
             hide_ids |= {
@@ -1953,6 +2116,34 @@ class RaidPopupView(discord.ui.View):
                     to_remove.append(child)
             for child in to_remove:
                 self.remove_item(child)
+
+        if self.mode == "manage":
+            manage_row_overrides: dict[str, int] = {
+                "raid_popup_award_dkp": 0,
+                "raid_popup_deduct_dkp": 0,
+                "raid_popup_timed_dkp": 0,
+                "raid_popup_stop_timed_dkp": 0,
+                "raid_popup_raid_points": 1,
+                "raid_popup_update_team": 1,
+                "raid_popup_sync_voice": 1,
+                "raid_popup_reverse_dkp": 2,
+                "raid_popup_start_auction": 2,
+                "raid_popup_end_auction": 2,
+                "raid_popup_close_raid": 2,
+                "raid_popup_back_main": 3,
+                "raid_popup_close": 3,
+            }
+
+            # Must remove and re-add buttons for row changes to take effect
+            buttons_to_move: list[discord.ui.Button] = []
+            for child in list(self.children):
+                if isinstance(child, discord.ui.Button) and child.custom_id in manage_row_overrides:
+                    buttons_to_move.append(child)
+                    self.remove_item(child)
+
+            for btn in buttons_to_move:
+                btn.row = manage_row_overrides[btn.custom_id]
+                self.add_item(btn)
 
     async def _defer(self, interaction: discord.Interaction, *, ephemeral: bool):
         try:
@@ -1999,7 +2190,7 @@ class RaidPopupView(discord.ui.View):
         user = interaction.user
         display_name = getattr(user, "display_name", None) or getattr(user, "name", None) or "User"
         return create_info_embed(
-            f"Raid Leader Tools for {display_name}",
+            f"DKP for {display_name}",
             "Use the buttons below to manage DKP, auctions, and roster actions.",
         )
 
@@ -2012,7 +2203,11 @@ class RaidPopupView(discord.ui.View):
                 "**Leave Raid**: Removes you from the raid and prevents automatic re-adding during sync.",
                 "**My DKP 💰**: Shows your current DKP.",
                 "",
+                "**DKP** (leader/admin): Opens advanced controls for DKP, auctions, and roster actions.",
                 "**Award DKP / Deduct DKP** (leader/admin): Pick a raid member, then enter the DKP amount + reason.",
+                "**Timed DKP / Stop Timed DKP** (leader/admin): View/configure Timed DKP for this raid, or stop it if it's running.",
+                "**Raid Points** (leader/admin): View raid points for this raid (scoped/sorted).",
+                "**Reverse Raid DKP** (leader/admin): Reverse DKP changes for this raid.",
                 "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Update Team** or have people **Join Raid** first).",
                 "**End Auction** (leader/admin): Ends the current auction for this raid.",
                 "**Close Raid** (leader/admin): Closes out the raid when finished.",
@@ -2022,6 +2217,7 @@ class RaidPopupView(discord.ui.View):
                 "**🎙️ Voice Roster**: Shows who is currently in the raid voice channels.",
                 "**Remove Raider** (leader/admin): Removes a member from the raid roster.",
                 "**Groups**: Shows the current raid groups (if your guild uses grouping features).",
+                "**Set group** (leader/admin): Assign a raid member to a group (or ungroup them).",
                 "",
                 "**Rename Thread** (leader/officer/admin): Renames the raid log thread.",
             ]
@@ -2202,12 +2398,36 @@ class RaidPopupView(discord.ui.View):
 
         group_count = 0
         try:
+            raid_id = None
             if isinstance(raid_dict, dict):
-                group_count = int(raid_dict.get("group_count") or 0)
-            else:
-                group_count = int(raid["group_count"])
+                raid_id = raid_dict.get("id")
+            if raid_id is None and raid is not None:
+                try:
+                    raid_id = raid["id"]
+                except Exception:
+                    raid_id = None
+            raid_id_int = int(raid_id) if raid_id is not None else None
         except Exception:
-            group_count = 0
+            raid_id_int = None
+
+        if raid_id_int is not None:
+            try:
+                db_count = await self.bot.db.get_raid_group_count(raid_id_int)
+                group_count = int(db_count or 0)
+            except Exception:
+                group_count = 0
+
+        if group_count <= 0:
+            try:
+                if isinstance(raid_dict, dict):
+                    group_count = int(raid_dict.get("group_count") or 0)
+                else:
+                    group_count = int(raid["group_count"])
+            except Exception:
+                group_count = 0
+
+        if isinstance(raid_dict, dict):
+            raid_dict["group_count"] = int(group_count or 0)
 
         raid_cog = self.bot.get_cog("RaidCog")
         if not raid_cog:
@@ -2222,6 +2442,7 @@ class RaidPopupView(discord.ui.View):
                     return await self._popup_notice(interaction, "Please try again.", mode="main")
             return await self._popup_notice(interaction, "Raid groups have not been created yet.", mode="main")
 
+        await self._defer(interaction, ephemeral=False)
         embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
         view = RaidGroupSignupModalView(
             self.bot,
@@ -2232,14 +2453,18 @@ class RaidPopupView(discord.ui.View):
             popup_can_rename_thread=self.can_rename_thread,
         )
         try:
-            await interaction.response.edit_message(content=None, embed=embed, view=view)
-        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-            try:
-                msg = getattr(interaction, "message", None)
-                if msg is not None:
-                    await msg.edit(content=None, embed=embed, view=view)
-            except Exception:
-                return
+            await interaction.edit_original_response(content=None, embed=embed, view=view)
+            return
+        except (discord.NotFound, discord.HTTPException, AttributeError):
+            pass
+
+        msg = getattr(interaction, "message", None)
+        if msg is None:
+            return
+        try:
+            await msg.edit(content=None, embed=embed, view=view)
+        except (discord.NotFound, discord.HTTPException):
+            return
 
     @discord.ui.button(label="Rename Thread", style=discord.ButtonStyle.secondary, custom_id="raid_popup_rename_thread", row=1)
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2251,7 +2476,7 @@ class RaidPopupView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
 
-    @discord.ui.button(label="Leader Tools", style=discord.ButtonStyle.primary, custom_id="raid_popup_open_manage", row=2)
+    @discord.ui.button(label="DKP", style=discord.ButtonStyle.primary, custom_id="raid_popup_open_manage", row=1)
     async def open_manage(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if raid is None:
@@ -2268,11 +2493,11 @@ class RaidPopupView(discord.ui.View):
         self.can_rename_thread = bool(can_rename_thread)
         await self._edit_to(interaction, mode="manage", embed=self._manage_embed(interaction))
 
-    @discord.ui.button(label="❓ Help", style=discord.ButtonStyle.secondary, custom_id="raid_popup_open_help", row=2)
+    @discord.ui.button(label="❓ Help", style=discord.ButtonStyle.secondary, custom_id="raid_popup_open_help", row=0)
     async def open_help(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._edit_to(interaction, mode="help", embed=self._help_embed())
 
-    @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_popup_award_dkp", row=0)
+    @discord.ui.button(label="Award DKP", style=discord.ButtonStyle.success, custom_id="raid_popup_award_dkp", row=3)
     async def award_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -2317,7 +2542,7 @@ class RaidPopupView(discord.ui.View):
         embed = create_info_embed("Award DKP", "Who do you want to award DKP?")
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Deduct DKP", style=discord.ButtonStyle.danger, custom_id="raid_popup_deduct_dkp", row=0)
+    @discord.ui.button(label="Deduct DKP", style=discord.ButtonStyle.danger, custom_id="raid_popup_deduct_dkp", row=3)
     async def deduct_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -2362,7 +2587,42 @@ class RaidPopupView(discord.ui.View):
         embed = create_info_embed("Deduct DKP", "Who do you want to deduct DKP from?")
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Timed DKP", style=discord.ButtonStyle.primary, custom_id="raid_popup_timed_dkp", row=1)
+    @discord.ui.button(label="Raid Points", style=discord.ButtonStyle.secondary, custom_id="raid_popup_raid_points", row=2)
+    async def raid_points(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid, can_manage, _can_rename_thread = await self._resolve_permissions(interaction)
+        if not raid:
+            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+        if not can_manage:
+            return await self._popup_notice(interaction, "You don't have permission to do that.", mode="main")
+
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            return await self._popup_notice(interaction, "Raid module is currently offline.", mode="manage")
+        embed = create_info_embed("Raid Points", "Select scope and sort, then click Submit.")
+        view = RaidPointsOptionsView(
+            self.bot,
+            raid_cog=raid_cog,
+            return_to_popup=True,
+            popup_can_manage=self.can_manage,
+            popup_can_rename_thread=self.can_rename_thread,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Reverse Raid DKP", style=discord.ButtonStyle.danger, custom_id="raid_popup_reverse_dkp", row=3)
+    async def reverse_raid_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid, can_manage, _can_rename_thread = await self._resolve_permissions(interaction)
+        if not raid:
+            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+        if not can_manage:
+            return await self._popup_notice(interaction, "You don't have permission to do that.", mode="main")
+
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            return await self._popup_notice(interaction, "Raid module is currently offline.", mode="manage")
+        modal = RaidReverseDKPModal(raid_cog)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Timed DKP", style=discord.ButtonStyle.primary, custom_id="raid_popup_timed_dkp", row=3)
     async def timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -2377,14 +2637,80 @@ class RaidPopupView(discord.ui.View):
         if not raid_cog:
             return await self._popup_notice(interaction, "Raid module is currently offline.", mode="manage")
 
-        modal = RaidTimedAwardModal(
-            raid_cog=raid_cog,
-            source="raid_popup",
-            popup_message=getattr(interaction, "message", None),
-        )
-        await interaction.response.send_modal(modal)
+        row = None
+        try:
+            row = await self.bot.db.get_raid_timed_award(int(raid["id"]))
+        except Exception:
+            row = None
 
-    @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_popup_start_auction", row=1)
+        amount = None
+        interval_minutes = None
+        is_enabled = None
+        try:
+            if isinstance(row, dict):
+                amount = row.get("amount")
+                interval_minutes = row.get("interval_minutes")
+                is_enabled = row.get("is_enabled")
+            elif row is not None:
+                amount = row["amount"]
+                interval_minutes = row["interval_minutes"]
+                is_enabled = row["is_enabled"]
+        except Exception:
+            amount = None
+            interval_minutes = None
+            is_enabled = None
+
+        if row is None:
+            description = "Timed DKP is not configured for this raid yet."
+        else:
+            try:
+                enabled = bool(int(is_enabled)) if is_enabled is not None else False
+            except Exception:
+                enabled = bool(is_enabled)
+
+            if enabled and amount is not None and interval_minutes is not None:
+                description = f"Currently enabled: **+{int(amount)} DKP** every **{int(interval_minutes)} minutes**."
+            elif amount is not None and interval_minutes is not None:
+                description = f"Currently disabled. Last settings: **+{int(amount)} DKP** every **{int(interval_minutes)} minutes**."
+            else:
+                description = "Timed DKP is configured, but its current settings could not be loaded."
+
+        embed = create_info_embed("Timed DKP", description)
+        view = RaidPopupTimedDKPView(
+            self.bot,
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
+        )
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            try:
+                msg = getattr(interaction, "message", None)
+                if msg is not None:
+                    await msg.edit(embed=embed, view=view)
+            except Exception:
+                return
+
+    @discord.ui.button(label="Stop Timed DKP", style=discord.ButtonStyle.danger, custom_id="raid_popup_stop_timed_dkp", row=3)
+    async def stop_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
+        if not raid:
+            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+        if not can_manage:
+            return await self._popup_notice(interaction, "You don't have permission to do that.", mode="main")
+
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            return await self._popup_notice(interaction, "Raid module is currently offline.", mode="manage")
+
+        await self._defer(interaction, ephemeral=True)
+        await raid_cog.disable_timed_award(interaction)
+
+        self.can_manage = bool(can_manage)
+        self.can_rename_thread = bool(can_rename_thread)
+        await self._popup_notice(interaction, "Timed DKP disabled.", mode="manage", title="Timed DKP")
+
+    @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_popup_start_auction", row=4)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -2402,7 +2728,7 @@ class RaidPopupView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
 
-    @discord.ui.button(label="End Auction", style=discord.ButtonStyle.primary, custom_id="raid_popup_end_auction", row=4)
+    @discord.ui.button(label="End Auction", style=discord.ButtonStyle.primary, custom_id="raid_popup_end_auction", row=0)
     async def end_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -2477,7 +2803,7 @@ class RaidPopupView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
 
-    @discord.ui.button(label="Close Raid", style=discord.ButtonStyle.danger, custom_id="raid_popup_close_raid", row=3)
+    @discord.ui.button(label="Close Raid", style=discord.ButtonStyle.danger, custom_id="raid_popup_close_raid", row=2)
     async def close_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -2496,7 +2822,7 @@ class RaidPopupView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main", row=3)
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main", row=4)
     async def back_main(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if raid is None:
@@ -2506,7 +2832,7 @@ class RaidPopupView(discord.ui.View):
         self.can_rename_thread = bool(can_rename_thread)
         await self._edit_to(interaction, mode="main", embed=self._main_embed(interaction, can_manage=bool(can_manage)))
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main_help", row=3)
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main_help", row=4)
     async def back_main_help(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if raid is None:
@@ -2516,7 +2842,7 @@ class RaidPopupView(discord.ui.View):
         self.can_rename_thread = bool(can_rename_thread)
         await self._edit_to(interaction, mode="main", embed=self._main_embed(interaction, can_manage=bool(can_manage)))
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main_dkp", row=3)
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main_dkp", row=4)
     async def back_main_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if raid is None:
@@ -2526,7 +2852,7 @@ class RaidPopupView(discord.ui.View):
         self.can_rename_thread = bool(can_rename_thread)
         await self._edit_to(interaction, mode="main", embed=self._main_embed(interaction, can_manage=bool(can_manage)))
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_close", row=3)
+    @discord.ui.button(label="Close Panel", style=discord.ButtonStyle.secondary, custom_id="raid_popup_close", row=4)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
@@ -2549,44 +2875,44 @@ class RaidPopupInfoView(discord.ui.View):
         embed = view._main_embed(interaction, can_manage=self.can_manage)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_info_close")
+    @discord.ui.button(label="Close Panel", style=discord.ButtonStyle.secondary, custom_id="raid_popup_info_close", row=2)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
 
-class RaidPopupDKPUserSelect(discord.ui.UserSelect):
-    def __init__(
-        self,
-        bot,
-        *,
-        action: str,
-        allowed_member_ids: set[int],
-    ):
+class RaidPopupDKPMemberSelect(Select):
+    def __init__(self, bot, *, action: str, members: list[discord.Member]):
         self.bot = bot
-        self.action = action
-        self._allowed_member_ids = set(allowed_member_ids)
+        self.action = str(action)
+        self._allowed_member_ids = {int(m.id) for m in members}
+
+        members_sorted = list(members)
+        members_sorted.sort(key=_member_sort_key)
+
+        options = [
+            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
+            for m in members_sorted
+        ][:25]
 
         super().__init__(
-            placeholder=f"Select a member to {action.lower()} DKP...",
+            placeholder=f"Select a member to {self.action.lower()} DKP...",
             min_values=1,
             max_values=1,
+            options=options,
             row=0,
         )
 
     async def callback(self, interaction: discord.Interaction):
-        selected = None
-        try:
-            selected = self.values[0]
-        except Exception:
-            selected = None
-
         member: discord.Member | None = None
-        if isinstance(selected, discord.Member):
-            member = selected
-        elif selected is not None and interaction.guild is not None:
-            member = interaction.guild.get_member(int(getattr(selected, "id", 0)))
+        if interaction.guild:
+            try:
+                selected_id = int(self.values[0])
+            except (ValueError, TypeError):
+                member = None
+            else:
+                member = interaction.guild.get_member(selected_id)
 
-        if member is None or member.id not in self._allowed_member_ids:
+        if member is None or int(member.id) not in self._allowed_member_ids:
             embed = create_info_embed("DKP Selection", "That member is not an eligible raid member.")
             view = getattr(self, "view", None)
             try:
@@ -2627,15 +2953,9 @@ class RaidPopupDKPSelectView(discord.ui.View):
         self._allowed_member_ids = {int(m.id) for m in members}
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
-        self.add_item(
-            RaidPopupDKPUserSelect(
-                bot,
-                action=action,
-                allowed_member_ids=self._allowed_member_ids,
-            )
-        )
+        self.add_item(RaidPopupDKPMemberSelect(bot, action=action, members=list(members)))
 
-    @discord.ui.button(label="All Raid Members", style=discord.ButtonStyle.primary, custom_id="raid_popup_dkp_all", row=1)
+    @discord.ui.button(label="All/Some Raid members", style=discord.ButtonStyle.primary, custom_id="raid_popup_dkp_all", row=1)
     async def all_members(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog")
         modal = DKPAdjustmentModal(
@@ -2656,7 +2976,7 @@ class RaidPopupDKPSelectView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
         embed = create_info_embed(
-            "Raid Leader Tools" if self.can_manage else "Raid Panel",
+            "DKP" if self.can_manage else "Raid Panel",
             "Use the buttons below to manage DKP, auctions, and roster actions."
             if self.can_manage
             else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you.",
@@ -2664,6 +2984,101 @@ class RaidPopupDKPSelectView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_dkp_close", row=2)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
+
+
+class RaidPopupTimedDKPView(discord.ui.View):
+    def __init__(self, bot, *, can_manage: bool, can_rename_thread: bool):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.can_manage = bool(can_manage)
+        self.can_rename_thread = bool(can_rename_thread)
+
+    @discord.ui.button(
+        label="Configure Timed DKP",
+        style=discord.ButtonStyle.primary,
+        custom_id="raid_popup_timed_dkp_configure",
+        row=0,
+    )
+    async def configure_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message(
+                        "Raid module is currently offline.",
+                        ephemeral=True,
+                    )
+                return await interaction.followup.send(
+                    "Raid module is currently offline.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                return
+
+        modal = RaidTimedAwardModal(
+            raid_cog=raid_cog,
+            source="raid_popup",
+            popup_message=getattr(interaction, "message", None),
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="Stop Timed DKP",
+        style=discord.ButtonStyle.danger,
+        custom_id="raid_popup_timed_dkp_stop",
+        row=0,
+    )
+    async def stop_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    return await interaction.response.send_message(
+                        "Raid module is currently offline.",
+                        ephemeral=True,
+                    )
+                return await interaction.followup.send(
+                    "Raid module is currently offline.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                return
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+
+        await raid_cog.disable_timed_award(interaction)
+
+        try:
+            msg = getattr(interaction, "message", None)
+            if msg is not None:
+                embed = create_info_embed("Timed DKP", "Timed DKP disabled.")
+                await msg.edit(embed=embed, view=self)
+        except discord.HTTPException:
+            pass
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_timed_dkp_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = RaidPopupView(
+            self.bot,
+            mode=("manage" if self.can_manage else "main"),
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
+        )
+        embed = create_info_embed(
+            "DKP" if self.can_manage else "Raid Panel",
+            "Use the buttons below to manage DKP, auctions, and roster actions."
+            if self.can_manage
+            else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you.",
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="raid_popup_timed_dkp_close", row=1)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 
@@ -2690,6 +3105,9 @@ class RaidControlView(discord.ui.View):
                 "raid_start_auction",
                 "raid_end_auction",
                 "raid_close_raid",
+                "raid_points",
+                "raid_reverse_dkp",
+                "raid_stop_timed_dkp",
             }
         if not self.show_rename_thread_button:
             hide_ids.add("raid_rename_thread")
@@ -2723,6 +3141,8 @@ class RaidControlView(discord.ui.View):
             "raid_start_auction",
             "raid_show_groups",
             "raid_rename_thread",
+            "raid_points",
+            "raid_reverse_dkp",
         ):
             # Only defer if the interaction hasn't already been acknowledged
             # by another handler (e.g., a command or previous callback).
@@ -2818,6 +3238,35 @@ class RaidControlView(discord.ui.View):
 
         raid_id = int(raid["id"])
         user_id = int(interaction.user.id)
+
+        required_role_id = None
+        try:
+            if interaction.guild is not None:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raider_role_id" in getattr(config, "keys", lambda: [])()):
+                    required_role_id = config.get("raider_role_id") if isinstance(config, dict) else config["raider_role_id"]
+        except Exception:
+            required_role_id = None
+        try:
+            required_role_id = int(required_role_id) if required_role_id else None
+        except Exception:
+            required_role_id = None
+
+        is_eligible_raider = True
+        if required_role_id and interaction.guild is not None:
+            try:
+                required_role = interaction.guild.get_role(required_role_id)
+            except Exception:
+                required_role = None
+            if required_role is not None:
+                member_roles = list(getattr(interaction.user, "roles", []) or [])
+                is_eligible_raider = required_role in member_roles
+
+        if not is_eligible_raider:
+            message = "You do not have the required Raider role to join this raid."
+            if source == "raid_popup":
+                return await respond_popup(message)
+            return await interaction.followup.send(message, ephemeral=True)
 
         try:
             if await self.bot.db.is_raid_member(raid_id, user_id):
@@ -3057,6 +3506,23 @@ class RaidControlView(discord.ui.View):
     async def deduct_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._show_dkp_adjustment_view(interaction, "Deduct")
 
+    @discord.ui.button(label="Raid Points", emoji="🏅", style=discord.ButtonStyle.secondary, custom_id="raid_points", row=3)
+    async def raid_points(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        embed = create_info_embed("Raid Points", "Select scope and sort, then click Submit.")
+        view = RaidPointsOptionsView(self.bot, raid_cog=raid_cog, return_to_popup=False)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="Reverse Raid DKP", style=discord.ButtonStyle.danger, custom_id="raid_reverse_dkp", row=1)
+    async def reverse_raid_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        modal = RaidReverseDKPModal(raid_cog)
+        await interaction.response.send_modal(modal)
+
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_start_auction(interaction)
@@ -3259,6 +3725,13 @@ class RaidControlView(discord.ui.View):
     async def sync_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_sync_voice(interaction)
 
+    @discord.ui.button(label="Stop Timed DKP", style=discord.ButtonStyle.danger, custom_id="raid_stop_timed_dkp", row=3)
+    async def stop_timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+        await raid_cog.disable_timed_award(interaction)
+
     async def handle_voice_roster(self, interaction: discord.Interaction):
         raid_cog = self.bot.get_cog("RaidCog")
         if not raid_cog:
@@ -3349,7 +3822,7 @@ class RaidControlView(discord.ui.View):
             popup_message=getattr(interaction, "message", None),
         )
 
-    @discord.ui.button(label="Close Raid ", style=discord.ButtonStyle.danger, custom_id="raid_close_raid", row=1)
+    @discord.ui.button(label="Close Raid", style=discord.ButtonStyle.danger, custom_id="raid_close_raid", row=1)
     async def close_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_close_raid(interaction)
 
@@ -3438,7 +3911,7 @@ class RaidControlView(discord.ui.View):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
         if not raid:
             if source == "raid_popup":
-                embed = create_info_embed("Raid Leader Tools", "This is not an active raid thread.")
+                embed = create_info_embed("DKP", "This is not an active raid thread.")
                 view = RaidPopupView(
                     self.bot,
                     mode=("manage" if can_manage else "main"),
@@ -3713,7 +4186,7 @@ class RaidControlView(discord.ui.View):
     async def rename_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_rename_thread(interaction)
 
-    @discord.ui.button(label="❓ Help", style=discord.ButtonStyle.secondary, custom_id="raid_help", row=1)
+    @discord.ui.button(label="❓ Help", style=discord.ButtonStyle.secondary, custom_id="raid_help", row=4)
     async def raid_help(self, interaction: discord.Interaction, button: discord.ui.Button):
         description = "\n".join(
             [
@@ -3724,6 +4197,9 @@ class RaidControlView(discord.ui.View):
                 "**My DKP 💰**: Shows your current DKP.",
                 "",
                 "**Award DKP / Deduct DKP** (leader/admin): Pick a raid member, then enter the DKP amount + reason.",
+                "**Raid Points** (leader/admin): View raid points for this raid (scoped/sorted).",
+                "**Reverse Raid DKP** (leader/admin): Reverse DKP changes for this raid.",
+                "**Stop Timed DKP** (leader/admin): Stops Timed DKP if it is currently running for this raid.",
                 "**Set group** (leader/admin): Assign a raid member to a group (or ungroup them).",
                 "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Update Team** or have people **Join Raid** first).",
                 "**End Auction** (leader/admin): Ends the current auction for this raid.",
@@ -3921,6 +4397,58 @@ class RaidJoinApprovalView(discord.ui.View):
         if not await self._ensure_pending(interaction):
             return
 
+        required_role_id = None
+        try:
+            if interaction.guild is not None:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raider_role_id" in getattr(config, "keys", lambda: [])()):
+                    required_role_id = config["raider_role_id"]
+        except Exception:
+            required_role_id = None
+        try:
+            required_role_id = int(required_role_id) if required_role_id else None
+        except Exception:
+            required_role_id = None
+
+        is_eligible_raider = True
+        if required_role_id and interaction.guild is not None:
+            try:
+                required_role = interaction.guild.get_role(required_role_id)
+            except Exception:
+                required_role = None
+            if required_role is not None:
+                try:
+                    requester = interaction.guild.get_member(int(self.user_id))
+                except Exception:
+                    requester = None
+                if requester is not None:
+                    is_eligible_raider = required_role in list(getattr(requester, "roles", []) or [])
+
+        if not is_eligible_raider:
+            await self.bot.db.set_raid_join_request_status(
+                self.raid_id,
+                self.user_id,
+                "denied",
+                decided_by=int(interaction.user.id),
+            )
+            try:
+                raid_row = await self._get_raid_row()
+                guild, thread = await self._resolve_guild_and_thread(raid_row)
+                mention = f"<@{self.user_id}>"
+                if guild is not None:
+                    member = guild.get_member(self.user_id)
+                    if member is not None:
+                        mention = member.mention
+                if thread:
+                    await thread.send(f"Join request denied for {mention} (missing required Raider role).")
+                await self._notify_requester(False, thread)
+            except Exception:
+                logging.exception("Failed to send denial result to raid thread")
+
+            await interaction.response.send_message("Denied (missing required Raider role).", ephemeral=True)
+            await self._finalize(interaction)
+            return
+
         try:
             inserted = await self.bot.db.add_raid_member(self.raid_id, self.user_id)
         except Exception:
@@ -4051,15 +4579,48 @@ class RaidOpenPanelView(discord.ui.View):
         custom_id="raid_open_panel",
     )
     async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            logging.info(
+                "raid_open_panel: received interaction guild_id=%s channel_id=%s user_id=%s",
+                getattr(getattr(interaction, "guild", None), "id", None),
+                getattr(getattr(interaction, "channel", None), "id", None),
+                getattr(getattr(interaction, "user", None), "id", None),
+            )
+        except Exception:
+            pass
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
         if not await ensure_allowed_guild(interaction):
             return
         raid_cog = self.bot.get_cog("RaidCog")
         if not raid_cog:
-            return await interaction.response.send_message(
-                "Raid module is currently offline.",
-                ephemeral=True,
+            try:
+                await interaction.followup.send(
+                    "Raid module is currently offline.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                pass
+            return
+        try:
+            await raid_cog.send_ephemeral_raid_panel(interaction)
+        except Exception:
+            logging.exception(
+                "raid_open_panel: failed to send ephemeral raid panel guild_id=%s channel_id=%s user_id=%s",
+                getattr(getattr(interaction, "guild", None), "id", None),
+                getattr(getattr(interaction, "channel", None), "id", None),
+                getattr(getattr(interaction, "user", None), "id", None),
             )
-        await raid_cog.send_ephemeral_raid_panel(interaction)
+            try:
+                await interaction.followup.send(
+                    "Failed to open raid control panel. Please try again.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
 
 
 class RaidGroupSignupModalSelect(discord.ui.Select):
@@ -4142,7 +4703,7 @@ class RaidGroupSignupModalView(discord.ui.View):
 
         self.add_item(RaidGroupSignupModalSelect(bot, group_count=group_count))
 
-    @discord.ui.button(label="Leave group", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_leave", row=1)
+    @discord.ui.button(label="Ungrouped", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_leave", row=1)
     async def leave_group(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await ensure_allowed_guild(interaction):
             return
@@ -4157,7 +4718,7 @@ class RaidGroupSignupModalView(discord.ui.View):
                 pass
             return
 
-        await raid_cog.handle_group_signup(interaction, "0")
+        await raid_cog.handle_group_signup(interaction, "ungrouped")
 
         try:
             raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
@@ -4312,10 +4873,13 @@ class RaidGroupSignupSelect(discord.ui.Select):
                 max_groups = max(1, min(int(group_count), 25))
         except Exception:
             max_groups = 25
-        options = [
-            discord.SelectOption(label=f"Group {i}", value=str(i))
-            for i in range(1, max_groups + 1)
-        ]
+        options = [discord.SelectOption(label="Ungrouped", value="ungrouped")]
+        options.extend(
+            [
+                discord.SelectOption(label=f"Group {i}", value=str(i))
+                for i in range(1, max_groups + 1)
+            ]
+        )
         super().__init__(
             placeholder="Select a group...",
             min_values=1,
@@ -4353,7 +4917,7 @@ class RaidGroupSignupView(discord.ui.View):
         self.bot = bot
         self.add_item(RaidGroupSignupSelect(bot, group_count=group_count))
 
-    @discord.ui.button(label="Leave group", style=discord.ButtonStyle.secondary, custom_id="raid_group_leave")
+    @discord.ui.button(label="Ungrouped", style=discord.ButtonStyle.secondary, custom_id="raid_group_leave")
     async def leave_group(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await ensure_allowed_guild(interaction):
             return
@@ -4368,4 +4932,4 @@ class RaidGroupSignupView(discord.ui.View):
                 pass
             return
 
-        await raid_cog.handle_group_signup(interaction, "0")
+        await raid_cog.handle_group_signup(interaction, "ungrouped")

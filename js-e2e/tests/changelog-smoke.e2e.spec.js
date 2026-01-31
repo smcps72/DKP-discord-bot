@@ -2,7 +2,12 @@ import { test, expect } from '@playwright/test';
 import fs from 'fs';
 
 const guildId = (process.env.DISCORD_TEST_GUILD_ID || '1383966524150124604').trim();
-const channelId = (process.env.DISCORD_TEST_CHANNEL_ID || '1459606597528715307').trim();
+const channelId = (process.env.DISCORD_TEST_CHANNEL_ID || '').trim();
+const channelName = (process.env.DISCORD_TEST_CHANNEL_NAME || 'dkp-system').trim();
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function ensureAuthState() {
   if (!fs.existsSync('discord-auth.json')) {
@@ -13,7 +18,7 @@ function ensureAuthState() {
   }
 }
 
-async function openChangelogFromNewestWelcome(page) {
+ async function openChangelogFromNewestWelcome(page) {
   async function clickChangeLogFromDkpPanel() {
     const panelTitle = page.getByText(/DKP Panel for/i).last();
     await panelTitle.waitFor({ state: 'visible', timeout: 45000 });
@@ -23,16 +28,13 @@ async function openChangelogFromNewestWelcome(page) {
     await btn.click({ timeout: 15000 });
   }
 
-  const openPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+  const openPanelButton = page.locator('button, [role="button"]').filter({ hasText: /^Open DKP Panel$/i }).last();
+  if (await openPanelButton.count()) {
+    await openPanelButton.scrollIntoViewIfNeeded().catch(() => {});
+  }
   if (await openPanelButton.isVisible({ timeout: 15000 }).catch(() => false)) {
     await openPanelButton.click({ timeout: 15000 });
     await clickChangeLogFromDkpPanel();
-    return;
-  }
-
-  const changeLogButton = page.getByRole('button', { name: /Change Log/i }).last();
-  if (await changeLogButton.isVisible({ timeout: 15000 }).catch(() => false)) {
-    await changeLogButton.click({ timeout: 15000 });
     return;
   }
 
@@ -40,21 +42,39 @@ async function openChangelogFromNewestWelcome(page) {
   if (await pinnedButton.isVisible({ timeout: 15000 }).catch(() => false)) {
     await pinnedButton.click({ timeout: 15000 });
 
-    const pinnedOpenPanelButton = page.getByRole('button', { name: /Open DKP Panel/i }).last();
+    const pinnedDialog = page.getByRole('dialog', { name: /Pinned Messages/i });
+    await pinnedDialog.waitFor({ state: 'visible', timeout: 45000 }).catch(() => null);
+
+    const welcomeText = page.getByText('Welcome to the DKP Bot!', { exact: false }).first();
+    if (await welcomeText.isVisible({ timeout: 15000 }).catch(() => false)) {
+      await welcomeText.click({ timeout: 15000 });
+      await page.waitForTimeout(1000);
+    }
+
+    const pinnedOpenPanelButton = pinnedDialog
+      .locator('button, [role="button"]')
+      .filter({ hasText: /Open DKP Panel/i })
+      .first();
     if (await pinnedOpenPanelButton.isVisible({ timeout: 15000 }).catch(() => false)) {
       await pinnedOpenPanelButton.click({ timeout: 15000 });
+      await page.keyboard.press('Escape').catch(() => null);
+      await page.waitForTimeout(1000);
       await clickChangeLogFromDkpPanel();
       return;
     }
 
-    const pinnedChangeLogButton = page.getByRole('button', { name: /Change Log/i }).last();
-    await pinnedChangeLogButton.waitFor({ state: 'visible', timeout: 45000 });
-    await pinnedChangeLogButton.click({ timeout: 15000 });
-    return;
+    await page.keyboard.press('Escape').catch(() => null);
+    await page.waitForTimeout(1000);
+
+    if (await openPanelButton.isVisible({ timeout: 15000 }).catch(() => false)) {
+      await openPanelButton.click({ timeout: 15000 });
+      await clickChangeLogFromDkpPanel();
+      return;
+    }
   }
 
-  throw new Error('Could not find a visible "Change Log" button.');
-}
+  throw new Error('Could not find a visible "Open DKP Panel" button.');
+ }
 
 async function openVersionDropdown(page) {
   const closeBtn = page.getByRole('button', { name: /^Close$/i }).last();
@@ -109,14 +129,58 @@ async function pickOption(page, label) {
 }
 
 async function openChangelog(page) {
-  await page.goto(`https://discord.com/channels/${guildId}/${channelId}`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('heading', { name: /dkp-system/i }).first().waitFor({ state: 'visible', timeout: 45000 });
-  await page.waitForTimeout(5000);
+  if (channelId) {
+    await page.goto(`https://discord.com/channels/${guildId}/${channelId}`, { waitUntil: 'domcontentloaded' });
+  } else {
+    await page.goto(`https://discord.com/channels/${guildId}`, { waitUntil: 'domcontentloaded' });
+  }
 
   const loginHeading = page.getByRole('heading', { name: 'Welcome back!' });
   if (await loginHeading.isVisible({ timeout: 1500 }).catch(() => false)) {
     throw new Error('Discord login page detected. The storageState did not load; regenerate discord-auth.json.');
   }
+
+  const expectedChannelHeaderPattern = new RegExp(String.raw`:\s*${escapeRegExp(channelName)}$`, 'i');
+  const channelHeader = page.getByRole('heading', { name: expectedChannelHeaderPattern }).first();
+  const inExpectedChannel = await channelHeader.isVisible({ timeout: 12_000 }).catch(() => false);
+
+  if (!inExpectedChannel) {
+    const channelPattern = new RegExp(
+      String.raw`^(unread,\s*)?${escapeRegExp(channelName)}(\b|\s|\().*`,
+      'i',
+    );
+    const channelsList = page.getByRole('list', { name: 'Channels' });
+    const channelLink = channelsList.getByRole('link', { name: channelPattern }).first();
+
+    await channelsList.waitFor({ state: 'visible', timeout: 45_000 });
+    await channelLink.waitFor({ state: 'attached', timeout: 45_000 });
+
+    const href = await channelLink.getAttribute('href');
+    if (href) {
+      await page.goto(`https://discord.com${href}`, { waitUntil: 'domcontentloaded' });
+    } else {
+      await channelLink.scrollIntoViewIfNeeded().catch(() => {});
+      await channelLink.click({ timeout: 45_000, force: true });
+    }
+  }
+
+  await channelHeader.waitFor({ state: 'visible', timeout: 45_000 });
+
+  await expect
+    .poll(
+      async () => {
+        const openPanelCount = await page.getByRole('button', { name: /Open DKP Panel/i }).count();
+        if (openPanelCount > 0) return true;
+        const pinnedCount = await page.getByRole('button', { name: /Pinned Messages/i }).count();
+        if (pinnedCount > 0) return true;
+        const mainCount = await page.locator('div[role="main"], main').count();
+        return mainCount > 0;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe(true);
+
+  await page.waitForTimeout(5000);
 
   await openChangelogFromNewestWelcome(page);
   await page.getByRole('button', { name: /^Close$/i }).last().waitFor({ state: 'visible', timeout: 45000 });

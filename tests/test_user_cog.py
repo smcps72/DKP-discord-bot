@@ -1,6 +1,6 @@
 import pytest
 from discord.ext import commands
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from discord_bot.cogs.user_cog import UserCog
 from discord_bot.utils import create_info_embed
@@ -28,10 +28,11 @@ class MockInteraction:
         self.user = MockUser(user_id)
         self.guild = MockGuild(guild_id)
         # UserCog now checks response.is_done() and may call defer.
-        self.response = AsyncMock()
-        self.response.is_done.return_value = True
+        self.response = MagicMock()
+        self.response.is_done = MagicMock(return_value=True)
         self.response.defer = AsyncMock()
-        self.followup = AsyncMock()
+        self.followup = MagicMock()
+        self.followup.send = AsyncMock()
 
 # Tests will be added here
 

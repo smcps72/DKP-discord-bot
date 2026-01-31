@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+import argparse
 import os
 from dotenv import load_dotenv
 import logging
@@ -20,6 +21,16 @@ if sys.platform == "win32":
 # This ensures that imports like `from discord_bot.database...` work correctly.
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--bot",
+    dest="bot_profile",
+    choices=["default", "local2"],
+    default=os.getenv("DKP_BOT_PROFILE", "default"),
+)
+args, _unknown = parser.parse_known_args()
+BOT_PROFILE = args.bot_profile
 
 # --- Environment Variable Loading ---
 # The bot will look for the .env file in the project root.
@@ -69,7 +80,13 @@ logging.info(
 )
 
 # --- Load Environment Variables ---
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+token_env_var = "DISCORD_BOT_TOKEN"
+if BOT_PROFILE == "local2":
+    token_env_var = "DKP_local2"
+    TOKEN = os.getenv(token_env_var) or os.getenv("DKP_LOCAL2") or os.getenv("LOCAL_2")
+else:
+    TOKEN = os.getenv(token_env_var)
+logging.info("Bot profile selected: %s (token var: %s)", BOT_PROFILE, token_env_var)
 LICENSE_KEY = os.getenv("GUILD_LICENSE_KEY")
 LICENSE_SERVER_URL = os.getenv("LICENSE_SERVER_URL", "https://dkp-discord-bot-production.up.railway.app")
 LICENSE_CHECK_ENABLED = os.getenv("LICENSE_CHECK_ENABLED", "false").lower() == "true"
@@ -94,7 +111,7 @@ if TEST_GUILD_ID_ENV:
         logging.warning("TEST_GUILD_ID is set but is not a valid integer; falling back to global command sync.")
 
 if not TOKEN:
-    raise ValueError("DISCORD_BOT_TOKEN is missing. Please check your .env file.")
+    raise ValueError(f"{token_env_var} is missing (bot profile: {BOT_PROFILE}). Please check your .env file.")
 if LICENSE_CHECK_ENABLED and not all([LICENSE_KEY, LICENSE_SERVER_URL]):
     raise ValueError("GUILD_LICENSE_KEY or LICENSE_SERVER_URL are missing for license check. Please check your .env file or disable license check.")
 

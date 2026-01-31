@@ -214,11 +214,27 @@ class TasksCog(commands.Cog):
             except Exception:
                 member_rows = []
 
+            group_zero_ids: set[int] = set()
+            try:
+                group_rows = await self.bot.db.get_raid_member_groups(int(raid_id))
+            except Exception:
+                group_rows = []
+            for gr in list(group_rows or []):
+                try:
+                    uid = int(gr["user_id"])
+                    grp = int(gr["group_number"])
+                except Exception:
+                    continue
+                if grp == 0:
+                    group_zero_ids.add(uid)
+
             user_ids: set[int] = set()
             for mr in list(member_rows or []):
                 try:
                     uid = int(mr["user_id"])
                 except Exception:
+                    continue
+                if uid in group_zero_ids:
                     continue
                 if uid == leader_id:
                     user_ids.add(uid)
