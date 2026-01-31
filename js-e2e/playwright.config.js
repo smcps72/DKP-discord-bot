@@ -20,7 +20,7 @@ const storageStatePath = fs.existsSync('discord-auth.json') ? 'discord-auth.json
 dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 dotenv.config({ path: path.resolve(process.cwd(), '../secrets/.env.local') });
 
-const qaseMode = process.env.QASE_MODE === 'testops' ? 'testops' : 'off';
+const qaseMode = process.env.QASE_MODE === 'testops' && (process.env.CI || process.env.QASE_ENABLE_LOCAL === '1') ? 'testops' : 'off';
 
 export default defineConfig({
   testDir: './tests',

@@ -4,10 +4,15 @@ import fs from 'fs';
 import path from 'path';
 import { qase } from 'playwright-qase-reporter';
 
-dotenv.config({ path: path.resolve(process.cwd(), '../.env'), override: true });
+dotenv.config({ path: path.resolve(process.cwd(), '../.env'), override: false });
 
+const GUILD_ID = (process.env.DISCORD_TEST_GUILD_ID || '').trim();
 const SERVER = (process.env.DISCORD_TEST_SERVER_NAME || '').trim();
-const CHANNEL = (process.env.DISCORD_TEST_CHANNEL_NAME || '').trim();
+const CHANNEL = (process.env.DISCORD_TEST_CHANNEL_NAME || 'dkp-system').trim();
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function ensureAuthState() {
   if (!fs.existsSync('discord-auth.json')) {
@@ -19,22 +24,28 @@ function ensureAuthState() {
 }
 
 async function openChannel(page) {
-  if (!SERVER || !CHANNEL) {
-    throw new Error('DISCORD_TEST_SERVER_NAME and DISCORD_TEST_CHANNEL_NAME must be set.');
+  if (!GUILD_ID && (!SERVER || !CHANNEL)) {
+    throw new Error('DISCORD_TEST_GUILD_ID or (DISCORD_TEST_SERVER_NAME and DISCORD_TEST_CHANNEL_NAME) must be set.');
   }
 
-  await page.goto('https://discord.com/app', { timeout: 60_000, waitUntil: 'domcontentloaded' });
+  if (GUILD_ID) {
+    await page.goto(`https://discord.com/channels/${GUILD_ID}`, { timeout: 60_000, waitUntil: 'domcontentloaded' });
+  } else {
+    await page.goto('https://discord.com/app', { timeout: 60_000, waitUntil: 'domcontentloaded' });
+  }
   const loginHeading = page.getByRole('heading', { name: 'Welcome back!' });
   if (await loginHeading.isVisible({ timeout: 1500 }).catch(() => false)) {
     throw new Error('Discord login page detected. The storageState did not load; regenerate discord-auth.json.');
   }
 
-  const serverTreeItem = page.getByRole('treeitem', { name: SERVER });
-  await serverTreeItem.first().waitFor({ state: 'visible', timeout: 45_000 });
-  await serverTreeItem.first().click({ timeout: 45_000 });
-  await page.waitForTimeout(1500);
+  if (!GUILD_ID) {
+    const serverTreeItem = page.getByRole('treeitem', { name: SERVER });
+    await serverTreeItem.first().waitFor({ state: 'visible', timeout: 45_000 });
+    await serverTreeItem.first().click({ timeout: 45_000 });
+    await page.waitForTimeout(1500);
+  }
 
-  const channelPattern = new RegExp(`^(unread,\\s*)?${CHANNEL}(\\b|\\s|\\().*`, 'i');
+  const channelPattern = new RegExp(`^(unread,\\s*)?${escapeRegExp(CHANNEL)}(\\b|\\s|\\().*`, 'i');
   const channelLink = page.getByRole('link', { name: channelPattern }).first();
   await channelLink.waitFor({ state: 'visible', timeout: 45_000 });
   await channelLink.click({ timeout: 45_000 });
