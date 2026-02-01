@@ -1377,9 +1377,10 @@ class RaidCog(commands.Cog):
 
         added = 0
         for member in list(voice_members_by_id.values()):
+            # Clear any exclusion for members currently in voice - the raid leader
+            # explicitly clicking Update Team means they want these people back in.
             try:
-                if await self.bot.db.is_raid_member_excluded(raid_id, int(member.id)):
-                    continue
+                await self.bot.db.remove_raid_member_exclusion(raid_id, int(member.id))
             except Exception:
                 pass
 
