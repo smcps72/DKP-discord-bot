@@ -1532,6 +1532,590 @@ class RaidMemberAssignGroupView(discord.ui.View):
             self.add_item(back_btn)
 
 
+class RaidBulkAssignGroupMemberSelect(Select):
+    def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
+        self.bot = bot
+        self._allowed_member_ids = {m.id for m in members}
+
+        members_sorted = list(members)
+        if str(member_list_order).strip().casefold() == "random":
+            random.shuffle(members_sorted)
+        else:
+            members_sorted.sort(key=_member_sort_key)
+
+        options = [
+            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
+            for m in members_sorted
+        ][:25]
+
+        super().__init__(
+            placeholder="Select members...",
+            min_values=1,
+            max_values=min(len(options), 25),
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if view is None or not isinstance(view, RaidBulkAssignGroupView):
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("Bulk Set Group", "Please try again."),
+                    view=None,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        selected_ids = []
+        for val in self.values:
+            try:
+                member_id = int(val)
+                if member_id in self._allowed_member_ids:
+                    selected_ids.append(member_id)
+            except (ValueError, TypeError):
+                continue
+
+        view.selected_member_ids = selected_ids
+        count = len(selected_ids)
+
+        try:
+            await interaction.response.edit_message(
+                content=f"Selected **{count}** member(s). Now pick a group.",
+                view=view,
+            )
+        except discord.HTTPException:
+            return
+
+
+class RaidBulkAssignGroupNumberSelect(Select):
+    def __init__(self, bot, group_count: int):
+        self.bot = bot
+        self.group_count = int(group_count)
+
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(label=f"Group {i}", value=str(i))
+            for i in range(1, min(self.group_count, 25) + 1)
+        ]
+        options.append(discord.SelectOption(label="Ungrouped", value="ungrouped"))
+
+        super().__init__(
+            placeholder="Select a group...",
+            min_values=1,
+            max_values=1,
+            options=options[:25],
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if view is None or not isinstance(view, RaidBulkAssignGroupView):
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("Bulk Set Group", "Please try again."),
+                    view=None,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        if not view.selected_member_ids:
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("Bulk Set Group", "Select at least one member first."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        raw = (self.values[0] or "").strip()
+        if raw == "ungrouped":
+            group_number = None
+        else:
+            try:
+                group_number = int(raw)
+            except Exception:
+                group_number = None
+        if group_number is not None and (group_number < 1 or group_number > view.group_count):
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("Bulk Set Group", "Invalid group selection."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        success_count = 0
+        for member_id in view.selected_member_ids:
+            try:
+                await self.bot.db.set_raid_member_group(int(view.raid_id), int(member_id), group_number)
+                success_count += 1
+            except Exception:
+                logging.exception(f"Failed to set group for member {member_id}")
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog and interaction.guild and isinstance(interaction.channel, discord.Thread):
+            try:
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                await raid_cog._ensure_group_panel_message(interaction.channel, raid_dict, embed)
+            except Exception:
+                logging.exception("Failed to refresh group signup message after bulk assigning member groups")
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                if group_number is None:
+                    await interaction.channel.send(f"**{success_count}** member(s) were removed from their groups.")
+                else:
+                    await interaction.channel.send(f"**{success_count}** member(s) were assigned to **Group {int(group_number)}**.")
+        except Exception:
+            logging.exception("Failed to send bulk group assignment message to raid thread")
+
+        if group_number is None:
+            content = f"Cleared group assignment for **{success_count}** member(s)."
+        else:
+            content = f"Assigned **{success_count}** member(s) to **Group {int(group_number)}**."
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog and interaction.guild:
+            try:
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+                group_count = 0
+                if isinstance(raid_dict, dict):
+                    group_count = int(raid_dict.get("group_count") or 0)
+                signup_embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                signup_view = RaidGroupSignupModalView(
+                    self.bot,
+                    group_count=group_count,
+                    can_manage=bool(getattr(view, "group_signup_can_manage", False)),
+                    return_to_popup=bool(getattr(view, "group_signup_return_to_popup", False)),
+                    popup_can_manage=bool(getattr(view, "group_signup_popup_can_manage", False)),
+                    popup_can_rename_thread=bool(getattr(view, "group_signup_popup_can_rename_thread", False)),
+                )
+                await interaction.response.edit_message(
+                    content=content,
+                    embed=signup_embed,
+                    view=signup_view,
+                )
+                return
+            except Exception:
+                pass
+
+        try:
+            await interaction.response.edit_message(content=content, view=view)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            return
+
+
+class RaidBulkAssignGroupView(discord.ui.View):
+    def __init__(
+        self,
+        bot,
+        raid_id: int,
+        members: list[discord.Member],
+        group_count: int,
+        member_list_order: str = "name",
+        *,
+        return_to_group_signup: bool = False,
+        group_signup_can_manage: bool = False,
+        group_signup_return_to_popup: bool = False,
+        group_signup_popup_can_manage: bool = False,
+        group_signup_popup_can_rename_thread: bool = False,
+    ):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.raid_id = int(raid_id)
+        self.members = list(members)
+        self.group_count = int(group_count)
+        self.member_list_order = str(member_list_order)
+        self.selected_member_ids: list[int] = []
+        self.return_to_group_signup = bool(return_to_group_signup)
+        self.group_signup_can_manage = bool(group_signup_can_manage)
+        self.group_signup_return_to_popup = bool(group_signup_return_to_popup)
+        self.group_signup_popup_can_manage = bool(group_signup_popup_can_manage)
+        self.group_signup_popup_can_rename_thread = bool(group_signup_popup_can_rename_thread)
+
+        self.add_item(
+            RaidBulkAssignGroupMemberSelect(
+                bot,
+                self.members,
+                member_list_order=self.member_list_order,
+            )
+        )
+        self.add_item(RaidBulkAssignGroupNumberSelect(bot, group_count))
+
+        is_random = _is_random_member_order(self.member_list_order)
+        toggle_btn = discord.ui.Button(
+            label=("Sort A-Z" if is_random else "Shuffle"),
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+
+        async def _toggle_cb(interaction: discord.Interaction):
+            new_order = "name" if is_random else "random"
+            new_view = RaidBulkAssignGroupView(
+                self.bot,
+                self.raid_id,
+                self.members,
+                self.group_count,
+                member_list_order=new_order,
+                return_to_group_signup=self.return_to_group_signup,
+                group_signup_can_manage=self.group_signup_can_manage,
+                group_signup_return_to_popup=self.group_signup_return_to_popup,
+                group_signup_popup_can_manage=self.group_signup_popup_can_manage,
+                group_signup_popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
+            )
+            new_view.selected_member_ids = self.selected_member_ids
+            try:
+                await interaction.response.edit_message(view=new_view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+
+        toggle_btn.callback = _toggle_cb
+        self.add_item(toggle_btn)
+
+        if self.return_to_group_signup:
+            back_btn = discord.ui.Button(
+                label="Back",
+                style=discord.ButtonStyle.secondary,
+                custom_id="raid_bulk_assign_back",
+                row=3,
+            )
+
+            async def _back_cb(interaction: discord.Interaction):
+                raid_cog = self.bot.get_cog("RaidCog")
+                if not raid_cog or interaction.guild is None:
+                    return
+
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+
+                group_count = 0
+                if isinstance(raid_dict, dict):
+                    group_count = int(raid_dict.get("group_count") or 0)
+
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                view = RaidGroupSignupModalView(
+                    self.bot,
+                    group_count=group_count,
+                    can_manage=self.group_signup_can_manage,
+                    return_to_popup=self.group_signup_return_to_popup,
+                    popup_can_manage=self.group_signup_popup_can_manage,
+                    popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
+                )
+                await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+            back_btn.callback = _back_cb
+            self.add_item(back_btn)
+
+
+class RaidVoiceChannelSelect(Select):
+    def __init__(self, bot, voice_channels: list[discord.VoiceChannel]):
+        self.bot = bot
+        self._vc_ids = {vc.id for vc in voice_channels}
+
+        options = [
+            discord.SelectOption(label=vc.name[:100], value=str(vc.id))
+            for vc in voice_channels
+        ][:25]
+
+        super().__init__(
+            placeholder="Select a voice channel...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if view is None or not isinstance(view, RaidVoiceChannelGroupView):
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Please try again."),
+                    view=None,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        try:
+            vc_id = int(self.values[0])
+        except (ValueError, TypeError):
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Invalid selection."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        if vc_id not in self._vc_ids:
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Invalid voice channel."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        view.selected_vc_id = vc_id
+        vc = interaction.guild.get_channel(vc_id) if interaction.guild else None
+        vc_name = vc.name if vc else f"Channel {vc_id}"
+        member_count = len([m for m in getattr(vc, "members", []) if not getattr(m, "bot", False)]) if vc else 0
+
+        try:
+            await interaction.response.edit_message(
+                content=f"Selected **{vc_name}** ({member_count} members). Now pick a group.",
+                view=view,
+            )
+        except discord.HTTPException:
+            return
+
+
+class RaidVoiceChannelGroupNumberSelect(Select):
+    def __init__(self, bot, group_count: int):
+        self.bot = bot
+        self.group_count = int(group_count)
+
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(label=f"Group {i}", value=str(i))
+            for i in range(1, min(self.group_count, 25) + 1)
+        ]
+
+        super().__init__(
+            placeholder="Select a group...",
+            min_values=1,
+            max_values=1,
+            options=options[:25],
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if view is None or not isinstance(view, RaidVoiceChannelGroupView):
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Please try again."),
+                    view=None,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        if view.selected_vc_id is None:
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Select a voice channel first."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        raw = (self.values[0] or "").strip()
+        try:
+            group_number = int(raw)
+        except Exception:
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Invalid group selection."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        if group_number < 1 or group_number > view.group_count:
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Invalid group selection."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        vc = interaction.guild.get_channel(view.selected_vc_id) if interaction.guild else None
+        if not vc or not isinstance(vc, discord.VoiceChannel):
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "Voice channel not found."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        vc_members = [m for m in getattr(vc, "members", []) if not getattr(m, "bot", False)]
+        if not vc_members:
+            try:
+                await interaction.response.edit_message(
+                    embed=create_info_embed("From Voice Channel", "No members in that voice channel."),
+                    view=view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        raid_member_ids = set()
+        try:
+            member_rows = await self.bot.db.get_raid_members(view.raid_id)
+            for row in member_rows:
+                raid_member_ids.add(int(row["user_id"]))
+        except Exception:
+            pass
+
+        success_count = 0
+        skipped_count = 0
+        for member in vc_members:
+            if int(member.id) not in raid_member_ids:
+                skipped_count += 1
+                continue
+            try:
+                await self.bot.db.set_raid_member_group(int(view.raid_id), int(member.id), group_number)
+                success_count += 1
+            except Exception:
+                logging.exception(f"Failed to set group for member {member.id} from voice channel")
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog and interaction.guild and isinstance(interaction.channel, discord.Thread):
+            try:
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                await raid_cog._ensure_group_panel_message(interaction.channel, raid_dict, embed)
+            except Exception:
+                logging.exception("Failed to refresh group signup message after voice channel group assignment")
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                msg = f"**{success_count}** member(s) from **{vc.name}** were assigned to **Group {int(group_number)}**."
+                if skipped_count > 0:
+                    msg += f" ({skipped_count} skipped - not in raid)"
+                await interaction.channel.send(msg)
+        except Exception:
+            logging.exception("Failed to send voice channel group assignment message to raid thread")
+
+        content = f"Assigned **{success_count}** member(s) from **{vc.name}** to **Group {int(group_number)}**."
+        if skipped_count > 0:
+            content += f" ({skipped_count} skipped - not in raid)"
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if raid_cog and interaction.guild:
+            try:
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+                group_count = 0
+                if isinstance(raid_dict, dict):
+                    group_count = int(raid_dict.get("group_count") or 0)
+                signup_embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                signup_view = RaidGroupSignupModalView(
+                    self.bot,
+                    group_count=group_count,
+                    can_manage=bool(getattr(view, "group_signup_can_manage", False)),
+                    return_to_popup=bool(getattr(view, "group_signup_return_to_popup", False)),
+                    popup_can_manage=bool(getattr(view, "group_signup_popup_can_manage", False)),
+                    popup_can_rename_thread=bool(getattr(view, "group_signup_popup_can_rename_thread", False)),
+                )
+                await interaction.response.edit_message(
+                    content=content,
+                    embed=signup_embed,
+                    view=signup_view,
+                )
+                return
+            except Exception:
+                pass
+
+        try:
+            await interaction.response.edit_message(content=content, view=view)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            return
+
+
+class RaidVoiceChannelGroupView(discord.ui.View):
+    def __init__(
+        self,
+        bot,
+        raid_id: int,
+        voice_channels: list[discord.VoiceChannel],
+        group_count: int,
+        *,
+        return_to_group_signup: bool = False,
+        group_signup_can_manage: bool = False,
+        group_signup_return_to_popup: bool = False,
+        group_signup_popup_can_manage: bool = False,
+        group_signup_popup_can_rename_thread: bool = False,
+    ):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.raid_id = int(raid_id)
+        self.voice_channels = list(voice_channels)
+        self.group_count = int(group_count)
+        self.selected_vc_id: int | None = None
+        self.return_to_group_signup = bool(return_to_group_signup)
+        self.group_signup_can_manage = bool(group_signup_can_manage)
+        self.group_signup_return_to_popup = bool(group_signup_return_to_popup)
+        self.group_signup_popup_can_manage = bool(group_signup_popup_can_manage)
+        self.group_signup_popup_can_rename_thread = bool(group_signup_popup_can_rename_thread)
+
+        self.add_item(RaidVoiceChannelSelect(bot, self.voice_channels))
+        self.add_item(RaidVoiceChannelGroupNumberSelect(bot, group_count))
+
+        if self.return_to_group_signup:
+            back_btn = discord.ui.Button(
+                label="Back",
+                style=discord.ButtonStyle.secondary,
+                custom_id="raid_vc_group_back",
+                row=2,
+            )
+
+            async def _back_cb(interaction: discord.Interaction):
+                raid_cog = self.bot.get_cog("RaidCog")
+                if not raid_cog or interaction.guild is None:
+                    return
+
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                raid_dict = raid
+                if raid is not None and not isinstance(raid, dict):
+                    raid_dict = dict(raid)
+
+                group_count = 0
+                if isinstance(raid_dict, dict):
+                    group_count = int(raid_dict.get("group_count") or 0)
+
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                view = RaidGroupSignupModalView(
+                    self.bot,
+                    group_count=group_count,
+                    can_manage=self.group_signup_can_manage,
+                    return_to_popup=self.group_signup_return_to_popup,
+                    popup_can_manage=self.group_signup_popup_can_manage,
+                    popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
+                )
+                await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+            back_btn.callback = _back_cb
+            self.add_item(back_btn)
+
+
 class DKPAdjustmentView(discord.ui.View):
     def __init__(
         self,
@@ -4865,6 +5449,109 @@ class RaidGroupSignupModalView(discord.ui.View):
             group_signup_popup_can_rename_thread=self.popup_can_rename_thread,
         )
         embed = create_info_embed("Set Group", "Select a member, then select a group:")
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    @discord.ui.button(label="Bulk set group", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_bulk_set", row=3)
+    async def bulk_set_group(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage:
+            return await interaction.response.send_message("You don't have permission to do that.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        group_count = 0
+        try:
+            group_count = int(raid.get("group_count") if isinstance(raid, dict) else raid["group_count"])
+        except Exception:
+            group_count = 0
+        if group_count <= 0:
+            return await interaction.response.send_message("Raid groups have not been configured yet.", ephemeral=True)
+
+        members_by_id: dict[int, discord.Member] = {}
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid["id"])
+        except Exception:
+            member_rows = []
+
+        for row in member_rows:
+            user_id = row["user_id"]
+            if user_id in members_by_id:
+                continue
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                members_by_id[user_id] = gm
+
+        members = list(members_by_id.values())
+        if not members:
+            return await interaction.response.send_message("No raid members were found.", ephemeral=True)
+
+        member_list_order = "name"
+        try:
+            if interaction.guild:
+                config = await self.bot.db.get_guild_config(int(interaction.guild.id))
+                if config and ("raid_member_list_order" in getattr(config, "keys", lambda: [])()):
+                    raw = config["raid_member_list_order"]
+                    if raw:
+                        member_list_order = str(raw)
+        except Exception:
+            pass
+
+        view = RaidBulkAssignGroupView(
+            self.bot,
+            int(raid["id"]),
+            members,
+            int(group_count),
+            member_list_order=member_list_order,
+            return_to_group_signup=True,
+            group_signup_can_manage=self.can_manage,
+            group_signup_return_to_popup=self.return_to_popup,
+            group_signup_popup_can_manage=self.popup_can_manage,
+            group_signup_popup_can_rename_thread=self.popup_can_rename_thread,
+        )
+        embed = create_info_embed("Bulk Set Group", "Select multiple members, then select a group to assign them all:")
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    @discord.ui.button(label="From voice", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_from_voice", row=3)
+    async def from_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage:
+            return await interaction.response.send_message("You don't have permission to do that.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        group_count = 0
+        try:
+            group_count = int(raid.get("group_count") if isinstance(raid, dict) else raid["group_count"])
+        except Exception:
+            group_count = 0
+        if group_count <= 0:
+            return await interaction.response.send_message("Raid groups have not been configured yet.", ephemeral=True)
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        if not raid_cog or not hasattr(raid_cog, "_get_linked_voice_channels"):
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+
+        linked_vcs = await raid_cog._get_linked_voice_channels(interaction.guild, raid)
+        if not linked_vcs:
+            return await interaction.response.send_message(
+                "No voice channels are linked to this raid. Use a raid started from a voice channel.",
+                ephemeral=True,
+            )
+
+        view = RaidVoiceChannelGroupView(
+            self.bot,
+            int(raid["id"]),
+            linked_vcs,
+            int(group_count),
+            return_to_group_signup=True,
+            group_signup_can_manage=self.can_manage,
+            group_signup_return_to_popup=self.return_to_popup,
+            group_signup_popup_can_manage=self.popup_can_manage,
+            group_signup_popup_can_rename_thread=self.popup_can_rename_thread,
+        )
+        embed = create_info_embed("From Voice Channel", "Select a voice channel, then select a group to assign all its members:")
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_back", row=4)
