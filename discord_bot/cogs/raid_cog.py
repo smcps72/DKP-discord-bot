@@ -1231,7 +1231,7 @@ class RaidCog(commands.Cog):
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
         target_member = await self._get_member_from_str(interaction, member)
-        modal = DKPAdjustmentModal(action="Award", raid_cog=self, member=target_member, group_number=None)
+        modal = DKPAdjustmentModal(action="Award", raid_cog=self, member=target_member, group_number=None, source="raid_panel")
         await interaction.response.send_modal(modal)
 
     @app_commands.command(name="deduct", description="Deduct DKP from a member or the entire raid.")
@@ -1243,7 +1243,7 @@ class RaidCog(commands.Cog):
         if not await is_officer(interaction):
             return await interaction.response.send_message("You must be an officer to use this command.", ephemeral=True)
         target_member = await self._get_member_from_str(interaction, member)
-        modal = DKPAdjustmentModal(action="Deduct", raid_cog=self, member=target_member, group_number=None)
+        modal = DKPAdjustmentModal(action="Deduct", raid_cog=self, member=target_member, group_number=None, source="raid_panel")
         await interaction.response.send_modal(modal)
 
     async def _get_member_from_str(self, interaction: discord.Interaction, member_str: str | None) -> discord.Member | None:
