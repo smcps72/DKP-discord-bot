@@ -468,5 +468,100 @@ class AdminCog(commands.Cog):
             (role.id, interaction.guild.id)
         )
 
+    @app_commands.command(
+        name="backfill_raid_dkp",
+        description="Backfill missing timed DKP awards into raid_dkp_transactions for the current raid.",
+    )
+    @app_commands.check(is_admin)
+    async def backfill_raid_dkp_cmd(self, interaction: discord.Interaction):
+        """One-time fix: backfill timed raid awards that were recorded in transactions but not raid_dkp_transactions."""
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This is not an active raid thread.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+        guild_id = int(raid["guild_id"])
+
+        # Get raid start time
+        raid_started_at = None
+        try:
+            raw = raid.get("started_at") or raid.get("created_at")
+            if raw:
+                from datetime import datetime
+                raid_started_at = datetime.fromisoformat(str(raw))
+        except Exception:
+            pass
+
+        # Find timed award transactions for this guild that match the pattern
+        # and occurred after the raid started
+        query = """
+            SELECT user_id, change, reason, timestamp
+            FROM transactions
+            WHERE guild_id = ?
+              AND reason LIKE 'Timed raid award%'
+        """
+        params = [guild_id]
+        if raid_started_at:
+            query += " AND timestamp >= ?"
+            params.append(raid_started_at.isoformat())
+
+        try:
+            rows = await self.bot.db.fetchall(query, tuple(params))
+        except Exception as e:
+            return await interaction.followup.send(f"Failed to query transactions: {e}", ephemeral=True)
+
+        if not rows:
+            return await interaction.followup.send("No timed raid award transactions found to backfill.", ephemeral=True)
+
+        # Get existing raid_dkp_transactions to avoid duplicates
+        existing = set()
+        try:
+            existing_rows = await self.bot.db.fetchall(
+                "SELECT user_id, change, reason FROM raid_dkp_transactions WHERE raid_id = ?",
+                (raid_id,),
+            )
+            for er in list(existing_rows or []):
+                existing.add((int(er["user_id"]), int(er["change"]), str(er["reason"])))
+        except Exception:
+            pass
+
+        inserted = 0
+        for row in list(rows or []):
+            try:
+                user_id = int(row["user_id"])
+                change = int(row["change"])
+                reason = str(row["reason"])
+            except Exception:
+                continue
+
+            # Skip if already exists
+            if (user_id, change, reason) in existing:
+                continue
+
+            try:
+                await self.bot.db.record_raid_dkp_transaction(
+                    raid_id,
+                    guild_id,
+                    user_id,
+                    change,
+                    reason,
+                    actor_id=None,
+                )
+                inserted += 1
+                existing.add((user_id, change, reason))
+            except Exception:
+                continue
+
+        await interaction.followup.send(
+            f"Backfilled **{inserted}** timed DKP award(s) into raid_dkp_transactions for this raid.",
+            ephemeral=True,
+        )
+
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))
