@@ -272,6 +272,14 @@ class TasksCog(commands.Cog):
                         int(amount),
                         f"Timed raid award (+{amount} every {interval_minutes}m)",
                     )
+                    await self.bot.db.record_raid_dkp_transaction(
+                        int(raid_id),
+                        int(guild_id),
+                        int(uid),
+                        int(amount),
+                        f"Timed raid award (+{amount} every {interval_minutes}m)",
+                        actor_id=None,
+                    )
                     awarded += 1
                 except Exception:
                     logging.exception("Failed timed raid award for user_id=%s raid_id=%s", uid, raid_id)
