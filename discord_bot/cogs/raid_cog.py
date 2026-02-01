@@ -1399,23 +1399,42 @@ class RaidCog(commands.Cog):
 
         invoked_from_popup = self._interaction_message_is_ephemeral(interaction)
 
-        if added and not invoked_from_popup:
-            vc_mentions = ", ".join([v.mention for v in linked_vcs])
-            await interaction.followup.send(
-                f"Added **{added}** member(s) from linked voice channels to the raid: {vc_mentions}",
-            )
+        # Fetch all raid members and build a plain-text list (no @ mentions)
+        try:
+            member_rows = await self.bot.db.get_raid_members(raid_id)
+        except Exception:
+            member_rows = []
+
+        all_raid_members: list[discord.Member] = []
+        for row in member_rows:
+            user_id = row["user_id"]
+            gm = interaction.guild.get_member(user_id) if interaction.guild else None
+            if gm and not gm.bot:
+                all_raid_members.append(gm)
+
+        # Sort alphabetically by display name
+        all_raid_members.sort(key=lambda m: (m.display_name or "").lower())
+
+        if all_raid_members:
+            member_list_text = "\n".join([m.display_name for m in all_raid_members])
+            roster_msg = f"**Current Raid Roster ({len(all_raid_members)} members):**\n{member_list_text}"
+        else:
+            roster_msg = "No raid members found."
+
+        # Always send an ephemeral message with the full roster (only visible to the invoker)
+        vc_mentions = ", ".join([v.mention for v in linked_vcs])
+        await interaction.followup.send(
+            f"Added **{added}** member(s) from: {vc_mentions}\n\n{roster_msg}",
+            ephemeral=True,
+        )
 
         if invoked_from_popup:
-            vc_mentions = ", ".join([v.mention for v in linked_vcs])
             await self.maybe_send_control_panel_ephemeral(
                 interaction,
                 raid=raid,
                 throttle=False,
                 notice=f"Update Team complete. Added **{added}** from: {vc_mentions}",
             )
-            return
-
-        await self.update_team_list(interaction)
 
     async def show_voice_roster(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
