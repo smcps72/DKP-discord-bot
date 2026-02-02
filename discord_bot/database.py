@@ -308,6 +308,13 @@ class Database:
                 )
             """)
             await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_leader_absences (
+                    raid_id INTEGER PRIMARY KEY,
+                    absent_since TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS auctions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     raid_id INTEGER,
