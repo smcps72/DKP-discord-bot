@@ -1,0 +1,139 @@
+---
+description: Test a completed feature using Playwright MCP
+---
+
+# Feature Complete Testing Workflow
+
+Use this workflow when a feature is complete and ready for E2E testing via Playwright MCP.
+
+## Prerequisites
+
+1. **Discord auth state must exist**: `js-e2e/discord-auth.json`
+   - If missing, run from `js-e2e/`:
+     ```bash
+     DISCORD_SETUP_AUTH=1 npx playwright test tests/setup-discord-auth.spec.js --headed
+     ```
+   - Log in manually in the browser, then close the Playwright inspector.
+
+2. **Bot must be running** against the test guild (DKP-local or staging).
+
+3. **Environment variables** in `.env` or `secrets/.env.local`:
+   - `DISCORD_TEST_GUILD_ID` — target guild ID
+   - `DISCORD_TEST_CHANNEL_ID` — target channel ID
+
+---
+
+## Git Hook (Auto-Prompt)
+
+A pre-push hook is available that prompts you to run this workflow before pushing feature branches.
+
+**Install the hook:**
+```bash
+cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+When you push a `feature/*`, `fix/*`, or `feat/*` branch, you'll see:
+```
+🧪 Feature Branch Detected: feature/my-feature
+Have you tested this feature with Playwright MCP?
+Run /feature-complete-testing in Cascade to verify.
+Continue with push? [y/N/skip]
+```
+
+---
+
+## Steps
+
+### 1. Identify the feature scope
+
+Determine which UI elements, commands, or interactions the feature affects. Examples:
+- New button on DKP Panel
+- New slash command response
+- Modified raid controls behavior
+
+### 2. Navigate to the test channel using Playwright MCP
+
+// turbo
+```
+Use mcp1_browser_navigate to open the Discord channel:
+https://discord.com/channels/<GUILD_ID>/<CHANNEL_ID>
+```
+
+### 3. Take a snapshot of the page
+
+// turbo
+```
+Use mcp1_browser_snapshot to capture the current accessibility tree.
+Review the snapshot to locate the relevant UI elements (buttons, messages, etc.).
+```
+
+### 4. Interact with the feature
+
+Use the appropriate Playwright MCP tools:
+- **Click a button**: `mcp1_browser_click` with the `ref` from the snapshot
+- **Fill a form/modal**: `mcp1_browser_type` or `mcp1_browser_fill_form`
+- **Select dropdown option**: `mcp1_browser_select_option`
+- **Wait for response**: `mcp1_browser_wait_for` with expected text
+
+### 5. Verify the expected outcome
+
+// turbo
+```
+Use mcp1_browser_snapshot again after the interaction.
+Check that:
+- Expected text/elements appear
+- No error messages are shown
+- Ephemeral messages display correctly (look for "Only you can see this")
+```
+
+### 6. Check console for errors (optional)
+
+// turbo
+```
+Use mcp1_browser_console_messages with level "error" to check for JS errors.
+```
+
+### 7. Document results
+
+- If the test passes, note which interactions were verified.
+- If the test fails, capture:
+  - The snapshot showing the unexpected state
+  - Any console errors
+  - Steps to reproduce
+
+### 8. Close the browser session
+
+// turbo
+```
+Use mcp1_browser_close to clean up.
+```
+
+---
+
+## Quick Reference: Common Playwright MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `mcp1_browser_navigate` | Go to a URL |
+| `mcp1_browser_snapshot` | Get accessibility tree (use this to find `ref` values) |
+| `mcp1_browser_click` | Click an element by `ref` |
+| `mcp1_browser_type` | Type text into an input |
+| `mcp1_browser_fill_form` | Fill multiple form fields |
+| `mcp1_browser_select_option` | Select from a dropdown |
+| `mcp1_browser_wait_for` | Wait for text to appear/disappear |
+| `mcp1_browser_console_messages` | Get console logs |
+| `mcp1_browser_take_screenshot` | Capture visual screenshot |
+| `mcp1_browser_close` | Close the browser |
+
+---
+
+## Example: Testing a new "Refresh" button on DKP Panel
+
+1. Navigate: `mcp1_browser_navigate` → `https://discord.com/channels/1388467074346516621/1462142161448468682`
+2. Snapshot: `mcp1_browser_snapshot` → find "Open DKP Panel" button ref
+3. Click: `mcp1_browser_click` → open the panel
+4. Snapshot: `mcp1_browser_snapshot` → find "Refresh" button ref
+5. Click: `mcp1_browser_click` → click Refresh
+6. Wait: `mcp1_browser_wait_for` → wait for "Refreshed" text
+7. Snapshot: `mcp1_browser_snapshot` → verify updated content
+8. Close: `mcp1_browser_close`

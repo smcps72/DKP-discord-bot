@@ -1,0 +1,46 @@
+#!/bin/bash
+#
+# Pre-push hook: Prompts for Playwright E2E testing before pushing feature branches.
+# Install: cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+
+# Get the current branch name
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+# Only prompt for feature branches
+if [[ "$BRANCH" == feature/* ]] || [[ "$BRANCH" == fix/* ]] || [[ "$BRANCH" == feat/* ]]; then
+    echo ""
+    echo "🧪 Feature Branch Detected: $BRANCH"
+    echo ""
+    echo "Have you tested this feature with Playwright MCP?"
+    echo "Run /feature-complete-testing in Cascade to verify."
+    echo ""
+    
+    # Check if running in interactive terminal
+    if [ -t 0 ]; then
+        read -p "Continue with push? [y/N/skip] " -n 1 -r REPLY
+        echo ""
+        
+        case "$REPLY" in
+            y|Y)
+                echo "Proceeding with push..."
+                exit 0
+                ;;
+            s|S)
+                echo "Skipping test prompt for this session."
+                exit 0
+                ;;
+            *)
+                echo "Push aborted. Run /feature-complete-testing in Cascade first."
+                exit 1
+                ;;
+        esac
+    else
+        # Non-interactive (CI/scripts) - allow push
+        echo "Non-interactive mode detected, proceeding..."
+        exit 0
+    fi
+fi
+
+# Non-feature branches pass through
+exit 0
