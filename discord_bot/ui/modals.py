@@ -732,14 +732,14 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
 
         self.amount = TextInput(
             label="DKP per interval",
-            placeholder="e.g., 1",
+            placeholder="e.g., 6 (recommended: use a 1-minute interval)",
             style=discord.TextStyle.short,
             required=True,
             max_length=6,
         )
         self.interval_minutes = TextInput(
             label="Interval (minutes)",
-            placeholder="e.g., 1 (we recommend using 1 minute)",
+            placeholder="e.g., 1 (recommended)",
             style=discord.TextStyle.short,
             required=True,
             max_length=3,
@@ -800,6 +800,6 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
 
         return await interaction.response.send_message(
             f"Default timed DKP is now set to `{int(amount)}` DKP per `{int(interval)}` minute(s).\n\n"
-            f"**Tip:** We recommend using the smallest increment (e.g., 1 DKP per 1 minute instead of 10 DKP per 10 minutes).",
+            f"**Tip:** We recommend using the smallest interval (e.g., 6 DKP per 1 minute instead of 10 DKP per 60 minutes).",
             ephemeral=True,
         )
