@@ -16,7 +16,20 @@ if [[ "$BRANCH" == feature/* ]] || [[ "$BRANCH" == fix/* ]] || [[ "$BRANCH" == f
     echo "Run /feature-complete-testing in Cascade to verify."
     echo ""
     
-    # Check if running in interactive terminal
+    # Allow bypass with SKIP_TEST_PROMPT=1 environment variable
+    if [[ "$SKIP_TEST_PROMPT" == "1" ]]; then
+        echo "SKIP_TEST_PROMPT=1 set, proceeding..."
+        exit 0
+    fi
+    
+    # For staging: always block (even non-interactive) unless bypassed
+    if [[ "$BRANCH" == "staging" ]]; then
+        echo "⛔ Staging push blocked. Run /feature-complete-testing in Cascade first."
+        echo "   To bypass: SKIP_TEST_PROMPT=1 git push"
+        exit 1
+    fi
+    
+    # For feature branches: prompt if interactive, allow if non-interactive
     if [ -t 0 ]; then
         read -p "Continue with push? [y/N/skip] " -n 1 -r REPLY
         echo ""
@@ -36,7 +49,7 @@ if [[ "$BRANCH" == feature/* ]] || [[ "$BRANCH" == fix/* ]] || [[ "$BRANCH" == f
                 ;;
         esac
     else
-        # Non-interactive (CI/scripts) - allow push
+        # Non-interactive (CI/scripts) - allow push for feature branches
         echo "Non-interactive mode detected, proceeding..."
         exit 0
     fi
