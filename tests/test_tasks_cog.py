@@ -410,7 +410,7 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
             await self.cog.enforce_raid_voice_absences()
 
             self.bot.db.remove_raid_member.assert_called_once_with(raid_id, member_id)
-            self.bot.db.add_raid_member_exclusion.assert_called_once_with(raid_id, member_id)
+            self.bot.db.add_raid_member_exclusion.assert_called_once_with(raid_id, member_id, reason="inactivity")
             self.bot.db.delete_raid_join_request.assert_called_once_with(raid_id, member_id)
             self.bot.db.execute.assert_any_call(
                 "DELETE FROM raid_member_groups WHERE raid_id = ? AND user_id = ?",

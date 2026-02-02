@@ -209,6 +209,45 @@ class TasksCog(commands.Cog):
             if (now - last_awarded_at) < timedelta(minutes=interval_minutes):
                 continue
 
+            # Run update_team logic before awarding DKP - sync members from voice channels
+            try:
+                vc_ids: set[int] = set()
+                primary_vc = row.get("vc_id") if isinstance(row, dict) else None
+                if primary_vc:
+                    try:
+                        vc_ids.add(int(primary_vc))
+                    except Exception:
+                        pass
+                try:
+                    linked_rows = await self.bot.db.get_raid_voice_channels(raid_id)
+                except Exception:
+                    linked_rows = []
+                for lr in list(linked_rows or []):
+                    try:
+                        vc_ids.add(int(lr["vc_id"]))
+                    except Exception:
+                        continue
+
+                # Add members from voice channels to raid
+                for vc_id in list(vc_ids):
+                    ch = guild.get_channel(int(vc_id))
+                    if not isinstance(ch, discord.VoiceChannel):
+                        continue
+                    for m in list(getattr(ch, "members", []) or []):
+                        if getattr(m, "bot", False):
+                            continue
+                        try:
+                            if await self.bot.db.is_raid_member_excluded(raid_id, int(m.id)):
+                                continue
+                        except Exception:
+                            pass
+                        try:
+                            await self.bot.db.add_raid_member(raid_id, int(m.id))
+                        except Exception:
+                            pass
+            except Exception:
+                logging.exception("Failed to update team before timed award for raid_id=%s", raid_id)
+
             try:
                 member_rows = await self.bot.db.get_raid_members(raid_id)
             except Exception:
@@ -448,7 +487,7 @@ class TasksCog(commands.Cog):
                     removed = False
 
                 try:
-                    await self.bot.db.add_raid_member_exclusion(raid_id, int(uid))
+                    await self.bot.db.add_raid_member_exclusion(raid_id, int(uid), reason="inactivity")
                 except Exception:
                     pass
                 try:

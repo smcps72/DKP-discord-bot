@@ -1061,7 +1061,7 @@ class RaidCog(commands.Cog):
             removed = False
 
         try:
-            await self.bot.db.add_raid_member_exclusion(raid_id, int(member.id))
+            await self.bot.db.add_raid_member_exclusion(raid_id, int(member.id), reason="manual")
         except Exception:
             pass
 
@@ -1417,8 +1417,9 @@ class RaidCog(commands.Cog):
         all_raid_members.sort(key=lambda m: (m.display_name or "").lower())
 
         if all_raid_members:
-            member_list_text = "\n".join([m.display_name for m in all_raid_members])
-            roster_msg = f"**Current Raid Roster ({len(all_raid_members)} members):**\n{member_list_text}"
+            # Paragraph style: comma-separated inline list
+            member_list_text = ", ".join([m.display_name for m in all_raid_members])
+            roster_msg = f"**Current Raid Roster ({len(all_raid_members)} members):** {member_list_text}"
         else:
             roster_msg = "No raid members found."
 

@@ -818,7 +818,7 @@ class RaidMemberRemoveSelect(Select):
             removed = False
 
         try:
-            await self.bot.db.add_raid_member_exclusion(raid_id, selected_id)
+            await self.bot.db.add_raid_member_exclusion(raid_id, selected_id, reason="manual")
         except Exception:
             pass
 
@@ -3882,103 +3882,107 @@ class RaidControlView(discord.ui.View):
         except Exception:
             pass
 
-        admin_ok = await is_admin(interaction)
-        if user_id == int(raid["leader_id"]) or admin_ok:
+        # Check if user was manually excluded (requires approval to rejoin)
+        exclusion_reason = None
+        try:
+            exclusion_reason = await self.bot.db.get_raid_member_exclusion_reason(raid_id, user_id)
+        except Exception:
+            pass
+
+        if exclusion_reason == "manual":
+            # User was manually removed by leader/admin - require approval to rejoin
             try:
-                inserted = await self.bot.db.add_raid_member(raid_id, user_id)
+                existing = await self.bot.db.get_raid_join_request(raid_id, user_id)
             except Exception:
-                inserted = False
-            if not inserted:
+                existing = None
+            if existing is not None:
+                try:
+                    if str(existing["status"]) == "pending":
+                        if source == "raid_popup":
+                            return await respond_popup("Your join request is already pending approval.")
+                        return await interaction.followup.send(
+                            "Your join request is already pending approval.",
+                            ephemeral=True,
+                        )
+                except Exception:
+                    pass
+
+            try:
+                await self.bot.db.upsert_raid_join_request(raid_id, user_id, source="button")
+            except Exception:
                 if source == "raid_popup":
-                    return await respond_popup("You are already part of this raid.")
-                return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
-            try:
-                await self.bot.db.remove_raid_member_exclusion(raid_id, user_id)
-            except Exception:
-                pass
-            try:
-                await self.bot.db.delete_raid_join_request(raid_id, user_id)
-            except Exception:
-                pass
+                    return await respond_popup("Failed to submit join request. Please try again.")
+                return await interaction.followup.send(
+                    "Failed to submit join request. Please try again.",
+                    ephemeral=True,
+                )
+
+            leader_id = int(raid["leader_id"])
+            leader_mention = f"<@{leader_id}>"
+            if interaction.guild:
+                leader_member = interaction.guild.get_member(leader_id)
+                if leader_member:
+                    leader_mention = leader_member.mention
+
             try:
                 if isinstance(interaction.channel, discord.Thread):
-                    await interaction.channel.send(f"{interaction.user.mention} joined the raid.")
-            except Exception:
-                logging.exception("Failed to send join message to raid thread")
-            if source == "raid_popup":
-                return await respond_popup("You have been added to the raid.")
-            return await interaction.followup.send("You have been added to the raid.", ephemeral=True)
-
-        try:
-            existing = await self.bot.db.get_raid_join_request(raid_id, user_id)
-        except Exception:
-            existing = None
-        if existing is not None:
-            try:
-                if str(existing["status"]) == "pending":
-                    if source == "raid_popup":
-                        return await respond_popup("Your join request is already pending approval.")
-                    return await interaction.followup.send(
-                        "Your join request is already pending approval.",
-                        ephemeral=True,
-                    )
-            except Exception:
-                pass
-
-        try:
-            await self.bot.db.upsert_raid_join_request(raid_id, user_id, source="button")
-        except Exception:
-            if source == "raid_popup":
-                return await respond_popup("Failed to submit join request. Please try again.")
-            return await interaction.followup.send(
-                "Failed to submit join request. Please try again.",
-                ephemeral=True,
-            )
-
-        leader_id = int(raid["leader_id"])
-        leader_mention = f"<@{leader_id}>"
-        if interaction.guild:
-            leader_member = interaction.guild.get_member(leader_id)
-            if leader_member:
-                leader_mention = leader_member.mention
-
-        try:
-            if isinstance(interaction.channel, discord.Thread):
-                # Send the approval request as a DM to the raid leader only
-                leader_member = interaction.guild.get_member(leader_id)
-                if leader_member is None:
-                    try:
-                        leader_member = await interaction.guild.fetch_member(leader_id)
-                    except Exception:
-                        leader_member = None
-                if leader_member:
-                    try:
-                        await leader_member.send(
-                            f"Join request from {interaction.user.mention} for raid in {interaction.channel.mention}. Approve?",
-                            view=RaidJoinApprovalView(self.bot, raid_id, user_id),
-                        )
-                    except discord.Forbidden:
-                        # If DMs are disabled, fall back to posting the approval UI
-                        # in the raid thread.
+                    leader_member = interaction.guild.get_member(leader_id)
+                    if leader_member is None:
+                        try:
+                            leader_member = await interaction.guild.fetch_member(leader_id)
+                        except Exception:
+                            leader_member = None
+                    if leader_member:
+                        try:
+                            await leader_member.send(
+                                f"Join request from {interaction.user.mention} for raid in {interaction.channel.mention}. Approve?",
+                                view=RaidJoinApprovalView(self.bot, raid_id, user_id),
+                            )
+                        except discord.Forbidden:
+                            await interaction.channel.send(
+                                f"{leader_mention} approve join request from {interaction.user.mention}?",
+                                view=RaidJoinApprovalView(self.bot, raid_id, user_id),
+                            )
+                    else:
                         await interaction.channel.send(
                             f"{leader_mention} approve join request from {interaction.user.mention}?",
                             view=RaidJoinApprovalView(self.bot, raid_id, user_id),
                         )
-                else:
-                    # Leader not found, fall back to thread message
-                    await interaction.channel.send(
-                        f"{leader_mention} approve join request from {interaction.user.mention}?",
-                        view=RaidJoinApprovalView(self.bot, raid_id, user_id),
-                    )
-        except Exception:
-            logging.exception("Failed to send join approval request")
+            except Exception:
+                logging.exception("Failed to send join approval request")
 
+            if source == "raid_popup":
+                return await respond_popup("You were previously removed from this raid. Join request sent to the raid leader for approval.")
+            return await interaction.followup.send(
+                "You were previously removed from this raid. Join request sent to the raid leader for approval.",
+                ephemeral=True,
+            )
+
+        # Auto-add: no exclusion, or exclusion was inactivity/voluntary (can rejoin freely)
+        try:
+            inserted = await self.bot.db.add_raid_member(raid_id, user_id)
+        except Exception:
+            inserted = False
+        if not inserted:
+            if source == "raid_popup":
+                return await respond_popup("You are already part of this raid.")
+            return await interaction.followup.send("You are already part of this raid.", ephemeral=True)
+        try:
+            await self.bot.db.remove_raid_member_exclusion(raid_id, user_id)
+        except Exception:
+            pass
+        try:
+            await self.bot.db.delete_raid_join_request(raid_id, user_id)
+        except Exception:
+            pass
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(f"{interaction.user.mention} joined the raid.")
+        except Exception:
+            logging.exception("Failed to send join message to raid thread")
         if source == "raid_popup":
-            return await respond_popup("Join request sent to the raid leader for approval.")
-        return await interaction.followup.send(
-            "Join request sent to the raid leader for approval.",
-            ephemeral=True,
-        )
+            return await respond_popup("You have been added to the raid.")
+        return await interaction.followup.send("You have been added to the raid.", ephemeral=True)
 
     @discord.ui.button(label="Join Raid", style=discord.ButtonStyle.success, custom_id="raid_join_raid", row=0)
     async def join_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -4478,7 +4482,7 @@ class RaidControlView(discord.ui.View):
             removed = False
 
         try:
-            await self.bot.db.add_raid_member_exclusion(raid_id, user_id)
+            await self.bot.db.add_raid_member_exclusion(raid_id, user_id, reason="voluntary")
         except Exception:
             pass
 
@@ -5389,6 +5393,43 @@ class RaidGroupSignupModalView(discord.ui.View):
 
         embed = create_info_embed("Remove from Group", "Who do you want to remove from their group?")
         await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    @discord.ui.button(label="Clear All Groups", style=discord.ButtonStyle.danger, custom_id="raid_group_modal_clear_all", row=2)
+    async def clear_all_groups(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage:
+            return await interaction.response.send_message("You don't have permission to do that.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
+
+        raid_id = int(raid["id"])
+
+        try:
+            cleared_count = await self.bot.db.clear_all_raid_member_groups(raid_id)
+        except Exception:
+            logging.exception("Failed to clear all raid member groups")
+            return await interaction.response.send_message("Failed to clear groups. Please try again.", ephemeral=True)
+
+        # Respond to interaction FIRST (before it expires)
+        embed = create_info_embed("Clear All Groups", f"Cleared all group assignments ({cleared_count} member(s) affected).")
+        await interaction.response.edit_message(embed=embed, view=self)
+
+        # Refresh the group signup embed (after responding)
+        try:
+            raid_cog = self.bot.get_cog("RaidCog")
+            if raid_cog:
+                raid_dict = raid if isinstance(raid, dict) else dict(raid)
+                embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                await raid_cog._ensure_group_panel_message(interaction.channel, raid_dict, embed)
+        except Exception:
+            logging.exception("Failed to refresh group signup message after clearing all groups")
+
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(f"All group assignments have been cleared ({cleared_count} member(s) affected).")
+        except Exception:
+            logging.exception("Failed to send clear all groups message to raid thread")
 
     @discord.ui.button(label="Set group", style=discord.ButtonStyle.secondary, custom_id="raid_group_modal_set", row=3)
     async def set_group(self, interaction: discord.Interaction, button: discord.ui.Button):

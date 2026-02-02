@@ -530,7 +530,8 @@ async def test_process_dkp_adjustment_includes_groups(raid_cog, mock_interaction
 
 
 @pytest.mark.asyncio
-async def test_update_team_from_voice_channel_skips_excluded_members(raid_cog, mock_interaction, mock_thread):
+async def test_update_team_from_voice_channel_adds_all_voice_members(raid_cog, mock_interaction, mock_thread):
+    """Update Team adds all voice members (exclusions are cleared when leader clicks Update Team)."""
     raid = {
         "id": 1,
         "guild_id": mock_interaction.guild.id,
@@ -541,6 +542,7 @@ async def test_update_team_from_voice_channel_skips_excluded_members(raid_cog, m
     raid_cog.bot.db.execute = AsyncMock()
     raid_cog.bot.db.add_raid_voice_channel = AsyncMock()
     raid_cog.bot.db.get_raid_voice_channels = AsyncMock(return_value=[])
+    raid_cog.bot.db.remove_raid_member_exclusion = AsyncMock()
 
     leader_member = MagicMock(spec=discord.Member)
     leader_member.id = mock_interaction.user.id
@@ -555,20 +557,16 @@ async def test_update_team_from_voice_channel_skips_excluded_members(raid_cog, m
     vc_member_ok.id = 111
     vc_member_ok.bot = False
 
-    vc_member_excluded = MagicMock(spec=discord.Member)
-    vc_member_excluded.id = 222
-    vc_member_excluded.bot = False
+    vc_member_two = MagicMock(spec=discord.Member)
+    vc_member_two.id = 222
+    vc_member_two.bot = False
 
     leader_vc.id = 999
-    leader_vc.members = [vc_member_ok, vc_member_excluded]
+    leader_vc.members = [vc_member_ok, vc_member_two]
     leader_vc.mention = "#voice"
 
     mock_interaction.guild.get_channel.return_value = leader_vc
 
-    async def excluded_side_effect(raid_id, user_id):
-        return int(user_id) == 222
-
-    raid_cog.bot.db.is_raid_member_excluded = AsyncMock(side_effect=excluded_side_effect)
     raid_cog.bot.db.add_raid_member = AsyncMock(return_value=True)
 
     raid_cog.update_team_list = AsyncMock()
@@ -580,7 +578,10 @@ async def test_update_team_from_voice_channel_skips_excluded_members(raid_cog, m
             mock_is_admin.return_value = False
             await raid_cog.update_team_from_voice_channel(mock_interaction)
 
-    raid_cog.bot.db.add_raid_member.assert_awaited_once_with(int(raid["id"]), int(vc_member_ok.id))
+    # Update Team should add ALL voice members (exclusions are cleared first)
+    assert raid_cog.bot.db.add_raid_member.await_count == 2
+    raid_cog.bot.db.add_raid_member.assert_any_await(int(raid["id"]), int(vc_member_ok.id))
+    raid_cog.bot.db.add_raid_member.assert_any_await(int(raid["id"]), int(vc_member_two.id))
 
 
 @pytest.mark.asyncio

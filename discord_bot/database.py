@@ -267,6 +267,7 @@ class Database:
                     raid_id INTEGER,
                     user_id INTEGER,
                     excluded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reason TEXT DEFAULT 'manual',
                     PRIMARY KEY (raid_id, user_id),
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
@@ -386,10 +387,11 @@ class Database:
                 await asyncio.sleep(delay)
                 delay *= 2
 
-    async def add_raid_member_exclusion(self, raid_id: int, user_id: int):
+    async def add_raid_member_exclusion(self, raid_id: int, user_id: int, reason: str = "manual"):
+        """Add an exclusion. reason should be 'manual', 'inactivity', or 'voluntary'."""
         await self.execute(
-            "INSERT OR IGNORE INTO raid_member_exclusions (raid_id, user_id) VALUES (?, ?)",
-            (raid_id, user_id),
+            "INSERT INTO raid_member_exclusions (raid_id, user_id, reason) VALUES (?, ?, ?) ON CONFLICT(raid_id, user_id) DO UPDATE SET reason = excluded.reason, excluded_at = CURRENT_TIMESTAMP",
+            (raid_id, user_id, reason),
         )
 
     async def remove_raid_member_exclusion(self, raid_id: int, user_id: int):
@@ -404,6 +406,16 @@ class Database:
             (raid_id, user_id),
         )
         return row is not None
+
+    async def get_raid_member_exclusion_reason(self, raid_id: int, user_id: int) -> str | None:
+        """Get the exclusion reason for a user. Returns 'manual', 'inactivity', 'voluntary', or None if not excluded."""
+        row = await self.fetchone(
+            "SELECT reason FROM raid_member_exclusions WHERE raid_id = ? AND user_id = ?",
+            (raid_id, user_id),
+        )
+        if row is None:
+            return None
+        return row["reason"] if row["reason"] else "manual"
 
     async def set_raid_member_group(self, raid_id: int, user_id: int, group_number: int | None):
         if group_number is None:
@@ -427,6 +439,14 @@ class Database:
             "SELECT user_id, group_number FROM raid_member_groups WHERE raid_id = ?",
             (raid_id,),
         )
+
+    async def clear_all_raid_member_groups(self, raid_id: int) -> int:
+        """Clear all group assignments for a raid. Returns the number of rows deleted."""
+        result = await self.execute(
+            "DELETE FROM raid_member_groups WHERE raid_id = ?",
+            (raid_id,),
+        )
+        return result.rowcount if hasattr(result, "rowcount") else 0
 
     async def get_raid_group_count(self, raid_id: int) -> int | None:
         raid_id_int = int(raid_id)

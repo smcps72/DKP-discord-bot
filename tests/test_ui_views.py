@@ -481,15 +481,81 @@ class TestRaidControlView:
         )
         mock_raid_control_interaction.response.send_modal.assert_not_called()
 
-    async def test_join_raid_button_adds_user_and_handles_duplicate(self, mock_bot, mock_raid_control_interaction):
-        """Tests that 'Join Raid' submits a pending join request and prevents duplicates."""
+    async def test_join_raid_button_adds_user_directly_no_exclusion(self, mock_bot, mock_raid_control_interaction):
+        """Tests that 'Join Raid' auto-adds the user directly when not excluded."""
         # Arrange
         view = RaidControlView(bot=mock_bot)
         mock_bot.db = MagicMock()
         mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345, "leader_id": 999})
+        mock_bot.db.is_raid_member = AsyncMock(side_effect=[False, True])
+        mock_bot.db.get_raid_member_exclusion_reason = AsyncMock(return_value=None)
+        mock_bot.db.add_raid_member = AsyncMock(return_value=True)
+        mock_bot.db.remove_raid_member_exclusion = AsyncMock()
+        mock_bot.db.delete_raid_join_request = AsyncMock()
+
+        mock_thread = MagicMock(spec=discord.Thread)
+        mock_thread.send = AsyncMock()
+        mock_raid_control_interaction.channel = mock_thread
+        mock_raid_control_interaction.user.bot = False
+
+        # Act: first click adds user directly
+        await view.join_raid.callback(mock_raid_control_interaction)
+
+        # Assert: user is added directly (no join request flow)
+        mock_bot.db.add_raid_member.assert_called_once_with(1, mock_raid_control_interaction.user.id)
+        mock_raid_control_interaction.followup.send.assert_called_with(
+            "You have been added to the raid.",
+            ephemeral=True,
+        )
+
+        # Reset mocks for second click
+        mock_raid_control_interaction.followup.send.reset_mock()
+
+        # Act: second click sees already member
+        await view.join_raid.callback(mock_raid_control_interaction)
+
+        # Assert: duplicate is rejected
+        mock_raid_control_interaction.followup.send.assert_called_with(
+            "You are already part of this raid.",
+            ephemeral=True,
+        )
+
+    async def test_join_raid_button_auto_rejoins_after_inactivity_exclusion(self, mock_bot, mock_raid_control_interaction):
+        """Tests that 'Join Raid' auto-adds user who was excluded for inactivity (no approval needed)."""
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345, "leader_id": 999})
         mock_bot.db.is_raid_member = AsyncMock(return_value=False)
-        mock_bot.db.get_raid_join_request = AsyncMock(side_effect=[None, {"status": "pending"}])
+        mock_bot.db.get_raid_member_exclusion_reason = AsyncMock(return_value="inactivity")
+        mock_bot.db.add_raid_member = AsyncMock(return_value=True)
+        mock_bot.db.remove_raid_member_exclusion = AsyncMock()
+        mock_bot.db.delete_raid_join_request = AsyncMock()
+
+        mock_thread = MagicMock(spec=discord.Thread)
+        mock_thread.send = AsyncMock()
+        mock_raid_control_interaction.channel = mock_thread
+        mock_raid_control_interaction.user.bot = False
+
+        await view.join_raid.callback(mock_raid_control_interaction)
+
+        # Assert: user is added directly without approval
+        mock_bot.db.add_raid_member.assert_called_once_with(1, mock_raid_control_interaction.user.id)
+        mock_raid_control_interaction.followup.send.assert_called_with(
+            "You have been added to the raid.",
+            ephemeral=True,
+        )
+
+    async def test_join_raid_button_requires_approval_after_manual_exclusion(self, mock_bot, mock_raid_control_interaction):
+        """Tests that 'Join Raid' requires approval when user was manually removed."""
+        view = RaidControlView(bot=mock_bot)
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "vc_id": 12345, "leader_id": 999})
+        mock_bot.db.is_raid_member = AsyncMock(return_value=False)
+        mock_bot.db.get_raid_member_exclusion_reason = AsyncMock(return_value="manual")
+        mock_bot.db.get_raid_join_request = AsyncMock(return_value=None)
         mock_bot.db.upsert_raid_join_request = AsyncMock()
 
         mock_thread = MagicMock(spec=discord.Thread)
@@ -497,26 +563,18 @@ class TestRaidControlView:
         mock_raid_control_interaction.channel = mock_thread
         mock_raid_control_interaction.user.bot = False
 
-        # Act: first click submits request
+        leader_member = MagicMock(spec=discord.Member)
+        leader_member.send = AsyncMock()
+        mock_raid_control_interaction.guild.get_member.return_value = leader_member
+        mock_raid_control_interaction.guild.fetch_member = AsyncMock(return_value=leader_member)
+
         await view.join_raid.callback(mock_raid_control_interaction)
 
-        # Assert: join request is created and user sees pending message
+        # Assert: join request is created, user is NOT auto-added
         mock_bot.db.upsert_raid_join_request.assert_called_once_with(1, mock_raid_control_interaction.user.id, source="button")
+        mock_bot.db.add_raid_member.assert_not_called()
         mock_raid_control_interaction.followup.send.assert_called_with(
-            "Join request sent to the raid leader for approval.",
-            ephemeral=True,
-        )
-
-        # Reset only the followup.send mock to check the new message; keep add_raid_member calls intact
-        mock_raid_control_interaction.followup.send.reset_mock()
-
-        # Act: second click sees pending
-        await view.join_raid.callback(mock_raid_control_interaction)
-
-        # Assert: duplicate is rejected, no new upsert
-        assert mock_bot.db.upsert_raid_join_request.call_count == 1
-        mock_raid_control_interaction.followup.send.assert_called_with(
-            "Your join request is already pending approval.",
+            "You were previously removed from this raid. Join request sent to the raid leader for approval.",
             ephemeral=True,
         )
 
