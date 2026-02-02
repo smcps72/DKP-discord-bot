@@ -8,7 +8,7 @@
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
 
 # Only prompt for feature branches
-if [[ "$BRANCH" == feature/* ]] || [[ "$BRANCH" == fix/* ]] || [[ "$BRANCH" == feat/* ]]; then
+if [[ "$BRANCH" == feature/* ]] || [[ "$BRANCH" == fix/* ]] || [[ "$BRANCH" == feat/* ]] || [[ "$BRANCH" == "staging" ]]; then
     echo ""
     echo "🧪 Feature Branch Detected: $BRANCH"
     echo ""
