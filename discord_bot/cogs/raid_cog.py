@@ -1375,7 +1375,7 @@ class RaidCog(commands.Cog):
                     continue
                 voice_members_by_id[int(member.id)] = member
 
-        added = 0
+        added_members: list[discord.Member] = []
         for member in list(voice_members_by_id.values()):
             # Clear any exclusion for members currently in voice - the raid leader
             # explicitly clicking Update Team means they want these people back in.
@@ -1396,7 +1396,7 @@ class RaidCog(commands.Cog):
             except Exception:
                 inserted = False
             if inserted:
-                added += 1
+                added_members.append(member)
 
         invoked_from_popup = self._interaction_message_is_ephemeral(interaction)
 
@@ -1425,8 +1425,15 @@ class RaidCog(commands.Cog):
 
         # Always send an ephemeral message with the full roster (only visible to the invoker)
         vc_mentions = ", ".join([v.mention for v in linked_vcs])
+        added_count = len(added_members)
+        if added_members:
+            added_members.sort(key=lambda m: (m.display_name or "").lower())
+            added_names = ", ".join([m.display_name for m in added_members])
+            added_msg = f"Added **{added_count}** member(s): {added_names}\nfrom {vc_mentions}"
+        else:
+            added_msg = f"Added **0** member(s)\nfrom {vc_mentions}"
         await interaction.followup.send(
-            f"Added **{added}** member(s) from: {vc_mentions}\n\n{roster_msg}",
+            f"{added_msg}\n\n{roster_msg}",
             ephemeral=True,
         )
 
@@ -1435,7 +1442,7 @@ class RaidCog(commands.Cog):
                 interaction,
                 raid=raid,
                 throttle=False,
-                notice=f"Update Team complete. Added **{added}** from: {vc_mentions}",
+                notice=f"Update Team complete. {added_msg}",
             )
 
     async def show_voice_roster(self, interaction: discord.Interaction):
