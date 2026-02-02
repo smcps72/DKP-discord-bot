@@ -44,14 +44,33 @@ Continue with push? [y/N/skip]
 
 ## Steps
 
-### 1. Identify the feature scope
+### 1. Identify the exact feature from the latest commit
 
-Determine which UI elements, commands, or interactions the feature affects. Examples:
-- New button on DKP Panel
-- New slash command response
-- Modified raid controls behavior
+**IMPORTANT:** Do NOT test random buttons. Test the specific feature that was just committed.
 
-### 2. Navigate to the test channel using Playwright MCP
+// turbo
+```
+Run: git log --oneline -1 && git diff HEAD~1 --name-only
+```
+
+This shows:
+- The commit message describing the feature
+- The files that were changed
+
+Then run `git diff HEAD~1` to see the actual code changes and understand:
+- What UI elements were added/modified (buttons, modals, fields)
+- What behavior changed
+- What text/messages to look for
+
+### 2. Plan the test based on the feature
+
+Based on the diff, determine:
+- **Entry point:** How to access the feature (which panel, button, or command)
+- **New UI elements:** What new fields, buttons, or text to verify exist
+- **Expected behavior:** What should happen when interacting with the feature
+- **Success criteria:** What text/state confirms the feature works
+
+### 3. Navigate to the test channel using Playwright MCP
 
 // turbo
 ```
@@ -59,7 +78,7 @@ Use mcp1_browser_navigate to open the Discord channel:
 https://discord.com/channels/<GUILD_ID>/<CHANNEL_ID>
 ```
 
-### 3. Take a snapshot of the page
+### 4. Take a snapshot of the page
 
 // turbo
 ```
@@ -67,7 +86,7 @@ Use mcp1_browser_snapshot to capture the current accessibility tree.
 Review the snapshot to locate the relevant UI elements (buttons, messages, etc.).
 ```
 
-### 4. Interact with the feature
+### 5. Interact with the feature
 
 Use the appropriate Playwright MCP tools:
 - **Click a button**: `mcp1_browser_click` with the `ref` from the snapshot
@@ -75,7 +94,7 @@ Use the appropriate Playwright MCP tools:
 - **Select dropdown option**: `mcp1_browser_select_option`
 - **Wait for response**: `mcp1_browser_wait_for` with expected text
 
-### 5. Verify the expected outcome
+### 6. Verify the expected outcome
 
 // turbo
 ```
@@ -86,14 +105,14 @@ Check that:
 - Ephemeral messages display correctly (look for "Only you can see this")
 ```
 
-### 6. Check console for errors (optional)
+### 7. Check console for errors (optional)
 
 // turbo
 ```
 Use mcp1_browser_console_messages with level "error" to check for JS errors.
 ```
 
-### 7. Document results
+### 8. Document results
 
 - If the test passes, note which interactions were verified.
 - If the test fails, capture:
@@ -101,7 +120,7 @@ Use mcp1_browser_console_messages with level "error" to check for JS errors.
   - Any console errors
   - Steps to reproduce
 
-### 8. Close the browser session
+### 9. Close the browser session
 
 // turbo
 ```
