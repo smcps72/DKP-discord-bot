@@ -731,13 +731,22 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
         self.panel_message = panel_message
 
         self.amount = TextInput(
-            label="Default DKP per 60 minutes",
-            placeholder="e.g., 10",
+            label="DKP per interval",
+            placeholder="e.g., 1",
             style=discord.TextStyle.short,
             required=True,
             max_length=6,
         )
+        self.interval_minutes = TextInput(
+            label="Interval (minutes)",
+            placeholder="e.g., 1 (we recommend using 1 minute)",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=3,
+            default="1",
+        )
         self.add_item(self.amount)
+        self.add_item(self.interval_minutes)
 
     async def on_submit(self, interaction: discord.Interaction):
         if interaction.guild is None:
@@ -747,13 +756,25 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
             )
 
         raw_amount = (self.amount.value or "").strip()
+        raw_interval = (self.interval_minutes.value or "").strip()
         try:
             amount = int(raw_amount)
         except ValueError:
-            return await interaction.response.send_message("Please enter a whole number.", ephemeral=True)
+            return await interaction.response.send_message("DKP amount must be a whole number.", ephemeral=True)
+
+        try:
+            interval = int(raw_interval)
+        except ValueError:
+            return await interaction.response.send_message("Interval must be a whole number.", ephemeral=True)
 
         if amount <= 0:
-            return await interaction.response.send_message("Please enter a number greater than 0.", ephemeral=True)
+            return await interaction.response.send_message("DKP amount must be greater than 0.", ephemeral=True)
+
+        if interval <= 0:
+            return await interaction.response.send_message("Interval must be greater than 0.", ephemeral=True)
+
+        if interval > 999:
+            return await interaction.response.send_message("Interval cannot exceed 999 minutes.", ephemeral=True)
 
         try:
             await self.bot.db.execute(
@@ -764,20 +785,21 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
             pass
 
         await self.bot.db.execute(
-            "UPDATE guilds SET default_dkp_award = ? WHERE guild_id = ?",
-            (int(amount), int(interaction.guild.id)),
+            "UPDATE guilds SET default_dkp_award = ?, default_dkp_interval = ? WHERE guild_id = ?",
+            (int(amount), int(interval), int(interaction.guild.id)),
         )
 
         if self.panel_message is not None:
             try:
                 await self.panel_message.edit(
-                    content=f"Default timed DKP set to {int(amount)} per 60 minutes.",
+                    content=f"Default timed DKP set to {int(amount)} DKP per {int(interval)} minute(s).",
                     view=None,
                 )
             except Exception:
                 pass
 
         return await interaction.response.send_message(
-            f"Default timed DKP is now set to `{int(amount)}` per 60 minutes.",
+            f"Default timed DKP is now set to `{int(amount)}` DKP per `{int(interval)}` minute(s).\n\n"
+            f"**Tip:** We recommend using the smallest increment (e.g., 1 DKP per 1 minute instead of 10 DKP per 10 minutes).",
             ephemeral=True,
         )

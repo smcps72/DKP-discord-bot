@@ -876,20 +876,28 @@ class RaidCog(commands.Cog):
                 if raid_row is not None:
                     try:
                         amount = 10
+                        interval = 1
                         if config and ("default_dkp_award" in getattr(config, "keys", lambda: [])()):
                             raw_amount = config["default_dkp_award"]
                             if raw_amount:
                                 amount = int(raw_amount)
+                        if config and ("default_dkp_interval" in getattr(config, "keys", lambda: [])()):
+                            raw_interval = config["default_dkp_interval"]
+                            if raw_interval:
+                                interval = int(raw_interval)
                         if amount <= 0:
                             amount = 10
+                        if interval <= 0:
+                            interval = 1
                     except Exception:
                         amount = 10
+                        interval = 1
 
                     try:
                         await self.bot.db.set_raid_timed_award(
                             int(raid_row["id"]),
                             amount=int(amount),
-                            interval_minutes=60,
+                            interval_minutes=int(interval),
                             is_enabled=True,
                         )
                     except Exception:

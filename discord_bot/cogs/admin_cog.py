@@ -365,6 +365,8 @@ class AdminCog(commands.Cog):
             return f"{role.mention} (`{role_id}`)" if role else f"Missing role (`{role_id}`)"
 
         ts = int(datetime.utcnow().timestamp())
+        default_award = config.get('default_dkp_award', 10) or 10
+        default_interval = config.get('default_dkp_interval', 1) or 1
         description = (
             f"**Guild ID:** `{config['guild_id']}`\n"
             f"**License Status:** `{config['license_status']}`\n"
@@ -376,7 +378,7 @@ class AdminCog(commands.Cog):
             f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
             f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
             f"**Raid VC Template:** {fmt_channel(config['raid_vc_template_id'])}\n"
-            f"**Default DKP Award:** `{config['default_dkp_award']}`\n"
+            f"**Default Timed DKP:** `{default_award}` per `{default_interval}` minute(s)\n"
             f"**Generated At:** <t:{ts}:F>"
         )
 
@@ -438,6 +440,8 @@ class AdminCog(commands.Cog):
             return f"{role.mention} (`{role_id}`)" if role else f"Missing role (`{role_id}`)"
 
         ts = int(datetime.utcnow().timestamp())
+        default_award = config.get('default_dkp_award', 10) or 10
+        default_interval = config.get('default_dkp_interval', 1) or 1
         description = (
             f"**Guild ID:** `{config['guild_id']}`\n"
             f"**License Status:** `{config['license_status']}`\n"
@@ -449,7 +453,7 @@ class AdminCog(commands.Cog):
             f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"
             f"**Raid Leader Role:** {fmt_role(config['raid_leader_role_id'])}\n"
             f"**Raid VC Template:** {fmt_channel(config['raid_vc_template_id'])}\n"
-            f"**Default DKP Award:** `{config['default_dkp_award']}`\n"
+            f"**Default Timed DKP:** `{default_award}` per `{default_interval}` minute(s)\n"
             f"**Generated At:** <t:{ts}:F>"
         )
 
