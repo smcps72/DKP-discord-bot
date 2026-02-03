@@ -1,0 +1,59 @@
+#!/bin/bash
+#
+# Pre-push hook: Prompts for Playwright E2E testing before pushing feature branches.
+# Install: cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+
+# Get the current branch name
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+# Only prompt for feature branches
+if [[ "$BRANCH" == feature/* ]] || [[ "$BRANCH" == fix/* ]] || [[ "$BRANCH" == feat/* ]] || [[ "$BRANCH" == "staging" ]]; then
+    echo ""
+    echo "🧪 Feature Branch Detected: $BRANCH"
+    echo ""
+    echo "Have you tested this feature with Playwright MCP?"
+    echo "Run /feature-complete-testing in Cascade to verify."
+    echo ""
+    
+    # Allow bypass with SKIP_TEST_PROMPT=1 environment variable
+    if [[ "$SKIP_TEST_PROMPT" == "1" ]]; then
+        echo "SKIP_TEST_PROMPT=1 set, proceeding..."
+        exit 0
+    fi
+    
+    # For staging: always block (even non-interactive) unless bypassed
+    if [[ "$BRANCH" == "staging" ]]; then
+        echo "⛔ Staging push blocked. Run /feature-complete-testing in Cascade first."
+        echo "   To bypass: SKIP_TEST_PROMPT=1 git push"
+        exit 1
+    fi
+    
+    # For feature branches: prompt if interactive, allow if non-interactive
+    if [ -t 0 ]; then
+        read -p "Continue with push? [y/N/skip] " -n 1 -r REPLY
+        echo ""
+        
+        case "$REPLY" in
+            y|Y)
+                echo "Proceeding with push..."
+                exit 0
+                ;;
+            s|S)
+                echo "Skipping test prompt for this session."
+                exit 0
+                ;;
+            *)
+                echo "Push aborted. Run /feature-complete-testing in Cascade first."
+                exit 1
+                ;;
+        esac
+    else
+        # Non-interactive (CI/scripts) - allow push for feature branches
+        echo "Non-interactive mode detected, proceeding..."
+        exit 0
+    fi
+fi
+
+# Non-feature branches pass through
+exit 0

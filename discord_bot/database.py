@@ -138,6 +138,10 @@ class Database:
                 "last_announced_version",
                 "ALTER TABLE guilds ADD COLUMN last_announced_version TEXT",
             ),
+            (
+                "default_dkp_interval",
+                "ALTER TABLE guilds ADD COLUMN default_dkp_interval INTEGER DEFAULT 1",
+            ),
         ]
 
         for col, sql in migrations:
@@ -195,6 +199,7 @@ class Database:
                     raid_leader_role_id INTEGER,
                     raid_vc_template_id INTEGER,
                     default_dkp_award INTEGER DEFAULT 10,
+                    default_dkp_interval INTEGER DEFAULT 1,
                     raid_member_list_order TEXT DEFAULT 'name',
                     last_announced_version TEXT
                 )
@@ -305,6 +310,13 @@ class Database:
                     user_id INTEGER,
                     absent_since TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (raid_id, user_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_leader_absences (
+                    raid_id INTEGER PRIMARY KEY,
+                    absent_since TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
             """)
