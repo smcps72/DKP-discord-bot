@@ -2647,7 +2647,10 @@ class RaidCog(commands.Cog):
                 if member:
                     public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to {member.mention}. ({short_reason})"
                 else:
-                    public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})"
+                    mentions = ", ".join([m.mention for m in targets])
+                    public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})\n{mentions}"
+                    if len(public_line) > 2000:
+                        public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})"
 
                 await interaction.channel.send(public_line)
         except Exception:
