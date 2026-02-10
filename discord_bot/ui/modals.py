@@ -10,6 +10,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         action: str,
         raid_cog,
         member: discord.Member | None = None,
+        members: list[discord.Member] | None = None,
         group_number: int | None = None,
         source: str | None = None,
         popup_message: discord.Message | None = None,
@@ -19,6 +20,7 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
         self.raid_cog = raid_cog
         self.target_member_obj = member  # The member passed from the command
         self.group_number = group_number
+        self.target_members = list(members) if members else None
         self.source = source
         self.popup_message = popup_message
 
@@ -83,9 +85,10 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
 
     async def on_submit(self, interaction: discord.Interaction):
         member = self.target_member_obj
+        target_members = self.target_members
         
         # If no member was passed, get it from the text input
-        if member is None and self.target_member_input:
+        if member is None and target_members is None and self.target_member_input:
             target_value = self.target_member_input.value
             if target_value:
                 # First, try to find by name/nickname
@@ -195,8 +198,9 @@ class DKPAdjustmentModal(Modal, title="DKP Adjustment"):
             self.amount.value,
             reason,
             member,
-            self.group_number,
-            self.source,
+            members=target_members,
+            group_number=self.group_number,
+            source=self.source,
             include_group_numbers=include_group_numbers,
             exclude_member_ids=exclude_member_ids,
             exclude_group_numbers=exclude_group_numbers,
