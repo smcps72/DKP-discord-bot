@@ -4,8 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- Validate the new pop-up raid panel flow under real-world usage.
-- Validate group-specific awarding flow end-to-end.
+- Added raid auto-join from voice and auto-close when raid leader absent 10+ minutes.
+- Added bulk group assignment, voice-channel group assignment, and multi-member DKP adjustments with member mentions.
+- Added configurable timed DKP interval with per-minute granularity; timed DKP awards now recorded in raid transaction history.
+- Added exclusion reasons and auto-rejoin logic with voice sync before timed DKP awards.
+- Added `backfill_raid_dkp` command to populate missing raid transaction records.
+- Added source parameter to DKP adjustment modals for award and deduct commands.
+- Improved raid panel and roster UX: full roster display, added member names, reorganized button layout.
+- Updated default DKP award modal placeholder and recommendation to 6 DKP per 1 minute.
+- Added feature-complete-testing Playwright workflow and multi-select E2E tests.
 
 ## 0.1.0-alpha.4
 
