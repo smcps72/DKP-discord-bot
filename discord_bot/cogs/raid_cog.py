@@ -1882,6 +1882,61 @@ class RaidCog(commands.Cog):
             description = description[:4090] + "..."
         return create_info_embed("Group Signups", description)
 
+    async def assign_ungrouped_to_group(
+        self,
+        interaction: discord.Interaction,
+        *,
+        raid_id: int,
+        group_number: int,
+    ) -> int:
+        if interaction.guild is None:
+            return 0
+
+        if group_number < 1:
+            return 0
+
+        try:
+            group_rows = await self.bot.db.get_raid_member_groups(int(raid_id))
+        except Exception:
+            group_rows = []
+
+        member_to_group: dict[int, int | None] = {}
+        for row in list(group_rows or []):
+            try:
+                uid = int(row["user_id"])
+            except Exception:
+                continue
+            try:
+                grp = int(row["group_number"])
+            except Exception:
+                grp = None
+            member_to_group[uid] = grp
+
+        try:
+            member_rows = await self.bot.db.get_raid_members(int(raid_id))
+        except Exception:
+            member_rows = []
+
+        ungrouped_ids: list[int] = []
+        for row in list(member_rows or []):
+            try:
+                uid = int(row["user_id"])
+            except Exception:
+                continue
+            grp = member_to_group.get(uid)
+            if grp is None:
+                ungrouped_ids.append(uid)
+
+        assigned = 0
+        for uid in ungrouped_ids:
+            try:
+                await self.bot.db.set_raid_member_group(int(raid_id), int(uid), int(group_number))
+                assigned += 1
+            except Exception:
+                continue
+
+        return assigned
+
     async def _ensure_group_panel_message(self, thread: discord.Thread, raid: dict, embed: discord.Embed) -> int:
         raid_id = int(raid["id"])
         msg_id = None
@@ -2145,6 +2200,7 @@ class RaidCog(commands.Cog):
         amount_str: str,
         reason: str,
         member: discord.Member | None = None,
+        members: list[discord.Member] | None = None,
         group_number: int | None = None,
         source: str | None = None,
         include_group_numbers: set[int] | None = None,
@@ -2260,7 +2316,14 @@ class RaidCog(commands.Cog):
         if action == "Deduct":
             amount = -amount
 
-        if group_number is not None and member is not None:
+        if members:
+            members = [m for m in members if m is not None]
+        if not members:
+            members = None
+        else:
+            member = None
+
+        if group_number is not None and (member is not None or members is not None):
             await respond_popup(
                 create_error_embed(
                     "Invalid Target",
@@ -2425,7 +2488,72 @@ class RaidCog(commands.Cog):
         except Exception:
             required_role = None
 
-        if member is None:
+        if members is not None:
+            targets_by_id: dict[int, discord.Member] = {}
+            for m in members:
+                if not m or getattr(m, "bot", False):
+                    continue
+                targets_by_id[int(m.id)] = m
+
+            raid_member_ids = set()
+            try:
+                member_rows = await self.bot.db.get_raid_members(raid["id"])
+                raid_member_ids = {int(row["user_id"]) for row in member_rows}
+            except Exception:
+                raid_member_ids = set()
+
+            for uid in list(targets_by_id.keys()):
+                if int(uid) not in raid_member_ids:
+                    targets_by_id.pop(uid, None)
+
+            if required_role is not None:
+                for uid, m in list(targets_by_id.items()):
+                    try:
+                        if required_role not in list(getattr(m, "roles", []) or []):
+                            targets_by_id.pop(uid, None)
+                    except Exception:
+                        pass
+
+            if exclude_member_ids:
+                for uid in list(targets_by_id.keys()):
+                    if int(uid) in exclude_member_ids:
+                        targets_by_id.pop(uid, None)
+
+            member_to_group: dict[int, int] = {}
+            if include_group_numbers or exclude_group_numbers:
+                try:
+                    group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
+                except Exception:
+                    group_rows = []
+                for row in group_rows:
+                    try:
+                        member_to_group[int(row["user_id"])] = int(row["group_number"])
+                    except Exception:
+                        continue
+
+            if exclude_group_numbers:
+                for uid in list(targets_by_id.keys()):
+                    grp = member_to_group.get(int(uid))
+                    if grp is not None and int(grp) in exclude_group_numbers:
+                        targets_by_id.pop(uid, None)
+
+            if include_group_numbers:
+                for uid in list(targets_by_id.keys()):
+                    grp = member_to_group.get(int(uid))
+                    if grp is None or int(grp) not in include_group_numbers:
+                        targets_by_id.pop(uid, None)
+
+            targets = list(targets_by_id.values())
+            filtered: list[discord.Member] = []
+            for m in targets:
+                try:
+                    if await self.bot.db.is_raid_member_excluded(int(raid["id"]), int(m.id)):
+                        continue
+                except Exception:
+                    pass
+                filtered.append(m)
+            targets = filtered
+        elif member is None:
             # Mass adjustment: include all non-bot guild members recorded in
             # raid_members table for this raid.
             targets_by_id: dict[int, discord.Member] = {}
@@ -2656,7 +2784,10 @@ class RaidCog(commands.Cog):
                 if member:
                     public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to {member.mention}. ({short_reason})"
                 else:
-                    public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})"
+                    mentions = ", ".join([m.mention for m in targets])
+                    public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})\n{mentions}"
+                    if len(public_line) > 2000:
+                        public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})"
 
                 await interaction.channel.send(public_line)
         except Exception:

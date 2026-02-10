@@ -314,6 +314,92 @@ class DkpBot(commands.Bot):
         if getattr(member, "bot", False):
             return
 
+        # Auto-add members who join linked raid voice channels once the raid
+        # leader has used Update Team at least once for this raid.
+        try:
+            raid = await self.db.get_raid_by_vc(after.channel.id)
+        except Exception:
+            raid = None
+
+        if raid:
+            try:
+                auto_add_enabled = bool(int(raid.get("auto_add_from_vc") if isinstance(raid, dict) else raid["auto_add_from_vc"]))
+            except Exception:
+                auto_add_enabled = False
+
+            if auto_add_enabled:
+                required_role = None
+                try:
+                    config = await self.db.get_guild_config(int(member.guild.id))
+                    if config and ("raider_role_id" in getattr(config, "keys", lambda: [])()):
+                        required_role_id = config["raider_role_id"]
+                        required_role_id = int(required_role_id) if required_role_id else None
+                        required_role = member.guild.get_role(required_role_id) if required_role_id else None
+                except Exception:
+                    required_role = None
+
+                is_eligible = True
+                if required_role is not None:
+                    try:
+                        is_eligible = required_role in list(getattr(member, "roles", []) or [])
+                    except Exception:
+                        is_eligible = True
+
+                if is_eligible:
+                    raid_id = int(raid["id"])
+                    try:
+                        if await self.db.is_raid_member_excluded(raid_id, int(member.id)):
+                            is_eligible = False
+                    except Exception:
+                        pass
+
+                if is_eligible:
+                    inserted = False
+                    try:
+                        inserted = await self.db.add_raid_member(int(raid["id"]), int(member.id))
+                    except Exception:
+                        inserted = False
+
+                    if inserted:
+                        try:
+                            await self.db.delete_raid_join_request(int(raid["id"]), int(member.id))
+                        except Exception:
+                            pass
+
+                        thread = None
+                        try:
+                            thread_id = int(raid["thread_id"])
+                        except Exception:
+                            thread_id = None
+
+                        if thread_id:
+                            try:
+                                thread = member.guild.get_thread(thread_id)
+                            except Exception:
+                                thread = None
+                        if thread is None and thread_id:
+                            try:
+                                resolved = self.get_channel(thread_id)
+                                if isinstance(resolved, discord.Thread):
+                                    thread = resolved
+                            except Exception:
+                                thread = None
+                        if thread is None and thread_id:
+                            try:
+                                resolved = await member.guild.fetch_channel(thread_id)
+                                if isinstance(resolved, discord.Thread):
+                                    thread = resolved
+                            except Exception:
+                                thread = None
+
+                        if thread is not None:
+                            try:
+                                await thread.send(
+                                    f"{member.mention} joined the raid voice channel and was added to the raid."
+                                )
+                            except Exception:
+                                logging.exception("Failed to announce auto-join in raid thread")
+
         # Option B: voice-channel activity should not affect raid membership.
         # We only use the raid leader's voice joins to associate their active
         # raid with a voice channel (vc_id) if needed.

@@ -43,6 +43,26 @@ def _is_random_member_order(member_list_order: object) -> bool:
     return str(member_list_order).strip().casefold() == "random"
 
 
+async def _has_grouped_members(bot, raid_id: int | None) -> bool:
+    if bot is None or raid_id is None:
+        return False
+    try:
+        group_rows = await bot.db.get_raid_member_groups(int(raid_id))
+    except Exception:
+        return False
+    for row in list(group_rows or []):
+        try:
+            grp = row["group_number"]
+        except Exception:
+            try:
+                grp = row.get("group_number") if isinstance(row, dict) else None
+            except Exception:
+                grp = None
+        if grp is not None and int(grp) > 0:
+            return True
+    return False
+
+
 def _changelog_sort_key(version: str) -> tuple[int, int, int, int, int, str]:
     if version == "Unreleased":
         return (1_000_000, 0, 0, 10, 0, "")
@@ -685,7 +705,15 @@ class WelcomeLegacyView(discord.ui.View):
 
 
 class MemberSelect(Select):
-    def __init__(self, bot, action: str, members: list[discord.Member], member_list_order: str = "name"):
+    def __init__(
+        self,
+        bot,
+        action: str,
+        members: list[discord.Member],
+        member_list_order: str = "name",
+        *,
+        max_values: int = 1,
+    ):
         self.bot = bot
         self.action = action
         # Track which members are currently in the raid voice channel so we can
@@ -704,10 +732,11 @@ class MemberSelect(Select):
             for m in members_sorted
         ][:25]
 
+        max_select = max(1, min(int(max_values), len(options)))
         super().__init__(
-            placeholder=f"Select a member to {action.lower()} DKP...",
+            placeholder=f"Select member(s) to {action.lower()} DKP...",
             min_values=1,
-            max_values=1,
+            max_values=max_select,
             options=options,
             row=0,
         )
@@ -715,17 +744,20 @@ class MemberSelect(Select):
     async def callback(self, interaction: discord.Interaction):
         raid_cog = self.bot.get_cog("RaidCog")
 
-        # Resolve the selected member from the stored user ID value.
-        member: discord.Member | None = None
+        selected_members: list[discord.Member] = []
         if interaction.guild:
-            try:
-                selected_id = int(self.values[0])
-            except (ValueError, TypeError):
-                member = None
-            else:
+            for raw_id in list(self.values or []):
+                try:
+                    selected_id = int(raw_id)
+                except (ValueError, TypeError):
+                    continue
+                if selected_id not in self._allowed_member_ids:
+                    continue
                 member = interaction.guild.get_member(selected_id)
+                if member is not None:
+                    selected_members.append(member)
 
-        if not member or member.id not in self._allowed_member_ids:
+        if not selected_members:
             try:
                 await interaction.response.edit_message(
                     content="That member is not an eligible raid member.",
@@ -738,7 +770,7 @@ class MemberSelect(Select):
         modal = DKPAdjustmentModal(
             action=self.action,
             raid_cog=raid_cog,
-            member=member,
+            members=selected_members,
             source="raid_panel",
         )
         await interaction.response.send_modal(modal)
@@ -1428,6 +1460,7 @@ class RaidMemberAssignGroupView(discord.ui.View):
         group_count: int,
         member_list_order: str = "name",
         *,
+        show_bulk_ungrouped: bool = False,
         return_to_popup: bool = False,
         popup_can_manage: bool = False,
         popup_can_rename_thread: bool = False,
@@ -1443,6 +1476,7 @@ class RaidMemberAssignGroupView(discord.ui.View):
         self.members = list(members)
         self.group_count = int(group_count)
         self.member_list_order = str(member_list_order)
+        self.show_bulk_ungrouped = bool(show_bulk_ungrouped)
         self.selected_member_id: int | None = None
         self.return_to_popup = bool(return_to_popup)
         self.popup_can_manage = bool(popup_can_manage)
@@ -1477,6 +1511,7 @@ class RaidMemberAssignGroupView(discord.ui.View):
                 self.members,
                 self.group_count,
                 member_list_order=new_order,
+                show_bulk_ungrouped=self.show_bulk_ungrouped,
                 return_to_popup=self.return_to_popup,
                 popup_can_manage=self.popup_can_manage,
                 popup_can_rename_thread=self.popup_can_rename_thread,
@@ -1530,6 +1565,78 @@ class RaidMemberAssignGroupView(discord.ui.View):
 
             back_btn.callback = _back_cb
             self.add_item(back_btn)
+
+        if self.show_bulk_ungrouped and self.group_count > 0:
+            async def _bulk_ungrouped_cb(interaction: discord.Interaction):
+                raid_cog = self.bot.get_cog("RaidCog")
+                if not raid_cog or interaction.guild is None:
+                    return
+
+                # Defer early to avoid the 3-second interaction deadline
+                # during the DB-heavy assign_ungrouped_to_group work.
+                try:
+                    await interaction.response.defer()
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    pass
+
+                raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+                if not raid:
+                    return await interaction.edit_original_response(
+                        content="This is not an active raid thread.",
+                    )
+
+                has_grouped = await _has_grouped_members(self.bot, int(raid["id"]))
+                if not has_grouped:
+                    return await interaction.edit_original_response(
+                        content="At least one group must already have members before you can bulk assign ungrouped players.",
+                    )
+
+                assigned = await raid_cog.assign_ungrouped_to_group(
+                    interaction,
+                    raid_id=int(raid["id"]),
+                    group_number=int(self.group_count),
+                )
+
+                try:
+                    raid_dict = raid
+                    if raid is not None and not isinstance(raid, dict):
+                        raid_dict = dict(raid)
+                    raid_dict["group_count"] = int(self.group_count)
+                    signup_embed = await raid_cog._build_group_signup_embed(raid_dict, interaction.guild)
+                    signup_view = RaidGroupSignupModalView(
+                        self.bot,
+                        group_count=int(self.group_count),
+                        can_manage=bool(getattr(self, "group_signup_can_manage", False)),
+                        return_to_popup=bool(getattr(self, "group_signup_return_to_popup", False)),
+                        popup_can_manage=bool(getattr(self, "group_signup_popup_can_manage", False)),
+                        popup_can_rename_thread=bool(getattr(self, "group_signup_popup_can_rename_thread", False)),
+                    )
+                    await interaction.edit_original_response(
+                        content=None,
+                        embed=signup_embed,
+                        view=signup_view,
+                    )
+                except Exception:
+                    pass
+
+                # Send thread announcement after the UI has been updated so
+                # users see the button interaction resolve before the message.
+                if assigned and isinstance(interaction.channel, discord.Thread):
+                    try:
+                        await interaction.channel.send(
+                            f"Added **{assigned}** ungrouped member(s) to **Group {int(self.group_count)}**."
+                        )
+                    except Exception:
+                        pass
+
+            bulk_btn = discord.ui.Button(
+                label=f"Add all ungrouped → Group {self.group_count}",
+                style=discord.ButtonStyle.primary,
+                custom_id="raid_group_signup_modal_bulk_ungrouped",
+                row=4,
+            )
+            bulk_btn.callback = _bulk_ungrouped_cb
+            self.add_item(bulk_btn)
 
 
 class RaidBulkAssignGroupMemberSelect(Select):
@@ -2132,7 +2239,15 @@ class DKPAdjustmentView(discord.ui.View):
         self.group_count = group_count
         self.member_list_order = str(member_list_order)
 
-        self.add_item(MemberSelect(bot, action, self.members, member_list_order=self.member_list_order))
+        self.add_item(
+            MemberSelect(
+                bot,
+                action,
+                self.members,
+                member_list_order=self.member_list_order,
+                max_values=min(25, len(self.members)),
+            )
+        )
 
         max_groups = 0
         try:
@@ -3500,25 +3615,30 @@ class RaidPopupDKPMemberSelect(Select):
             for m in members_sorted
         ][:25]
 
+        max_select = max(1, min(len(options), 25))
         super().__init__(
-            placeholder=f"Select a member to {self.action.lower()} DKP...",
+            placeholder=f"Select member(s) to {self.action.lower()} DKP...",
             min_values=1,
-            max_values=1,
+            max_values=max_select,
             options=options,
             row=0,
         )
 
     async def callback(self, interaction: discord.Interaction):
-        member: discord.Member | None = None
+        selected_members: list[discord.Member] = []
         if interaction.guild:
-            try:
-                selected_id = int(self.values[0])
-            except (ValueError, TypeError):
-                member = None
-            else:
+            for raw_id in list(self.values or []):
+                try:
+                    selected_id = int(raw_id)
+                except (ValueError, TypeError):
+                    continue
+                if selected_id not in self._allowed_member_ids:
+                    continue
                 member = interaction.guild.get_member(selected_id)
+                if member is not None:
+                    selected_members.append(member)
 
-        if member is None or int(member.id) not in self._allowed_member_ids:
+        if not selected_members:
             embed = create_info_embed("DKP Selection", "That member is not an eligible raid member.")
             view = getattr(self, "view", None)
             try:
@@ -3536,7 +3656,7 @@ class RaidPopupDKPMemberSelect(Select):
         modal = DKPAdjustmentModal(
             action=self.action,
             raid_cog=raid_cog,
-            member=member,
+            members=selected_members,
             source="raid_popup",
             popup_message=getattr(interaction, "message", None),
         )
@@ -4275,6 +4395,19 @@ class RaidControlView(discord.ui.View):
                 return await respond_popup("You must be connected to a voice channel to use Update Team.")
 
         await raid_cog.update_team_from_voice_channel(interaction)
+
+        try:
+            raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        except Exception:
+            raid = None
+        if raid:
+            try:
+                await self.bot.db.execute(
+                    "UPDATE raids SET auto_add_from_vc = 1 WHERE id = ?",
+                    (int(raid["id"]),),
+                )
+            except Exception:
+                pass
 
         if source == "raid_popup":
             return await respond_popup("Update Team complete.")
@@ -5483,6 +5616,7 @@ class RaidGroupSignupModalView(discord.ui.View):
             members,
             int(group_count),
             member_list_order=member_list_order,
+            show_bulk_ungrouped=await _has_grouped_members(self.bot, int(raid["id"])),
             return_to_group_signup=True,
             group_signup_can_manage=self.can_manage,
             group_signup_return_to_popup=self.return_to_popup,
