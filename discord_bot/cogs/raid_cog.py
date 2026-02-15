@@ -472,6 +472,24 @@ class RaidCog(commands.Cog):
                 pass
             applied += 1
 
+        if not applied:
+            return await interaction.followup.send(
+                "All reversals failed. No DKP was changed.",
+                ephemeral=True,
+            )
+
+        short_reason = (reason or "").strip()
+        if len(short_reason) > 200:
+            short_reason = short_reason[:197] + "..."
+        public_line = (
+            f"{interaction.user.mention} reversed raid DKP for **{applied}** participant(s). ({short_reason})"
+        )
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(public_line)
+        except Exception:
+            logging.exception("Failed to send public reverse-DKP audit line")
+
         return await interaction.followup.send(
             f"Reversed raid DKP for **{applied}** participant(s).",
             ephemeral=True,
