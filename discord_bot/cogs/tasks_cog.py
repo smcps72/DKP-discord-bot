@@ -7,7 +7,7 @@ import os
 from ..utils import create_error_embed, create_info_embed
 
 LEADER_ABSENCE_THRESHOLD_MINUTES = 10
-MEMBER_ABSENCE_THRESHOLD_MINUTES = 15
+MEMBER_ABSENCE_THRESHOLD_MINUTES = 5
 
 class TasksCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

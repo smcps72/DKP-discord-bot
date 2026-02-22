@@ -373,7 +373,7 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
         )
 
 
-    async def test_enforce_raid_voice_absences_removes_after_15_minutes(self):
+    async def test_enforce_raid_voice_absences_removes_after_5_minutes(self):
         class FakeVoiceChannel:
             def __init__(self, members=None):
                 self.members = members or []
@@ -408,7 +408,7 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
             self.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member_id}])
             self.bot.db.is_raid_member_excluded = AsyncMock(return_value=False)
 
-            absent_since = (datetime.utcnow() - timedelta(minutes=16)).isoformat()
+            absent_since = (datetime.utcnow() - timedelta(minutes=6)).isoformat()
             self.bot.db.fetchone = AsyncMock(return_value={"absent_since": absent_since})
             self.bot.db.remove_raid_member = AsyncMock(return_value=True)
             self.bot.db.add_raid_member_exclusion = AsyncMock()
