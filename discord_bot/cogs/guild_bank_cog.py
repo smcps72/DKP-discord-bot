@@ -1,13 +1,14 @@
 import asyncio
 import discord
 import logging
+import re
 from discord.ext import commands
 from discord import app_commands
 from ..utils import (
     create_info_embed,
     create_success_embed,
     create_error_embed,
-    is_raid_leader,
+    is_officer,
 )
 
 
@@ -29,9 +30,39 @@ class GuildBankCog(commands.Cog):
     # Slash commands
     # ------------------------------------------------------------------
 
+    async def held_by_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        if not interaction.guild:
+            return []
+        try:
+            config = await self.bot.db.get_guild_config(interaction.guild.id)
+        except Exception:
+            config = None
+
+        raider_role = None
+        if config and "raider_role_id" in config.keys() and config["raider_role_id"]:
+            raider_role = interaction.guild.get_role(int(config["raider_role_id"]))
+        if raider_role is None:
+            for role in interaction.guild.roles:
+                if (role.name or "").strip().casefold() == "raider":
+                    raider_role = role
+                    break
+
+        members = [
+            m for m in (raider_role.members if raider_role else interaction.guild.members)
+            if not m.bot
+        ]
+        lowered = current.lower()
+        return [
+            app_commands.Choice(name=m.display_name, value=str(m.id))
+            for m in members
+            if not lowered or lowered in m.display_name.lower() or lowered in m.name.lower()
+        ][:25]
+
     @app_commands.command(
         name="bank_deposit",
-        description="Deposit an item into the guild bank. Raid leaders only.",
+        description="Deposit an item into the guild bank. Officers only.",
     )
     @app_commands.describe(
         item_name="Name of the item to deposit",
@@ -42,7 +73,8 @@ class GuildBankCog(commands.Cog):
         note="Optional note for the transaction log",
     )
     @app_commands.choices(category=BANK_CATEGORIES)
-    @app_commands.check(is_raid_leader)
+    @app_commands.autocomplete(held_by=held_by_autocomplete)
+    @app_commands.check(is_officer)
     async def bank_deposit_cmd(
         self,
         interaction: discord.Interaction,
@@ -50,7 +82,7 @@ class GuildBankCog(commands.Cog):
         quantity: int,
         category: app_commands.Choice[str],
         location: str,
-        held_by: discord.Member,
+        held_by: str,
         note: str = "",
     ):
         if interaction.guild is None:
@@ -79,6 +111,21 @@ class GuildBankCog(commands.Cog):
         if len(note) > 300:
             note = note[:300]
 
+        held_by_member: discord.Member | discord.User | None = None
+        if held_by:
+            try:
+                member_id = int(held_by)
+                held_by_member = interaction.guild.get_member(member_id)
+                if held_by_member is None:
+                    try:
+                        held_by_member = await interaction.guild.fetch_member(member_id)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
+            except (ValueError, TypeError):
+                held_by_member = interaction.guild.get_member_named(held_by)
+        if held_by_member is None:
+            held_by_member = interaction.user
+
         if not interaction.response.is_done():
             await interaction.response.defer()
 
@@ -88,7 +135,7 @@ class GuildBankCog(commands.Cog):
             quantity=quantity,
             category=category.value,
             location=location,
-            held_by_user_id=held_by.id,
+            held_by_user_id=held_by_member.id,
             actor_id=interaction.user.id,
             note=note,
         )
@@ -101,7 +148,7 @@ class GuildBankCog(commands.Cog):
             quantity=quantity,
             category=category.value,
             location=location,
-            held_by_user_id=held_by.id,
+            held_by_user_id=held_by_member.id,
             actor_id=interaction.user.id,
             note=note,
         )
@@ -111,7 +158,7 @@ class GuildBankCog(commands.Cog):
             f"**{quantity}x {item_name}** deposited into the guild bank.\n"
             f"Category: `{category.value}`\n"
             f"Location: `{location}`\n"
-            f"Held by: {held_by.mention}\n"
+            f"Held by: {held_by_member.mention}\n"
             f"Item ID: `{item_id}`",
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -120,14 +167,14 @@ class GuildBankCog(commands.Cog):
 
     @app_commands.command(
         name="bank_withdraw",
-        description="Withdraw an item from the guild bank. Raid leaders only.",
+        description="Withdraw an item from the guild bank. Officers only.",
     )
     @app_commands.describe(
         item_id="The ID of the item to withdraw (use /bank_inventory to find IDs)",
         quantity="How many to withdraw",
         note="Optional note for the transaction log",
     )
-    @app_commands.check(is_raid_leader)
+    @app_commands.check(is_officer)
     async def bank_withdraw_cmd(
         self,
         interaction: discord.Interaction,
@@ -255,9 +302,9 @@ class GuildBankCog(commands.Cog):
 
     @app_commands.command(
         name="bank_panel",
-        description="Post the guild bank panel in the current channel. Raid leaders only.",
+        description="Post the guild bank panel in the current channel. Officers only.",
     )
-    @app_commands.check(is_raid_leader)
+    @app_commands.check(is_officer)
     async def bank_panel_cmd(self, interaction: discord.Interaction):
         if interaction.guild is None:
             return await interaction.response.send_message(
@@ -335,12 +382,17 @@ class GuildBankCog(commands.Cog):
         if held_by_name:
             held_by = guild.get_member_named(held_by_name)
             if held_by is None:
-                digits = [c for c in held_by_name if c.isdigit()]
-                if digits:
+                raw_id = None
+                if held_by_name.isdigit():
+                    raw_id = held_by_name
+                else:
+                    mention_match = re.match(r'^<@!?(\d+)>$', held_by_name)
+                    if mention_match:
+                        raw_id = mention_match.group(1)
+                if raw_id:
                     try:
-                        member_id = int("".join(digits))
-                        held_by = guild.get_member(member_id)
-                    except ValueError:
+                        held_by = guild.get_member(int(raw_id))
+                    except (ValueError, TypeError):
                         pass
         if held_by is None:
             held_by = interaction.user
@@ -561,7 +613,7 @@ class GuildBankCog(commands.Cog):
             f"Category: `{category}`\n"
             f"Location: `{location or '—'}`\n"
             f"Held by: {holder_str}\n"
-            f"Actor: <@{actor_id}>"
+            f"Logger: <@{actor_id}>"
             f"{note_str}"
         )
 

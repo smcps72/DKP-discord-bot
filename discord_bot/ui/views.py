@@ -10,7 +10,6 @@ from .. import __version__ as bot_version
 from ..utils import (
     is_admin,
     is_officer,
-    is_raid_leader,
     ensure_allowed_guild,
     create_info_embed,
 )
@@ -5842,16 +5841,16 @@ class GuildBankPanelView(discord.ui.View):
         emoji="📥",
     )
     async def deposit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_leader_ok = await is_raid_leader(interaction)
-        if not raid_leader_ok:
+        officer_ok = await is_officer(interaction)
+        if not officer_ok:
             try:
                 if not interaction.response.is_done():
                     await interaction.response.send_message(
-                        "Only raid leaders can deposit items.", ephemeral=True
+                        "Only officers can deposit items.", ephemeral=True
                     )
                 else:
                     await interaction.followup.send(
-                        "Only raid leaders can deposit items.", ephemeral=True
+                        "Only officers can deposit items.", ephemeral=True
                     )
             except discord.HTTPException:
                 pass
@@ -5881,16 +5880,16 @@ class GuildBankPanelView(discord.ui.View):
         emoji="📤",
     )
     async def withdraw_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid_leader_ok = await is_raid_leader(interaction)
-        if not raid_leader_ok:
+        officer_ok = await is_officer(interaction)
+        if not officer_ok:
             try:
                 if not interaction.response.is_done():
                     await interaction.response.send_message(
-                        "Only raid leaders can withdraw items.", ephemeral=True
+                        "Only officers can withdraw items.", ephemeral=True
                     )
                 else:
                     await interaction.followup.send(
-                        "Only raid leaders can withdraw items.", ephemeral=True
+                        "Only officers can withdraw items.", ephemeral=True
                     )
             except discord.HTTPException:
                 pass
