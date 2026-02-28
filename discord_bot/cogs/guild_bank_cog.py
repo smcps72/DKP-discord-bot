@@ -188,9 +188,9 @@ class GuildBankCog(commands.Cog):
             item_id=item_id,
             item_name=item["item_name"],
             quantity=quantity,
-            category=item.get("category", "other"),
-            location=item.get("location", ""),
-            held_by_user_id=item.get("held_by_user_id"),
+            category=item["category"] or "other",
+            location=item["location"] or "",
+            held_by_user_id=item["held_by_user_id"],
             actor_id=interaction.user.id,
             note=note,
         )
@@ -454,9 +454,9 @@ class GuildBankCog(commands.Cog):
             item_id=item_id,
             item_name=item["item_name"],
             quantity=quantity,
-            category=item.get("category", "other"),
-            location=item.get("location", ""),
-            held_by_user_id=item.get("held_by_user_id"),
+            category=item["category"] or "other",
+            location=item["location"] or "",
+            held_by_user_id=item["held_by_user_id"],
             actor_id=interaction.user.id,
             note=note,
         )
@@ -528,10 +528,10 @@ class GuildBankCog(commands.Cog):
     def _build_inventory_item_message(self, item) -> str:
         item_id = int(item["id"])
         qty = int(item["quantity"])
-        name = str(item.get("item_name") or "Unknown Item")
-        category = str(item.get("category") or "other")
-        location = str(item.get("location") or "—")
-        holder_id = item.get("held_by_user_id")
+        name = str(item["item_name"] or "Unknown Item")
+        category = str(item["category"] or "other")
+        location = str(item["location"] or "—")
+        holder_id = item["held_by_user_id"]
         holder_str = f"<@{holder_id}>" if holder_id else "—"
         return (
             f"`#{item_id}` **{name}** ×{qty}\n"
