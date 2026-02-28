@@ -976,7 +976,7 @@ class RaidCog(commands.Cog):
             await interaction.followup.send(embed=create_error_embed("Error", "Could not create the raid. Check my permissions."))
 
     @app_commands.command(name="raid_create", description="Creates a new raid channel and control thread.")
-    @app_commands.check(is_admin)
+    @app_commands.check(is_officer)
     async def raid_create_cmd(self, interaction: discord.Interaction):
         if interaction.guild is None:
             return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)

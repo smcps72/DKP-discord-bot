@@ -214,6 +214,7 @@ class TasksCog(commands.Cog):
 
             # Run update_team logic before awarding DKP - sync members from voice channels
             try:
+                guild = self.bot.get_guild(guild_id)
                 vc_ids: set[int] = set()
                 primary_vc = row.get("vc_id") if isinstance(row, dict) else None
                 if primary_vc:

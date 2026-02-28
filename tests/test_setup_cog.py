@@ -67,23 +67,48 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     mock_active_category.id = 67890
     mock_active_category.text_channels = []
     mock_active_category.voice_channels = []
+
     mock_archive_category = AsyncMock(spec=discord.CategoryChannel)
     mock_archive_category.id = 67891
     mock_archive_category.text_channels = []
     mock_archive_category.voice_channels = []
-    mock_guild.create_category.side_effect = [mock_active_category, mock_archive_category]
+
+    mock_bank_category = AsyncMock(spec=discord.CategoryChannel)
+    mock_bank_category.id = 67892
+    mock_bank_category.text_channels = []
+    mock_bank_category.voice_channels = []
+
+    mock_guild.create_category.side_effect = [
+        mock_active_category,
+        mock_archive_category,
+        mock_bank_category,
+    ]
 
     # Ensure deterministic category scans
     mock_guild.categories = []
 
     mock_dkp_channel = AsyncMock(spec=discord.TextChannel)
+    mock_dkp_channel.id = 111
     mock_raid_channel = AsyncMock(spec=discord.TextChannel)
+    mock_raid_channel.id = 112
     mock_completed_raid_channel = AsyncMock(spec=discord.TextChannel)
+    mock_completed_raid_channel.id = 113
+    mock_bank_panel_channel = AsyncMock(spec=discord.TextChannel)
+    mock_bank_panel_channel.id = 114
+    mock_bank_inventory_channel = AsyncMock(spec=discord.TextChannel)
+    mock_bank_inventory_channel.id = 115
+    mock_bank_transactions_channel = AsyncMock(spec=discord.TextChannel)
+    mock_bank_transactions_channel.id = 116
 
     # Ensure create_text_channel returns dkp-system + active-raids in active category,
     # and completed-raids in archive category.
     mock_active_category.create_text_channel.side_effect = [mock_dkp_channel, mock_raid_channel]
     mock_archive_category.create_text_channel.side_effect = [mock_completed_raid_channel]
+    mock_bank_category.create_text_channel.side_effect = [
+        mock_bank_panel_channel,
+        mock_bank_inventory_channel,
+        mock_bank_transactions_channel,
+    ]
 
     # --- Act ---
     await setup_cog.run_setup(mock_guild, mock_interaction)
@@ -93,7 +118,7 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     mock_bot.db.get_guild_config.assert_called_once_with(mock_guild.id)
 
     # 2. Verify category creation
-    assert mock_guild.create_category.call_count == 2
+    assert mock_guild.create_category.call_count == 3
     first_args, first_kwargs = mock_guild.create_category.call_args_list[0]
     assert first_args[0] == "DKP-active-raids"
     assert mock_guild.default_role in first_kwargs["overwrites"]
@@ -105,6 +130,10 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     second_args, second_kwargs = mock_guild.create_category.call_args_list[1]
     assert second_args[0] == "DKP-archive"
     assert mock_guild.default_role in second_kwargs["overwrites"]
+
+    third_args, third_kwargs = mock_guild.create_category.call_args_list[2]
+    assert third_args[0] == "Guild Bank"
+    assert mock_guild.default_role in third_kwargs["overwrites"]
 
     # 3. Verify text channel creation
     expected_dkp_channel_name = "dkp-system"
@@ -119,11 +148,18 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     assert len(archive_calls) == 1
     assert archive_calls[0][0][0] == expected_completed_channel_name
 
-    # 4. Verify database execute call (schema now includes role IDs, archive_category_id, completed_raid_channel_id, and vc_template_id NULL)
-    mock_bot.db.execute.assert_called_once()
-    sql, params = mock_bot.db.execute.call_args[0]
+    bank_calls = mock_bank_category.create_text_channel.call_args_list
+    assert len(bank_calls) == 3
+    assert bank_calls[0][0][0] == "guild-bank"
+    assert bank_calls[1][0][0] == "inventory"
+    assert bank_calls[2][0][0] == "transactions"
+
+    # 4. Verify database execute call for guild upsert
+    insert_calls = [c for c in mock_bot.db.execute.call_args_list if "INSERT OR REPLACE INTO guilds" in c[0][0]]
+    assert insert_calls, "Expected an INSERT OR REPLACE INTO guilds call"
+    sql, params = insert_calls[-1][0]
     assert "INSERT OR REPLACE INTO guilds" in sql
-    # guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id
+    # guild_id, dkp/archive channels, roles, plus dedicated guild bank category/channels
     assert params[0] == mock_guild.id
     assert params[1] == mock_active_category.id
     assert params[2] == mock_archive_category.id
@@ -131,6 +167,10 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     assert params[4] == mock_raid_channel.id
     assert params[5] == mock_completed_raid_channel.id
     assert params[6] is None
+    assert params[11] == mock_bank_category.id
+    assert params[12] == mock_bank_panel_channel.id
+    assert params[13] == mock_bank_inventory_channel.id
+    assert params[14] == mock_bank_transactions_channel.id
 
     # 5. Verify welcome message sent to dkp_channel and pinned
     mock_dkp_channel.send.assert_called_once()
@@ -154,6 +194,10 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
         'raid_channel_id': 54321,
         'archive_category_id': 98766,
         'completed_raid_channel_id': 54322,
+        'guild_bank_category_id': 98767,
+        'guild_bank_channel_id': 54323,
+        'guild_bank_inventory_channel_id': 54324,
+        'guild_bank_transactions_channel_id': 54325,
     }
     mock_bot.db.get_guild_config = AsyncMock(return_value=existing_config)
 
@@ -162,6 +206,10 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
     mock_raid_channel = MagicMock(spec=discord.TextChannel)
     mock_archive_category = MagicMock(spec=discord.CategoryChannel)
     mock_completed_channel = MagicMock(spec=discord.TextChannel)
+    mock_bank_category = MagicMock(spec=discord.CategoryChannel)
+    mock_bank_panel_channel = AsyncMock(spec=discord.TextChannel)
+    mock_bank_inventory_channel = AsyncMock(spec=discord.TextChannel)
+    mock_bank_transactions_channel = AsyncMock(spec=discord.TextChannel)
 
     # Make the category appear already correctly named so no edit() is attempted
     mock_category.name = "DKP-active-raids"
@@ -169,6 +217,25 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
     mock_archive_category.name = "DKP-archive"
     mock_archive_category.id = existing_config['archive_category_id']
     mock_completed_channel.category_id = existing_config['archive_category_id']
+    mock_bank_category.name = "Guild Bank"
+    mock_bank_category.id = existing_config['guild_bank_category_id']
+
+    mock_bank_panel_channel.id = existing_config['guild_bank_channel_id']
+    mock_bank_panel_channel.category_id = existing_config['guild_bank_category_id']
+    mock_bank_panel_channel.history = MagicMock()
+    mock_bank_panel_channel.history.return_value.__aiter__.return_value = []
+    mock_bank_panel_channel.send = AsyncMock()
+
+    mock_bank_inventory_channel.id = existing_config['guild_bank_inventory_channel_id']
+    mock_bank_inventory_channel.category_id = existing_config['guild_bank_category_id']
+    mock_bank_transactions_channel.id = existing_config['guild_bank_transactions_channel_id']
+    mock_bank_transactions_channel.category_id = existing_config['guild_bank_category_id']
+
+    mock_bank_category.text_channels = [
+        mock_bank_panel_channel,
+        mock_bank_inventory_channel,
+        mock_bank_transactions_channel,
+    ]
 
     def get_channel_side_effect(channel_id):
         if channel_id == existing_config['dkp_category_id']:
@@ -179,6 +246,14 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
             return mock_raid_channel
         if channel_id == existing_config['completed_raid_channel_id']:
             return mock_completed_channel
+        if channel_id == existing_config['guild_bank_category_id']:
+            return mock_bank_category
+        if channel_id == existing_config['guild_bank_channel_id']:
+            return mock_bank_panel_channel
+        if channel_id == existing_config['guild_bank_inventory_channel_id']:
+            return mock_bank_inventory_channel
+        if channel_id == existing_config['guild_bank_transactions_channel_id']:
+            return mock_bank_transactions_channel
         return None
 
     mock_guild.get_channel.side_effect = get_channel_side_effect
@@ -190,10 +265,7 @@ async def test_run_setup_already_configured(setup_cog: SetupCog, mock_bot: Magic
     # 1. Check if config was fetched
     mock_bot.db.get_guild_config.assert_called_once_with(mock_guild.id)
 
-    # 2. Verify no channel/category creation methods were called
-    mock_guild.create_category.assert_not_called()
-
-    # 3. SetupCog may still backfill archive/completed channel config in newer
+    # 2. SetupCog may still backfill/repair any missing pieces in newer
     # versions; don't assert on db.execute call count here.
 
     # 4. SetupCog may backfill/repair archive configuration; accept either

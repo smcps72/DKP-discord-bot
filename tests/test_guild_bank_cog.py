@@ -18,6 +18,7 @@ def mock_bot():
 def guild_bank_cog(mock_bot):
     cog = GuildBankCog(mock_bot)
     cog._update_bank_panel = AsyncMock()
+    cog._post_transaction_notification = AsyncMock()
     return cog
 
 
@@ -41,14 +42,14 @@ def mock_interaction():
     return interaction
 
 
-def _assert_followup_public(followup_send: AsyncMock):
+def _assert_followup_ephemeral(followup_send: AsyncMock):
     assert followup_send.call_count == 1
     _args, kwargs = followup_send.call_args
-    assert kwargs.get("ephemeral") in (None, False)
+    assert kwargs.get("ephemeral") is True
 
 
 @pytest.mark.asyncio
-async def test_bank_deposit_cmd_success_followup_is_public(guild_bank_cog, mock_interaction, mock_bot):
+async def test_bank_deposit_cmd_success_followup_is_ephemeral(guild_bank_cog, mock_interaction, mock_bot):
     held_by = MagicMock(spec=discord.Member)
     held_by.id = 24680
     held_by.mention = "<@24680>"
@@ -67,11 +68,11 @@ async def test_bank_deposit_cmd_success_followup_is_public(guild_bank_cog, mock_
     )
 
     mock_interaction.response.defer.assert_called_once_with()
-    _assert_followup_public(mock_interaction.followup.send)
+    _assert_followup_ephemeral(mock_interaction.followup.send)
 
 
 @pytest.mark.asyncio
-async def test_bank_withdraw_cmd_success_followup_is_public(guild_bank_cog, mock_interaction, mock_bot):
+async def test_bank_withdraw_cmd_success_followup_is_ephemeral(guild_bank_cog, mock_interaction, mock_bot):
     mock_bot.db.guild_bank_get_item = AsyncMock(
         return_value={"id": 3, "item_name": "Arcanite Bar", "quantity": 10}
     )
@@ -86,11 +87,11 @@ async def test_bank_withdraw_cmd_success_followup_is_public(guild_bank_cog, mock
     )
 
     mock_interaction.response.defer.assert_called_once_with()
-    _assert_followup_public(mock_interaction.followup.send)
+    _assert_followup_ephemeral(mock_interaction.followup.send)
 
 
 @pytest.mark.asyncio
-async def test_process_deposit_success_followup_is_public(guild_bank_cog, mock_interaction, mock_bot):
+async def test_process_deposit_success_followup_is_ephemeral(guild_bank_cog, mock_interaction, mock_bot):
     mock_bot.db.guild_bank_deposit = AsyncMock(return_value=88)
 
     await guild_bank_cog.process_deposit(
@@ -104,11 +105,11 @@ async def test_process_deposit_success_followup_is_public(guild_bank_cog, mock_i
     )
 
     mock_interaction.response.defer.assert_called_once_with()
-    _assert_followup_public(mock_interaction.followup.send)
+    _assert_followup_ephemeral(mock_interaction.followup.send)
 
 
 @pytest.mark.asyncio
-async def test_process_withdraw_success_followup_is_public(guild_bank_cog, mock_interaction, mock_bot):
+async def test_process_withdraw_success_followup_is_ephemeral(guild_bank_cog, mock_interaction, mock_bot):
     mock_bot.db.guild_bank_get_item = AsyncMock(
         return_value={"id": 9, "item_name": "Flask of Titans", "quantity": 20}
     )
@@ -122,7 +123,7 @@ async def test_process_withdraw_success_followup_is_public(guild_bank_cog, mock_
     )
 
     mock_interaction.response.defer.assert_called_once_with()
-    _assert_followup_public(mock_interaction.followup.send)
+    _assert_followup_ephemeral(mock_interaction.followup.send)
 
 
 @pytest.mark.asyncio
@@ -140,6 +141,83 @@ async def test_bank_withdraw_cmd_item_not_found_followup_is_ephemeral(guild_bank
     mock_interaction.followup.send.assert_called_once()
     _args, kwargs = mock_interaction.followup.send.call_args
     assert kwargs.get("ephemeral") is True
+
+
+@pytest.mark.asyncio
+async def test_post_transaction_notification_disables_mentions(mock_bot):
+    cog = GuildBankCog(mock_bot)
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 12345
+
+    tx_channel = AsyncMock(spec=discord.TextChannel)
+    guild.get_channel.return_value = tx_channel
+    mock_bot.db.get_guild_config = AsyncMock(
+        return_value={"guild_bank_transactions_channel_id": 222}
+    )
+
+    await cog._post_transaction_notification(
+        guild,
+        action="deposit",
+        item_id=1,
+        item_name="@everyone Flask",
+        quantity=1,
+        category="consumable",
+        location="Guild Vault",
+        held_by_user_id=None,
+        actor_id=67890,
+        note="@here",
+    )
+
+    tx_channel.send.assert_called_once()
+    _args, kwargs = tx_channel.send.call_args
+    mentions = kwargs.get("allowed_mentions")
+    assert isinstance(mentions, discord.AllowedMentions)
+    assert mentions.everyone is False
+    assert mentions.roles is False
+    assert mentions.users is False
+
+
+@pytest.mark.asyncio
+async def test_sync_inventory_channel_disables_mentions(mock_bot):
+    cog = GuildBankCog(mock_bot)
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 12345
+
+    inventory_channel = AsyncMock(spec=discord.TextChannel)
+    inventory_channel.id = 333
+    posted = AsyncMock(spec=discord.Message)
+    posted.id = 444
+    inventory_channel.send = AsyncMock(return_value=posted)
+    guild.get_channel.return_value = inventory_channel
+
+    mock_bot.db.get_guild_config = AsyncMock(
+        return_value={"guild_bank_inventory_channel_id": inventory_channel.id}
+    )
+    mock_bot.db.guild_bank_get_inventory = AsyncMock(
+        return_value=[
+            {
+                "id": 7,
+                "item_name": "@everyone Runecloth",
+                "quantity": 12,
+                "category": "material",
+                "location": "Bank Alt",
+                "held_by_user_id": 24680,
+            }
+        ]
+    )
+    mock_bot.db.guild_bank_list_inventory_messages = AsyncMock(return_value=[])
+    mock_bot.db.guild_bank_get_inventory_message = AsyncMock(return_value=None)
+    mock_bot.db.guild_bank_set_inventory_message = AsyncMock()
+
+    await cog._sync_inventory_channel(guild)
+
+    inventory_channel.send.assert_called_once()
+    _args, kwargs = inventory_channel.send.call_args
+    mentions = kwargs.get("allowed_mentions")
+    assert isinstance(mentions, discord.AllowedMentions)
+    assert mentions.everyone is False
+    assert mentions.roles is False
+    assert mentions.users is False
 
 
 @pytest.mark.asyncio

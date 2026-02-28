@@ -198,6 +198,26 @@ class Database:
                 await self.pool.execute(sql)
             except aiosqlite.OperationalError:
                 continue
+
+        async with self.pool.execute("PRAGMA table_info(raid_member_exclusions)") as cursor:
+            excl_rows = await cursor.fetchall()
+        excl_existing = {row[1] for row in excl_rows}
+
+        excl_migrations: list[tuple[str, str]] = [
+            (
+                "reason",
+                "ALTER TABLE raid_member_exclusions ADD COLUMN reason TEXT DEFAULT 'manual'",
+            ),
+        ]
+
+        for col, sql in excl_migrations:
+            if col in excl_existing:
+                continue
+            try:
+                await self.pool.execute(sql)
+            except aiosqlite.OperationalError:
+                continue
+
         await self.pool.commit()
 
     async def _create_tables(self):

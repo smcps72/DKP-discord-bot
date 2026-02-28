@@ -97,6 +97,50 @@ async def test_is_admin_without_permission_or_role():
 
     assert await utils.is_admin(mock_interaction) is False
 
+
+@pytest.mark.asyncio
+async def test_is_raid_leader_with_configured_role():
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.roles = []
+    mock_interaction.guild.id = 12345
+    mock_interaction.user = MagicMock(spec=discord.Member)
+
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 321
+    mock_interaction.user.roles = [mock_role]
+
+    mock_interaction.client = MagicMock()
+    mock_interaction.client.db = MagicMock()
+    mock_interaction.client.db.get_guild_config = AsyncMock(
+        return_value={"raid_leader_role_id": 321}
+    )
+
+    assert await utils.is_raid_leader(mock_interaction) is True
+
+
+@pytest.mark.asyncio
+async def test_is_raid_leader_with_fallback_named_role():
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock(spec=discord.Guild)
+    mock_interaction.guild.id = 12345
+    mock_interaction.user = MagicMock(spec=discord.Member)
+
+    guild_role = MagicMock(spec=discord.Role)
+    guild_role.id = 777
+    guild_role.name = "Raid-Leader"
+    mock_interaction.guild.roles = [guild_role]
+
+    user_role = MagicMock(spec=discord.Role)
+    user_role.id = 777
+    mock_interaction.user.roles = [user_role]
+
+    mock_interaction.client = MagicMock()
+    mock_interaction.client.db = MagicMock()
+    mock_interaction.client.db.get_guild_config = AsyncMock(return_value={})
+
+    assert await utils.is_raid_leader(mock_interaction) is True
+
 def test_create_info_embed():
     title = "Test Info"
     description = "This is an informational message."

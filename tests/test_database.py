@@ -15,6 +15,30 @@ async def test_create_tables():
         if db.pool:
             await db.pool.close()
 
+
+@pytest.mark.asyncio
+async def test_clear_all_raid_member_groups_returns_deleted_count():
+    db = Database(":memory:")
+    try:
+        await db.connect()
+
+        raid_id = await db.execute_insert(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 200, 3000, 1),
+        )
+
+        await db.set_raid_member_group(raid_id, 111, 1)
+        await db.set_raid_member_group(raid_id, 222, 2)
+
+        deleted = await db.clear_all_raid_member_groups(raid_id)
+        assert deleted == 2
+
+        remaining = await db.get_raid_member_groups(raid_id)
+        assert remaining == []
+    finally:
+        if db.pool:
+            await db.pool.close()
+
 @pytest.mark.asyncio
 async def test_get_raid_by_thread():
     db = Database(":memory:")
