@@ -1,0 +1,3025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Universal DKP Bot - Offline & Functional</title>
+  <style>
+    :root {
+      --bg-tertiary: #1e1f22;
+      --bg-secondary: #2b2d31;
+      --bg-primary: #313338;
+      --channel-text: #949ba4;
+      --channel-text-hover: #dbdee1;
+      --header-primary: #f2f3f5;
+      --header-secondary: #b5bac1;
+      --text-normal: #dbdee1;
+      --interactive-normal: #b5bac1;
+      --interactive-hover: #dbdee1;
+      --blurple: #5865F2;
+      --blurple-hover: #4752C4;
+      --green: #248046;
+      --green-hover: #1a6334;
+      --red: #da373c;
+      --red-hover: #a1282c;
+      --button-secondary: #4e5058;
+      --button-secondary-hover: #6d6f78;
+      --background-modifier-selected: rgba(79, 84, 92, 0.32);
+      --input-bg: #1e1f22;
+      --border: #26282c;
+    }
+
+    /* System Font Stack */
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'gg sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: var(--bg-primary); color: var(--text-normal); height: 100vh; display: flex; overflow: hidden; font-size: 16px; }
+
+    /* SVG Icons */
+    .icon { width: 20px; height: 20px; fill: currentColor; display: inline-block; vertical-align: text-bottom; flex-shrink: 0; }
+    .icon-sm { width: 16px; height: 16px; fill: currentColor; margin-right: 6px; }
+
+    /* Sidebar */
+    .sidebar { width: 240px; background-color: var(--bg-secondary); display: flex; flex-direction: column; padding-top: 10px; flex-shrink: 0; }
+    .server-name { padding: 0 16px 16px; font-weight: bold; color: var(--header-primary); font-size: 16px; box-shadow: 0 1px 0 rgba(4,4,5,0.2); margin-bottom: 8px;}
+    .category { text-transform: uppercase; font-size: 12px; font-weight: 700; color: var(--channel-text); padding: 18px 8px 4px 16px; cursor: pointer; }
+    .channel { display: flex; align-items: center; padding: 6px 8px; margin: 1px 8px; border-radius: 4px; cursor: pointer; color: var(--channel-text); font-weight: 500; gap: 6px; }
+    .channel:hover { background-color: var(--background-modifier-selected); color: var(--channel-text-hover); }
+    .channel.active { background-color: rgba(79, 84, 92, 0.48); color: white; }
+
+    /* Chat Area */
+    .chat-area { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--bg-primary);}
+    .chat-header { height: 48px; background-color: var(--bg-tertiary); display: flex; align-items: center; padding: 0 16px; box-shadow: 0 1px 0 rgba(4,4,5,0.2); flex-shrink: 0; gap: 12px;}
+    .chat-header h1 { font-size: 16px; font-weight: 700; color: var(--header-primary); }
+    .messages-wrapper { flex-grow: 1; overflow-y: auto; padding: 16px; }
+    .message { display: flex; padding: 8px 0; }
+    .avatar { width: 40px; height: 40px; border-radius: 50%; background: #7289da; margin-right: 12px; flex-shrink: 0; display:flex; align-items:center; justify-content:center; font-weight:700;}
+    .avatar.bot { background: var(--blurple); }
+    .message-content { max-width: 860px; width: 100%; }
+    .username { font-weight: 700; color: var(--header-primary); margin-right: 6px; }
+    .bot-tag { background: var(--blurple); color: white; border-radius: 3px; font-size: 10px; padding: 1px 4px; margin-left: 6px; font-weight: 700; }
+    .timestamp { font-size: 12px; color: var(--channel-text); margin-left: 6px; }
+    .text-block { margin-top: 4px; color: var(--text-normal); line-height: 1.4; white-space: pre-wrap; }
+
+    /* Embeds */
+    .embed { margin-top: 8px; background-color: rgba(46, 48, 54, 0.6); border-left: 4px solid var(--blurple); border-radius: 4px; padding: 12px; }
+    .embed-title { font-weight: 700; color: var(--header-primary); margin-bottom: 6px; }
+    .embed-desc { color: var(--text-normal); font-size: 14px; white-space: pre-wrap; }
+    .embed-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+    .field { background-color: rgba(30,31,34,0.6); border: 1px solid var(--border); padding: 8px; border-radius: 4px;}
+    .field-name { font-size: 12px; text-transform: uppercase; color: var(--header-secondary); font-weight: 700; margin-bottom: 4px;}
+    .field-value { font-size: 14px; color: var(--text-normal); white-space: pre-wrap; }
+
+    /* Buttons (Discord-like) */
+    .component-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .btn { border: none; border-radius: 3px; padding: 8px 12px; font-weight: 700; cursor: pointer; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; transition: 0.15s ease; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn.btn-blurple { background-color: var(--blurple); color: white; }
+    .btn.btn-blurple:hover:not(:disabled) { background-color: var(--blurple-hover); }
+    .btn.btn-green { background-color: var(--green); color: white; }
+    .btn.btn-green:hover:not(:disabled) { background-color: var(--green-hover); }
+    .btn.btn-red { background-color: var(--red); color: white; }
+    .btn.btn-red:hover:not(:disabled) { background-color: var(--red-hover); }
+    .btn.btn-grey { background-color: var(--button-secondary); color: white; }
+    .btn.btn-grey:hover:not(:disabled) { background-color: var(--button-secondary-hover); }
+
+    /* Control Panel Layout (simulated ephemeral) */
+    .panel-title { font-weight: 800; margin-bottom: 8px; }
+    .panel-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+    /* Inputs / Modals */
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { width: 520px; background-color: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .modal-header { padding: 14px 16px; font-weight: 800; color: var(--header-primary); border-bottom: 1px solid var(--border); }
+    .modal-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .modal-footer { padding: 12px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); }
+    .input-group { display: flex; flex-direction: column; gap: 6px; }
+    .input-group label { font-size: 12px; text-transform: uppercase; color: var(--header-secondary); font-weight: 800; }
+    .input-field, select { background-color: var(--input-bg); border: 1px solid var(--border); color: var(--text-normal); border-radius: 4px; padding: 10px; font-size: 14px; outline: none; }
+    .input-field:focus, select:focus { border-color: rgba(88,101,242,0.6); }
+
+    /* Toast */
+    #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 10px 14px; border-radius: 6px; display: none; z-index: 2000; font-weight: 700; }
+    #toast.error { background: rgba(218,55,60,0.92); }
+    #toast.success { background: rgba(36,128,70,0.92); }
+
+    /* User Role Switcher */
+    .role-switch { display:flex; align-items:center; gap:10px; margin-left:auto; }
+    .role-switch label { font-size: 12px; color: var(--header-secondary); font-weight: 800; text-transform: uppercase;}
+    .role-switch select { padding: 6px 10px; border-radius: 6px; font-weight: 700; }
+
+  </style>
+</head>
+<body>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="server-name">Universal DKP Bot (Offline Demo)</div>
+
+    <div class="category">DKP SYSTEM</div>
+    <div class="channel active" id="chan-dkp-system" onclick="switchChannel('dkp-system')">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+      dkp-system
+    </div>
+    <div class="channel" id="chan-dkp-auctions" onclick="switchChannel('dkp-auctions')">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1010 10A10.011 10.011 0 0012 2zm1 17.93V20h-2v-.07A8.001 8.001 0 014 12h2a6.006 6.006 0 005 5.91V16h2v1.91A6.006 6.006 0 0018 12h2a8.001 8.001 0 01-7 7.93z"/></svg>
+      dkp-auctions
+    </div>
+    <div class="channel" id="chan-marketplace" onclick="switchChannel('marketplace')">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M16 6V4H8v2H2v2h1l1.6 10.4A2 2 0 006.6 20h10.8a2 2 0 002-1.6L21 8h1V6zM8 4h8v2H8zm10.4 14H5.6L4.1 8h15.8z"/></svg>
+      marketplace
+    </div>
+    <div class="channel" id="chan-guild-bank" onclick="switchChannel('guild-bank')">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L2 7v2h20V7L12 2zm0 4.2L18.6 9H5.4L12 6.2zM4 11h16v9H4v-9zm2 2v5h2v-5H6zm4 0v5h2v-5h-2zm4 0v5h2v-5h-2zm4 0v5h2v-5h-2z"/></svg>
+      guild-bank
+    </div>
+
+    <div class="category">RAIDS</div>
+    <div class="channel" id="chan-active-raids" onclick="switchChannel('active-raids')">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M12 12a5 5 0 10-5-5 5 5 0 005 5zm0 2c-4 0-8 2-8 4v2h16v-2c0-2-4-4-8-4z"/></svg>
+      active-raids
+    </div>
+    <div class="channel" id="chan-upcomming-events" onclick="switchChannel('upcomming-events')">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M7 2h2v2h6V2h2v2h3v18H4V4h3V2zm13 8H6v10h14V10z"/></svg>
+      upcomming-events
+    </div>
+    <div class="channel" id="chan-raid-logs" onclick="switchChannel('raid-logs')">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M3 3h18v2H3zm0 4h18v14H3zm2 2v10h14V9z"/></svg>
+      raid-logs
+    </div>
+  </div>
+
+  <!-- Chat Area -->
+  <div class="chat-area">
+    <div class="chat-header">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="none"/><path d="M6 6h12v12H6z"/></svg>
+        <span id="header-title">dkp-system</span>
+      </div>
+
+      <div class="role-switch">
+        <label for="user-role-switch">View as</label>
+        <select id="user-role-switch" onchange="switchUserRole(this.value)">
+          <!-- populated by script -->
+        </select>
+      </div>
+    </div>
+    <div class="messages-wrapper" id="messages-container"></div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast">Action Successful</div>
+
+  <!-- MODALS CONTAINER -->
+  <!-- Create Event -->
+  <div class="modal-overlay" id="modal-create-event">
+    <div class="modal">
+      <div class="modal-header">Create Event</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Event Name</label>
+          <input type="text" id="evt-name" class="input-field" placeholder="Molten Core Clear">
+        </div>
+        <div class="input-group">
+          <label>Pool</label>
+          <select id="evt-pool" class="input-field">
+            <option value="1">Main Raid Pool</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Date (Simulated)</label>
+          <select id="evt-date" class="input-field">
+            <option value="0">Today</option>
+            <option value="86400000">Tomorrow</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-create-event')">Cancel</button>
+        <button class="btn btn-blurple" onclick="submitCreateEvent()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Start Auction -->
+  <div class="modal-overlay" id="modal-start-auction">
+    <div class="modal">
+      <div class="modal-header">Start Auction</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Item Name</label>
+          <input type="text" id="auc-item" class="input-field" placeholder="[Thunderfury]">
+        </div>
+        <div class="input-group">
+          <label>Starting Bid</label>
+          <input type="number" id="auc-start" class="input-field" value="10" min="0" step="1">
+        </div>
+        <div class="input-group">
+          <label>Duration</label>
+          <select id="auc-duration" class="input-field">
+            <option value="60">1 Minute (Demo)</option>
+            <option value="120">2 Minutes</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-start-auction')">Cancel</button>
+        <button class="btn btn-green" onclick="submitStartAuction()">Start</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bid Modal -->
+  <div class="modal-overlay" id="modal-bid">
+    <div class="modal">
+      <div class="modal-header">Place Bid</div>
+      <div class="modal-body">
+        <div class="embed-desc" id="bid-info-text" style="margin-bottom:10px;"></div>
+        <div class="input-group">
+          <label>Your Bid</label>
+          <input type="number" id="bid-amount" class="input-field" min="0" step="1">
+        </div>
+        <input type="hidden" id="bid-listing-id">
+        <input type="hidden" id="bid-listing-type"> <!-- 'dkp' or 'market' -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-bid')">Cancel</button>
+        <button class="btn btn-green" onclick="submitBid()">Submit Bid</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sell Item -->
+  <div class="modal-overlay" id="modal-sell-item">
+    <div class="modal">
+      <div class="modal-header">Sell Item</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Item Name</label>
+          <input type="text" id="sell-name" class="input-field" placeholder="Potion Bundle">
+        </div>
+        <div class="input-group">
+          <label>Listing Type</label>
+          <select id="sell-type" class="input-field">
+            <option value="fixed">Fixed Price</option>
+            <option value="auction">Auction</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Price / Starting Bid</label>
+          <input type="number" id="sell-price" class="input-field" value="50" min="1" step="1">
+        </div>
+        <div class="input-group">
+          <label>Currency</label>
+          <select id="sell-currency" class="input-field">
+            <option value="Gold">Gold</option>
+            <option value="DKP">DKP</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-sell-item')">Cancel</button>
+        <button class="btn btn-green" onclick="submitSellItem()">List</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Buy Item (by Item ID) -->
+  <div class="modal-overlay" id="modal-buy-item">
+    <div class="modal">
+      <div class="modal-header">Buy Item</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Item ID</label>
+          <input type="number" id="buy-item-id" class="input-field" placeholder="Enter Item ID" min="1" step="1">
+        </div>
+        <div class="embed-desc" id="buy-item-preview" style="margin-top:-6px;"></div>
+        <input type="hidden" id="buy-item-resolved-id">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-buy-item')">Cancel</button>
+        <button class="btn btn-green" id="buy-item-confirm-btn" onclick="confirmBuyItemById()" disabled>Buy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remove Listing (by Item ID) -->
+  <div class="modal-overlay" id="modal-remove-listing">
+    <div class="modal">
+      <div class="modal-header">Remove Listing</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Item ID</label>
+          <input type="number" id="remove-item-id" class="input-field" placeholder="Enter Item ID" min="1" step="1">
+        </div>
+        <div class="embed-desc" id="remove-item-preview" style="margin-top:-6px;"></div>
+        <input type="hidden" id="remove-item-resolved-id">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-remove-listing')">Cancel</button>
+        <button class="btn btn-red" id="remove-item-confirm-btn" onclick="confirmRemoveListingById()" disabled>Remove listing</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Marketplace Settings (Admin) -->
+  <div class="modal-overlay" id="modal-market-settings">
+    <div class="modal">
+      <div class="modal-header">Marketplace Settings</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Currency Name</label>
+          <input type="text" id="market-currency-name" class="input-field" placeholder="Gold">
+        </div>
+        <div class="input-group">
+          <label>Max Listing Active Time (Hours)</label>
+          <input type="number" id="market-max-hours" class="input-field" min="1" step="1" value="72">
+        </div>
+        <div style="font-size: 12px; color: var(--header-secondary); line-height: 1.4;">
+          Changes take effect immediately for active listings and apply to newly created listings.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-market-settings')">Cancel</button>
+        <button class="btn btn-blurple" onclick="submitMarketplaceSettings()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deposit -->
+  <div class="modal-overlay" id="modal-deposit">
+    <div class="modal">
+      <div class="modal-header">Deposit Item</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Item Name</label>
+          <input type="text" id="dep-name" class="input-field" placeholder="Arcanite Bar">
+        </div>
+        <div class="input-group">
+          <label>Quantity</label>
+          <input type="number" id="dep-qty" class="input-field" value="1" min="1" step="1">
+        </div>
+        <div class="input-group">
+          <label>Category</label>
+          <select id="dep-cat" class="input-field">
+            <option value="material">Material</option>
+            <option value="consumable">Consumable</option>
+            <option value="gear">Gear</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-deposit')">Cancel</button>
+        <button class="btn btn-blurple" onclick="submitDeposit()">Deposit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Award DKP -->
+  <div class="modal-overlay" id="modal-award-dkp">
+    <div class="modal">
+      <div class="modal-header">Award DKP</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>User</label>
+          <select id="award-user" class="input-field"></select>
+        </div>
+        <div class="input-group">
+          <label>Pool</label>
+          <select id="award-pool" class="input-field">
+            <option value="1">Main Raid Pool</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Amount</label>
+          <input type="number" id="award-amount" class="input-field" value="10" min="-9999" step="1">
+        </div>
+        <div class="input-group">
+          <label>Reason</label>
+          <input type="text" id="award-reason" class="input-field" placeholder="Attendance">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-award-dkp')">Cancel</button>
+        <button class="btn btn-green" onclick="submitAwardDKP()">Apply</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Event Signup (Upcoming Events) -->
+  <div class="modal-overlay" id="modal-event-interest">
+    <div class="modal">
+      <div class="modal-header">Event Signup</div>
+      <div class="modal-body">
+        <div class="embed-desc" id="interest-info-text" style="margin-bottom:10px;"></div>
+        <div class="input-group">
+          <label>Choose Role</label>
+          <select id="interest-role" class="input-field"></select>
+        </div>
+        <input type="hidden" id="interest-event-id">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-event-interest')">Cancel</button>
+        <button class="btn btn-green" onclick="submitEventInterest()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Role -->
+  <div class="modal-overlay" id="modal-create-role">
+    <div class="modal">
+      <div class="modal-header">Create Role</div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Role Name</label>
+          <input type="text" id="role-name" class="input-field" placeholder="Raid Leader">
+        </div>
+        <div class="input-group">
+          <label>Permissions</label>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="create-perm-manage_roles"> Manage Roles
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="create-perm-create_event"> Create Events
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="create-perm-start_auction"> Start DKP Auctions
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="create-perm-award_dkp"> Award DKP
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="create-perm-manage_market"> Manage Marketplace
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-create-role')">Cancel</button>
+        <button class="btn btn-blurple" onclick="submitCreateRole()">Create Role</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Role -->
+  <div class="modal-overlay" id="modal-edit-role">
+    <div class="modal">
+      <div class="modal-header">Edit Role</div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-role-id">
+        <div class="input-group">
+          <label>Role Name</label>
+          <input type="text" id="edit-role-name" class="input-field" placeholder="Role Name">
+          <div id="edit-role-name-help" style="font-size: 12px; color: var(--header-secondary); margin-top: 6px;"></div>
+        </div>
+        <div class="input-group">
+          <label>Permissions</label>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="edit-perm-manage_roles"> Manage Roles
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="edit-perm-create_event"> Create Events
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="edit-perm-start_auction"> Start DKP Auctions
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="edit-perm-award_dkp"> Award DKP
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; text-transform:none; font-size:14px; font-weight:500; color: var(--text-normal); margin-bottom:0;">
+              <input type="checkbox" id="edit-perm-manage_market"> Manage Marketplace
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-grey" onclick="closeModal('modal-edit-role')">Cancel</button>
+        <button class="btn btn-blurple" onclick="submitEditRole()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ==========================================
+   DATA MODEL (OFFLINE MOCK)
+   ========================================== */
+const mockData = {
+  users: [
+    { id: 1, username: 'GuildLeader', role: 'admin', balances: { 1: 250 }, gold: 5000 },
+    { id: 2, username: 'RaidLeader', role: 'officer', balances: { 1: 150 }, gold: 3000 },
+    { id: 3, username: 'MemberA', role: 'member', balances: { 1: 75 }, gold: 1200 },
+    { id: 4, username: 'MemberB', role: 'member', balances: { 1: 50 }, gold: 800 }
+  ],
+  roles: [
+    { id: 1, name: 'admin', permissions: { manage_roles: true, create_event: true, start_auction: true, award_dkp: true, manage_market: true } },
+    { id: 2, name: 'officer', permissions: { manage_roles: false, create_event: true, start_auction: true, award_dkp: true, manage_market: true } },
+    { id: 3, name: 'member', permissions: { manage_roles: false, create_event: false, start_auction: false, award_dkp: false, manage_market: false } }
+  ],
+  pools: [
+    { id: 1, name: 'Main Raid Pool', cap: 0, rules: 'Standard DKP' }
+  ],
+  events: [
+    { id: 1, name: 'Molten Core', poolId: 1, date: Date.now() + 3600 * 1000, participants: [2,3,4], type: 'Raid' }
+  ],
+  auctions: [
+    {
+      id: 1,
+      item: 'Legendary Sword',
+      poolId: 1,
+      startBid: 20,
+      currentBid: 35,
+      highBidder: 3,
+      startedBy: 2,
+      startedAt: Date.now() - 180000,
+      endsAt: Date.now() + 60000,
+      status: 'active'
+    }
+  ],
+  market: [
+    { id: 1, sellerId: 3, name: 'Potion Stack', type: 'fixed', price: 50, currency: 'Gold', status: 'active' },
+    { id: 2, sellerId: 4, name: 'Enchanted Cloak', type: 'auction', startBid: 80, currentBid: 100, highBidder: 2, currency: 'Gold', status: 'active' }
+  ],
+  bank: [
+    { id: 1, name: 'Arcanite Bar', qty: 12, category: 'material', depositedBy: 1, at: Date.now() - 86400000 },
+    { id: 2, name: 'Flask of Titans', qty: 5, category: 'consumable', depositedBy: 2, at: Date.now() - 43200000 }
+  ],
+  logs: [
+    { id: 1, at: Date.now() - 600000, actor: 'GuildLeader', action: 'Create Pool', details: 'Main Raid Pool' },
+    { id: 2, at: Date.now() - 300000, actor: 'RaidLeader', action: 'Start Auction', details: 'Legendary Sword (start 20 DKP)' }
+  ]
+};
+
+/* ==========================================
+   ICONS (SVG PATHS)
+   ========================================== */
+const SVGS = {
+  home: `<svg class="icon-sm" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`,
+  calendar: `<svg class="icon-sm" viewBox="0 0 24 24"><path d="M7 2h2v2h6V2h2v2h3v18H4V4h3V2zm13 8H6v10h14V10z"/></svg>`,
+  cogs: `<svg class="icon-sm" viewBox="0 0 24 24"><path d="M19.14,12.94a7.49,7.49,0,0,0,.05-.94,7.49,7.49,0,0,0-.05-.94l2.11-1.65a.5.5,0,0,0,.12-.63l-2-3.46a.5.5,0,0,0-.6-.22l-2.49,1a7.3,7.3,0,0,0-1.63-.94l-.38-2.65A.5.5,0,0,0,12.79,2H11.21a.5.5,0,0,0-.49.42L10.34,5.07a7.3,7.3,0,0,0-1.63.94l-2.49-1a.5.5,0,0,0-.6.22l-2,3.46a.5.5,0,0,0,.12.63L5.86,11.06a7.49,7.49,0,0,0-.05.94,7.49,7.49,0,0,0,.05.94L3.75,14.59a.5.5,0,0,0-.12.63l2,3.46a.5.5,0,0,0,.6.22l2.49-1a7.3,7.3,0,0,0,1.63.94l.38,2.65a.5.5,0,0,0,.49.42h1.58a.5.5,0,0,0,.49-.42l.38-2.65a7.3,7.3,0,0,0,1.63-.94l2.49,1a.5.5,0,0,0,.6-.22l2-3.46a.5.5,0,0,0-.12-.63ZM12,15.5A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z"/></svg>`,
+  market: `<svg class="icon-sm" viewBox="0 0 24 24"><path d="M16 6V4H8v2H2v2h1l1.6 10.4A2 2 0 006.6 20h10.8a2 2 0 002-1.6L21 8h1V6zM8 4h8v2H8zm10.4 14H5.6L4.1 8h15.8z"/></svg>`,
+  bank: `<svg class="icon-sm" viewBox="0 0 24 24"><path d="M12 2L2 7v2h20V7L12 2zm0 4.2L18.6 9H5.4L12 6.2zM4 11h16v9H4v-9zm2 2v5h2v-5H6zm4 0v5h2v-5h-2zm4 0v5h2v-5h-2zm4 0v5h2v-5h-2z"/></svg>`,
+  skull: `<svg class="icon-sm" viewBox="0 0 24 24"><path d="M12 2a8 8 0 00-8 8v3a3 3 0 003 3v4h3v-3h4v3h3v-4a3 3 0 003-3v-3a8 8 0 00-8-8zm-3 12a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/></svg>`,
+  eyeSlash: `<svg class="icon-sm" viewBox="0 0 24 24"><path d="M12 6a9.77 9.77 0 018.94 6 9.77 9.77 0 01-1.67 2.57l1.43 1.43A11.77 11.77 0 0024 12C22.15 7.74 17.72 5 12 5a11.52 11.52 0 00-3.11.43l1.72 1.72A9.7 9.7 0 0112 6zm-9.19-.19L4.22 7.22A11.73 11.73 0 000 12c1.85 4.26 6.28 7 12 7a11.52 11.52 0 003.11-.43l1.72 1.72 1.41-1.41L4.22 4.22zM12 18c-4.42 0-8.07-2.27-9.94-6a9.77 9.77 0 012.57-3.34l1.5 1.5A3.96 3.96 0 006 12a4 4 0 006.84 2.82l1.5 1.5A9.7 9.7 0 0112 18zm-2.12-8.95l3.07 3.07A1.99 1.99 0 019.88 9.05zM12 8a4 4 0 014 4 3.96 3.96 0 00-.16-1.11l2.53 2.53A3.98 3.98 0 0016 12a4 4 0 00-4-4 3.98 3.98 0 00-1.42.26l1.3 1.3A1.99 1.99 0 0112 10a2 2 0 00-2 2 1.99 1.99 0 00.44 1.26l1.3 1.3A3.98 3.98 0 0012 16a4 4 0 004-4 3.98 3.98 0 00-.26-1.42l1.3 1.3A1.99 1.99 0 0114 12a2 2 0 00-2-2 1.99 1.99 0 00-1.26.44l-1.3-1.3A3.98 3.98 0 0012 8z"/></svg>`
+};
+
+/* ==========================================
+   STATE
+   ========================================== */
+const currentState = {
+  activeChannel: 'dkp-system',
+  currentUserId: 1,
+  panelOpen: false,
+  panelChannel: null,
+  panelMsgId: null,
+  panelScreen: 'home'
+};
+
+/* ==========================================
+   HELPERS
+   ========================================== */
+function nowTs() { return Date.now(); }
+function fmt(n) { return String(n); }
+
+function formatTimestamp(ts) {
+  const d = new Date(ts);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+function formatDateTime(ts) {
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.className = '';
+  t.classList.add(type === 'error' ? 'error' : 'success');
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 1800);
+}
+
+function getCurrentUser() {
+  return mockData.users.find(u => u.id === currentState.currentUserId);
+}
+function getUserById(id) {
+  return mockData.users.find(u => u.id === id);
+}
+function getPoolName(id) {
+  return mockData.pools.find(p => p.id === id)?.name || 'Unknown Pool';
+}
+
+function getRoleByName(roleName) {
+  return mockData.roles.find(r => r.name === roleName) || null;
+}
+
+function getRoleById(id) {
+  return mockData.roles.find(r => r.id === Number(id)) || null;
+}
+
+function isSystemRole(roleName) {
+  const key = String(roleName || '').toLowerCase();
+  return key === 'admin' || key === 'officer' || key === 'member';
+}
+
+function isRoleInUse(roleName) {
+  return mockData.users.some(u => u.role === roleName);
+}
+
+function getCurrentRole() {
+  const u = getCurrentUser();
+  return u ? getRoleByName(u.role) : null;
+}
+
+function userHasPermission(permissionKey) {
+  const role = getCurrentRole();
+  return !!role?.permissions?.[permissionKey];
+}
+
+// Backward-compatible helper (deprecated in favor of userHasPermission)
+function userCanManage() {
+  return userHasPermission('create_event') || userHasPermission('start_auction') || userHasPermission('award_dkp') || userHasPermission('manage_market') || userHasPermission('manage_roles');
+}
+
+function addLog(action, details) {
+  const id = (mockData.logs.reduce((m, l) => Math.max(m, l.id), 0) || 0) + 1;
+  const actor = getCurrentUser()?.username || 'Unknown';
+  mockData.logs.unshift({
+    id,
+    at: nowTs(),
+    actor,
+    action,
+    details
+  });
+
+  // Keep it bounded
+  if (mockData.logs.length > 200) mockData.logs.length = 200;
+}
+
+function upsertMessage(channel, message) {
+  const msgs = channelMessages[channel] || [];
+  const idx = msgs.findIndex(m => m.id === message.id);
+  if (idx >= 0) {
+    // Preserve original timestamp unless explicitly overridden.
+    if (message.createdAt == null) message.createdAt = msgs[idx].createdAt;
+    else message.createdAt = msgs[idx].createdAt ?? message.createdAt;
+    msgs[idx] = message;
+  } else {
+    msgs.push(message);
+  }
+}
+
+function removeMessage(channel, messageId) {
+  const msgs = channelMessages[channel] || [];
+  const idx = msgs.findIndex(m => m.id === messageId);
+  if (idx >= 0) msgs.splice(idx, 1);
+}
+
+function resetModalFields(modalId) {
+  // Minimal reset approach; each submit handler also sets defaults.
+  if (modalId === 'modal-bid') {
+    document.getElementById('bid-amount').value = '';
+    document.getElementById('bid-listing-id').value = '';
+    document.getElementById('bid-listing-type').value = '';
+    document.getElementById('bid-info-text').textContent = '';
+  }
+
+  if (modalId === 'modal-create-role') {
+    const nameEl = document.getElementById('role-name');
+    if (nameEl) nameEl.value = '';
+
+    for (const key of ROLE_PERMISSION_KEYS) {
+      const cb = document.getElementById(`create-perm-${key}`);
+      if (cb) cb.checked = false;
+    }
+  }
+
+  if (modalId === 'modal-edit-role') {
+    const idEl = document.getElementById('edit-role-id');
+    const nameEl = document.getElementById('edit-role-name');
+    const helpEl = document.getElementById('edit-role-name-help');
+
+    if (idEl) idEl.value = '';
+    if (nameEl) {
+      nameEl.value = '';
+      nameEl.disabled = false;
+    }
+    if (helpEl) helpEl.textContent = '';
+
+    for (const key of ROLE_PERMISSION_KEYS) {
+      const cb = document.getElementById(`edit-perm-${key}`);
+      if (cb) cb.checked = false;
+    }
+  }
+}
+
+/* ==========================================
+   UI ENGINE: MESSAGES & CHANNELS
+   ========================================== */
+const channelMessages = {
+  'dkp-system': [],
+  'dkp-auctions': [],
+  'marketplace': [],
+  'guild-bank': [],
+  'active-raids': [],
+  'raid-logs': []
+};
+
+// Added channel for upcoming event signup boxes
+channelMessages['upcomming-events'] = [];
+
+// Control Panel Entry (dkp-system)
+channelMessages['dkp-system'].push({
+  id: 'intro-panel',
+  bot: true,
+  user: 'Universal DKP Bot',
+  createdAt: nowTs(),
+  embed: {
+    title: 'DKP Management Panel',
+    desc: 'Click the button below to open your personal control panel. All interactions happen locally (offline) in this demo.',
+    color: 'blurple'
+  },
+  components: [[{ label: 'Open Control Panel', style: 'blurple', action: 'open_panel', icon: 'cogs' }]]
+});
+
+// Initial welcome messages
+Object.keys(channelMessages).forEach(ch => {
+  channelMessages[ch].unshift({
+    id: 'init-' + ch,
+    user: 'System',
+    createdAt: nowTs(),
+    content: `Welcome to #${ch}.`
+  });
+});
+
+/* ==========================================
+   CHANNEL SWITCHING
+   ========================================== */
+function switchChannel(ch) {
+  currentState.activeChannel = ch;
+  document.querySelectorAll('.channel').forEach(el => el.classList.remove('active'));
+  const active = document.getElementById(`chan-${ch}`);
+  if (active) active.classList.add('active');
+  document.getElementById('header-title').textContent = ch;
+
+  // Mimic ephemeral UI: close the control panel when changing channels
+  currentState.panelOpen = false;
+  currentState.panelChannel = null;
+  currentState.panelMsgId = null;
+
+  renderMessages();
+}
+
+/* ==========================================
+   RENDERING
+   ========================================== */
+function renderMessages() {
+  const container = document.getElementById('messages-container');
+  if (!container) return;
+
+  container.innerHTML = '';
+  const msgs = channelMessages[currentState.activeChannel] || [];
+
+  for (const msg of msgs) {
+    const msgEl = document.createElement('div');
+    msgEl.className = 'message';
+    msgEl.dataset.msgId = msg.id;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar' + (msg.bot ? ' bot' : '');
+    avatar.textContent = (msg.bot ? 'BOT' : (msg.user ? msg.user.slice(0, 2).toUpperCase() : '??'));
+    msgEl.appendChild(avatar);
+
+    const content = document.createElement('div');
+    content.className = 'message-content';
+
+    const header = document.createElement('div');
+    const uname = document.createElement('span');
+    uname.className = 'username';
+    uname.textContent = msg.user || 'Unknown';
+
+    header.appendChild(uname);
+
+    if (msg.bot) {
+      const botTag = document.createElement('span');
+      botTag.className = 'bot-tag';
+      botTag.textContent = 'BOT';
+      header.appendChild(botTag);
+    }
+
+    const ts = document.createElement('span');
+    ts.className = 'timestamp';
+    ts.textContent = formatTimestamp(msg.createdAt || nowTs());
+    header.appendChild(ts);
+
+    content.appendChild(header);
+
+    if (msg.content) {
+      const text = document.createElement('div');
+      text.className = 'text-block';
+      text.textContent = msg.content;
+      content.appendChild(text);
+    }
+
+    if (msg.embed) {
+      content.appendChild(renderEmbed(msg.embed));
+    }
+
+    if (msg.components && Array.isArray(msg.components)) {
+      for (const row of msg.components) {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'component-row';
+        for (const comp of row) {
+          rowEl.appendChild(renderButton(comp));
+        }
+        content.appendChild(rowEl);
+      }
+    }
+
+    msgEl.appendChild(content);
+    container.appendChild(msgEl);
+  }
+
+  // Scroll to bottom
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderEmbed(embed) {
+  const el = document.createElement('div');
+  el.className = 'embed';
+  const colorMap = { blurple: 'var(--blurple)', green: 'var(--green)', red: 'var(--red)', grey: 'var(--button-secondary)' };
+  el.style.borderLeftColor = colorMap[embed.color] || 'var(--blurple)';
+
+  const title = document.createElement('div');
+  title.className = 'embed-title';
+  title.textContent = embed.title || '';
+  el.appendChild(title);
+
+  const desc = document.createElement('div');
+  desc.className = 'embed-desc';
+  desc.textContent = embed.desc || '';
+  el.appendChild(desc);
+
+  if (embed.fields && embed.fields.length) {
+    const grid = document.createElement('div');
+    grid.className = 'embed-fields';
+    for (const f of embed.fields) {
+      const field = document.createElement('div');
+      field.className = 'field';
+      const n = document.createElement('div');
+      n.className = 'field-name';
+      n.textContent = f.name;
+      const v = document.createElement('div');
+      v.className = 'field-value';
+      v.textContent = f.value;
+      field.appendChild(n);
+      field.appendChild(v);
+      grid.appendChild(field);
+    }
+    el.appendChild(grid);
+  }
+
+  return el;
+}
+
+function renderButton(comp) {
+  const b = document.createElement('button');
+  b.className = 'btn ' + (comp.style === 'green' ? 'btn-green' : comp.style === 'red' ? 'btn-red' : comp.style === 'grey' ? 'btn-grey' : 'btn-blurple');
+  b.disabled = !!comp.disabled;
+  b.innerHTML = `${comp.icon ? (SVGS[comp.icon] || '') : ''}${comp.label}`;
+  b.onclick = () => handleAction(comp.action, comp.payload || {});
+  return b;
+}
+
+/* ==========================================
+   ACTION ROUTER
+   ========================================== */
+function handleAction(action, payload = {}) {
+  switch (action) {
+    case 'open_panel':
+      openControlPanel();
+      break;
+
+    case 'panel_nav':
+      currentState.panelScreen = payload.screen || 'home';
+      refreshControlPanel();
+      renderMessages();
+      break;
+
+    case 'panel_close':
+      closeControlPanel();
+      break;
+
+    case 'open_modal':
+      openModal(payload.modalId);
+      break;
+
+    case 'open_bid':
+      openBidModal(payload.type, payload.id);
+      break;
+
+    case 'buy_market':
+      buyMarketListing(payload.id);
+      break;
+
+    case 'cancel_market':
+      cancelMarketListing(payload.id);
+      break;
+
+    case 'edit_role':
+      openEditRoleModal(payload.id);
+      break;
+
+    case 'delete_role':
+      deleteRole(payload.id);
+      break;
+
+    default:
+      showToast(`Unknown action: ${action}`, 'error');
+      break;
+  }
+}
+
+/* ==========================================
+   CONTROL PANEL
+   ========================================== */
+function openControlPanel() {
+  currentState.panelOpen = true;
+  currentState.panelChannel = currentState.activeChannel;
+  currentState.panelMsgId = `control-panel-${currentState.currentUserId}`;
+  currentState.panelScreen = 'home';
+  refreshControlPanel();
+  renderMessages();
+}
+
+function closeControlPanel() {
+  if (!currentState.panelOpen) return;
+  currentState.panelOpen = false;
+  currentState.panelChannel = null;
+  currentState.panelMsgId = null;
+  showToast('Closed control panel');
+  renderMessages();
+}
+
+function refreshControlPanel() {
+  if (!currentState.panelOpen) return;
+
+  const u = getCurrentUser();
+  const screen = currentState.panelScreen || 'home';
+
+  const embed = buildPanelEmbed(screen, u);
+  const actionRows = buildPanelComponents(screen, u);
+
+  const navRow = [
+    { label: 'Home', style: 'grey', action: 'panel_nav', icon: 'home', payload: { screen: 'home' }, disabled: screen === 'home' },
+    { label: 'Events', style: 'grey', action: 'panel_nav', icon: 'calendar', payload: { screen: 'events' }, disabled: screen === 'events' },
+    { label: 'Auctions', style: 'grey', action: 'panel_nav', icon: 'cogs', payload: { screen: 'auctions' }, disabled: screen === 'auctions' },
+    { label: 'Market', style: 'grey', action: 'panel_nav', icon: 'market', payload: { screen: 'market' }, disabled: screen === 'market' },
+    { label: 'Bank', style: 'grey', action: 'panel_nav', icon: 'bank', payload: { screen: 'bank' }, disabled: screen === 'bank' },
+    { label: 'Roles', style: 'grey', action: 'panel_nav', icon: 'cogs', payload: { screen: 'roles' }, disabled: screen === 'roles' || !userHasPermission('manage_roles') },
+    { label: 'Admin', style: 'grey', action: 'panel_nav', icon: 'cogs', payload: { screen: 'admin' }, disabled: screen === 'admin' || !isAdminUser() },
+    { label: 'Logs', style: 'grey', action: 'panel_nav', icon: 'skull', payload: { screen: 'logs' }, disabled: screen === 'logs' },
+    { label: 'Close', style: 'red', action: 'panel_close', icon: 'eyeSlash', payload: {}, disabled: false }
+  ];
+
+  const msg = {
+    id: currentState.panelMsgId,
+    bot: true,
+    user: 'Universal DKP Bot',
+    createdAt: nowTs(),
+    embed,
+    components: [...actionRows, navRow]
+  };
+
+  // Pin it to dkp-system in this demo (panel lives there visually)
+  upsertMessage('dkp-system', msg);
+}
+
+function buildPanelEmbed(screen, u) {
+  const dkp = u.balances?.[1] ?? 0;
+  const baseFields = [
+    { name: 'User', value: `${u.username} (${u.role})` },
+    { name: 'Main Raid Pool DKP', value: `${fmt(dkp)} DKP` },
+    { name: 'Gold', value: `${fmt(u.gold)}g` }
+  ];
+
+  if (screen === 'events') {
+    const upcoming = mockData.events
+      .slice(0, 6)
+      .map(e => `• ${e.name} — ${formatDateTime(e.date)} (${getPoolName(e.poolId)})`)
+      .join('\n') || 'No events.';
+    return {
+      title: 'Control Panel — Events',
+      desc: upcoming,
+      fields: baseFields,
+      color: 'blurple'
+    };
+  }
+
+  if (screen === 'auctions') {
+    const act = mockData.auctions.filter(a => a.status === 'active');
+    const lines = act.map(a => {
+      const endsIn = Math.max(0, Math.floor((a.endsAt - nowTs()) / 1000));
+      return `• ${a.item} — Current: ${fmt(a.currentBid)} DKP — Ends in: ${endsIn}s`;
+    }).join('\n') || 'No active auctions.';
+    return {
+      title: 'Control Panel — Auctions',
+      desc: lines,
+      fields: baseFields,
+      color: 'green'
+    };
+  }
+
+  if (screen === 'market') {
+    const act = mockData.market.filter(m => m.status === 'active');
+    const lines = act.map(m => {
+      if (m.type === 'fixed') return `• ${m.name} — ${fmt(m.price)}g (Fixed)`;
+      return `• ${m.name} — ${fmt(m.currentBid || m.startBid)}g (Auction)`;
+    }).join('\n') || 'No active listings.';
+    return {
+      title: 'Control Panel — Marketplace',
+      desc: lines,
+      fields: baseFields,
+      color: 'blurple'
+    };
+  }
+
+  if (screen === 'bank') {
+    const items = mockData.bank.slice(0, 8).map(i => `• ${i.qty}x ${i.name} (${i.category})`).join('\n') || 'No items in bank.';
+    return {
+      title: 'Control Panel — Guild Bank',
+      desc: items,
+      fields: baseFields,
+      color: 'blurple'
+    };
+  }
+
+  if (screen === 'logs') {
+    const lines = mockData.logs.slice(0, 8).map(l => `• [${formatTimestamp(l.at)}] ${l.actor}: ${l.action} — ${l.details}`).join('\n') || 'No logs yet.';
+    return {
+      title: 'Control Panel — Activity Logs',
+      desc: lines,
+      fields: baseFields,
+      color: 'grey'
+    };
+  }
+
+
+  if (screen === 'roles') {
+    if (!userHasPermission('manage_roles')) {
+      return {
+        title: 'Control Panel — Roles',
+        desc: 'You do not have permission to manage roles.',
+        fields: baseFields,
+        color: 'red'
+      };
+    }
+
+    const lines = mockData.roles
+      .slice()
+      .sort((a, b) => a.id - b.id)
+      .map(r => {
+        const perms = Object.keys(r.permissions || {}).filter(k => r.permissions[k]);
+        return `• ${r.name} — ${perms.length ? perms.join(', ') : 'no permissions'}`;
+      })
+      .join('\n') || 'No roles defined.';
+
+    return {
+      title: 'Control Panel — Roles',
+      desc: `Manage roles and permissions:\n${lines}`,
+      fields: baseFields,
+      color: 'blurple'
+    };
+  }
+
+
+  // Home
+  const activeAuctions = mockData.auctions.filter(a => a.status === 'active').length;
+  const activeListings = mockData.market.filter(m => m.status === 'active').length;
+  const upcomingEvents = mockData.events.filter(e => e.date >= nowTs()).length;
+
+  return {
+    title: 'Control Panel — Home',
+    desc:
+      `Summary (offline demo):\n` +
+      `• Upcoming events: ${upcomingEvents}\n` +
+      `• Active DKP auctions: ${activeAuctions}\n` +
+      `• Active market listings: ${activeListings}\n\n` +
+      `Use the buttons below to create events, start auctions, manage listings, or manage roles.`,
+    fields: baseFields,
+    color: 'blurple'
+  };
+}
+
+function buildPanelComponents(screen, u) {
+  const rows = [];
+
+  // Contextual action buttons per screen
+  if (screen === 'events') {
+    rows.push([
+      {
+        label: 'Create Event',
+        style: userHasPermission('create_event') ? 'blurple' : 'grey',
+        action: userHasPermission('create_event') ? 'open_modal' : 'noop',
+        icon: 'calendar',
+        payload: { modalId: 'modal-create-event' },
+        disabled: !userHasPermission('create_event')
+      }
+    ]);
+  }
+
+  if (screen === 'auctions') {
+    rows.push([
+      {
+        label: 'Start DKP Auction',
+        style: userHasPermission('start_auction') ? 'green' : 'grey',
+        action: userHasPermission('start_auction') ? 'open_modal' : 'noop',
+        icon: 'cogs',
+        payload: { modalId: 'modal-start-auction' },
+        disabled: !userHasPermission('start_auction')
+      }
+    ]);
+  }
+
+  if (screen === 'market') {
+    rows.push([
+      {
+        label: 'Sell Item',
+        style: 'green',
+        action: 'open_modal',
+        icon: 'market',
+        payload: { modalId: 'modal-sell-item' }
+      }
+    ]);
+  }
+
+  if (screen === 'bank') {
+    rows.push([
+      {
+        label: 'Deposit Item',
+        style: 'blurple',
+        action: 'open_modal',
+        icon: 'bank',
+        payload: { modalId: 'modal-deposit' }
+      }
+    ]);
+  }
+
+
+  if (screen === 'roles') {
+    const canManageRoles = userHasPermission('manage_roles');
+
+    rows.push([
+      {
+        label: 'Create Role',
+        style: canManageRoles ? 'blurple' : 'grey',
+        action: canManageRoles ? 'open_modal' : 'noop',
+        icon: 'cogs',
+        payload: { modalId: 'modal-create-role' },
+        disabled: !canManageRoles
+      }
+    ]);
+
+    for (const r of mockData.roles.slice().sort((a, b) => a.id - b.id)) {
+      rows.push([
+        {
+          label: `Edit ${r.name}`,
+          style: canManageRoles ? 'grey' : 'grey',
+          action: canManageRoles ? 'edit_role' : 'noop',
+          icon: 'cogs',
+          payload: { id: r.id },
+          disabled: !canManageRoles
+        },
+        {
+          label: `Delete ${r.name}`,
+          style: canManageRoles ? 'red' : 'grey',
+          action: canManageRoles ? 'delete_role' : 'noop',
+          icon: 'eyeSlash',
+          payload: { id: r.id },
+          disabled: !canManageRoles || isSystemRole(r.name) || isRoleInUse(r.name)
+        }
+      ]);
+    }
+  }
+
+  if (screen === 'home') {
+    const homeRow = [];
+
+    if (userHasPermission('award_dkp')) {
+      homeRow.push({
+        label: 'Award DKP',
+        style: 'green',
+        action: 'open_modal',
+        icon: 'cogs',
+        payload: { modalId: 'modal-award-dkp' }
+      });
+    }
+    if (userHasPermission('start_auction')) {
+      homeRow.push({
+        label: 'Start DKP Auction',
+        style: 'green',
+        action: 'open_modal',
+        icon: 'cogs',
+        payload: { modalId: 'modal-start-auction' }
+      });
+    }
+    if (userHasPermission('create_event')) {
+      homeRow.push({
+        label: 'Create Event',
+        style: 'blurple',
+        action: 'open_modal',
+        icon: 'calendar',
+        payload: { modalId: 'modal-create-event' }
+      });
+    }
+
+    homeRow.push({
+      label: 'Sell Item',
+      style: 'blurple',
+      action: 'open_modal',
+      icon: 'market',
+      payload: { modalId: 'modal-sell-item' }
+    });
+
+    homeRow.push({
+      label: 'Deposit Item',
+      style: 'grey',
+      action: 'open_modal',
+      icon: 'bank',
+      payload: { modalId: 'modal-deposit' }
+    });
+
+    if (homeRow.length) rows.push(homeRow);
+  }
+
+  return rows;
+}
+
+/* ==========================================
+   USER SWITCHER
+   ========================================== */
+function switchUserRole(id) {
+  currentState.currentUserId = parseInt(id, 10);
+  const u = getCurrentUser();
+  showToast(`Switched view to: ${u.username} (${u.role})`);
+
+  // When switching user, close any open modals (helps reduce confusion)
+  closeAllModals();
+
+  // Refresh panel if open
+  if (currentState.panelOpen) {
+    currentState.panelMsgId = `control-panel-${currentState.currentUserId}`;
+    refreshControlPanel();
+  } else {
+    // Sync dynamic channel content so button permissions update
+    syncDynamicChannels();
+    renderMessages();
+  }
+}
+
+function initUserSwitcher() {
+  const sel = document.getElementById('user-role-switch');
+  if (!sel) return;
+
+  sel.innerHTML = '';
+  for (const u of mockData.users) {
+    const opt = document.createElement('option');
+    opt.value = u.id;
+    opt.textContent = `${u.username} (${u.role})`;
+    sel.appendChild(opt);
+  }
+  sel.value = String(currentState.currentUserId);
+}
+
+/* ==========================================
+   MODALS
+   ========================================== */
+function openModal(modalId) {
+  const m = document.getElementById(modalId);
+  if (!m) return;
+
+  if (modalId === 'modal-award-dkp') populateAwardUserSelect();
+  if (modalId === 'modal-create-role') resetModalFields('modal-create-role');
+  m.style.display = 'flex';
+}
+function closeModal(modalId) {
+  const m = document.getElementById(modalId);
+  if (!m) return;
+  m.style.display = 'none';
+  resetModalFields(modalId);
+}
+function closeAllModals() {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
+}
+
+function wireModalOverlayClickToClose() {
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.style.display = 'none';
+      }
+    });
+  });
+}
+
+function populateAwardUserSelect() {
+  const sel = document.getElementById('award-user');
+  if (!sel) return;
+  sel.innerHTML = '';
+  for (const u of mockData.users) {
+    const opt = document.createElement('option');
+    opt.value = u.id;
+    opt.textContent = `${u.username} (${u.role})`;
+    sel.appendChild(opt);
+  }
+  sel.value = String(currentState.currentUserId);
+}
+
+/* ==========================================
+   SUBMIT HANDLERS
+   ========================================== */
+function submitCreateEvent() {
+  if (!userHasPermission('create_event')) {
+    showToast('You do not have permission to create events.', 'error');
+    return;
+  }
+
+  const name = (document.getElementById('evt-name')?.value || '').trim();
+  const poolId = Number(document.getElementById('evt-pool')?.value || 1);
+  const offset = Number(document.getElementById('evt-date')?.value || 0);
+
+  if (!name) {
+    showToast('Event name is required.', 'error');
+    return;
+  }
+
+  const id = (mockData.events.reduce((m, e) => Math.max(m, e.id), 0) || 0) + 1;
+  const evt = {
+    id,
+    name,
+    poolId,
+    date: nowTs() + offset,
+    participants: [currentState.currentUserId],
+    type: 'Raid'
+  };
+
+  mockData.events.push(evt);
+  addLog('Create Event', `${name} (${getPoolName(poolId)}) on ${formatDateTime(evt.date)}`);
+
+  closeModal('modal-create-event');
+  showToast('Event created');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function submitStartAuction() {
+  if (!userHasPermission('start_auction')) {
+    showToast('You do not have permission to start DKP auctions.', 'error');
+    return;
+  }
+
+  const item = (document.getElementById('auc-item')?.value || '').trim();
+  const startBid = Number(document.getElementById('auc-start')?.value || 0);
+  const duration = Number(document.getElementById('auc-duration')?.value || 60);
+
+  if (!item) {
+    showToast('Item name is required.', 'error');
+    return;
+  }
+  if (!Number.isFinite(startBid) || startBid < 0) {
+    showToast('Starting bid must be a non-negative number.', 'error');
+    return;
+  }
+
+  const id = (mockData.auctions.reduce((m, a) => Math.max(m, a.id), 0) || 0) + 1;
+  const auction = {
+    id,
+    item,
+    poolId: 1,
+    startBid,
+    currentBid: startBid,
+    highBidder: null,
+    startedBy: currentState.currentUserId,
+    startedAt: nowTs(),
+    endsAt: nowTs() + (duration * 1000),
+    status: 'active'
+  };
+
+  mockData.auctions.push(auction);
+  addLog('Start Auction', `${item} (start ${fmt(startBid)} DKP, ${duration}s)`);
+
+  closeModal('modal-start-auction');
+  showToast('Auction started');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function openBidModal(type, id) {
+  if (!type || !id) return;
+
+  let info = '';
+  let suggested = 0;
+
+  if (type === 'dkp') {
+    const a = mockData.auctions.find(x => x.id === Number(id));
+    if (!a) return;
+
+    const endsIn = Math.max(0, Math.floor((a.endsAt - nowTs()) / 1000));
+    info =
+      `${a.item}\n` +
+      `Current bid: ${fmt(a.currentBid)} DKP\n` +
+      `Ends in: ${endsIn}s\n` +
+      `Pool: ${getPoolName(a.poolId)}`;
+    suggested = a.currentBid + 1;
+  } else if (type === 'market') {
+    const m = mockData.market.find(x => x.id === Number(id));
+    if (!m) return;
+
+    if (m.type !== 'auction') {
+      showToast('This listing is fixed-price. Use Buy instead.', 'error');
+      return;
+    }
+
+    const seller = getUserById(m.sellerId);
+    info =
+      `${m.name}\n` +
+      `Current bid: ${fmt(m.currentBid)}g\n` +
+      `Seller: ${seller?.username || 'Unknown'}`;
+    suggested = (m.currentBid || m.startBid || 0) + 1;
+  } else {
+    return;
+  }
+
+  document.getElementById('bid-info-text').textContent = info;
+  document.getElementById('bid-listing-id').value = String(id);
+  document.getElementById('bid-listing-type').value = type;
+  document.getElementById('bid-amount').value = String(suggested);
+
+  openModal('modal-bid');
+}
+
+function submitBid() {
+  const listingId = Number(document.getElementById('bid-listing-id')?.value);
+  const listingType = document.getElementById('bid-listing-type')?.value;
+  const amount = Number(document.getElementById('bid-amount')?.value);
+
+  if (!listingId || !listingType) {
+    showToast('Missing bid context.', 'error');
+    return;
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showToast('Bid amount must be greater than 0.', 'error');
+    return;
+  }
+
+  const u = getCurrentUser();
+
+  if (listingType === 'dkp') {
+    const a = mockData.auctions.find(x => x.id === listingId);
+    if (!a || a.status !== 'active') {
+      showToast('Auction is not active.', 'error');
+      return;
+    }
+    if (amount <= a.currentBid) {
+      showToast('Bid must be higher than the current bid.', 'error');
+      return;
+    }
+
+    const available = u.balances?.[a.poolId] ?? 0;
+    if (amount > available) {
+      showToast(`Insufficient DKP. You have ${fmt(available)}.`, 'error');
+      return;
+    }
+
+    a.currentBid = amount;
+    a.highBidder = u.id;
+
+    addLog('Bid (DKP)', `${u.username} bid ${fmt(amount)} DKP on ${a.item}`);
+    showToast('Bid placed');
+  }
+
+  if (listingType === 'market') {
+    const m = mockData.market.find(x => x.id === listingId);
+    if (!m || m.status !== 'active' || m.type !== 'auction') {
+      showToast('Listing is not an active auction.', 'error');
+      return;
+    }
+    if (amount <= (m.currentBid || m.startBid || 0)) {
+      showToast('Bid must be higher than the current bid.', 'error');
+      return;
+    }
+    if (amount > (u.gold ?? 0)) {
+      showToast(`Insufficient gold. You have ${fmt(u.gold)}g.`, 'error');
+      return;
+    }
+
+    m.currentBid = amount;
+    m.highBidder = u.id;
+
+    addLog('Bid (Market)', `${u.username} bid ${fmt(amount)}g on ${m.name}`);
+    showToast('Bid placed');
+  }
+
+  closeModal('modal-bid');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function submitSellItem() {
+  const name = (document.getElementById('sell-name')?.value || '').trim();
+  const type = document.getElementById('sell-type')?.value || 'fixed';
+  const price = Number(document.getElementById('sell-price')?.value || 0);
+  const currency = document.getElementById('sell-currency')?.value || 'Gold';
+
+  if (!name) {
+    showToast('Item name is required.', 'error');
+    return;
+  }
+  if (!Number.isFinite(price) || price <= 0) {
+    showToast('Price must be greater than 0.', 'error');
+    return;
+  }
+
+  const id = (mockData.market.reduce((m, x) => Math.max(m, x.id), 0) || 0) + 1;
+
+  const listing = {
+    id,
+    sellerId: currentState.currentUserId,
+    name,
+    type,
+    currency,
+    status: 'active'
+  };
+
+  if (type === 'fixed') {
+    listing.price = price;
+  } else {
+    listing.startBid = price;
+    listing.currentBid = price;
+    listing.highBidder = null;
+  }
+
+  mockData.market.push(listing);
+  addLog('Create Listing', `${name} (${type}) for ${fmt(price)} ${currency === 'Gold' ? 'g' : currency}`);
+
+  closeModal('modal-sell-item');
+  showToast('Listing created');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function submitDeposit() {
+  const name = (document.getElementById('dep-name')?.value || '').trim();
+  const qty = Number(document.getElementById('dep-qty')?.value || 1);
+  const cat = document.getElementById('dep-cat')?.value || 'material';
+
+  if (!name) {
+    showToast('Item name is required.', 'error');
+    return;
+  }
+  if (!Number.isFinite(qty) || qty <= 0) {
+    showToast('Quantity must be greater than 0.', 'error');
+    return;
+  }
+
+  const id = (mockData.bank.reduce((m, x) => Math.max(m, x.id), 0) || 0) + 1;
+  mockData.bank.unshift({
+    id,
+    name,
+    qty,
+    category: cat,
+    depositedBy: currentState.currentUserId,
+    at: nowTs()
+  });
+
+  addLog('Deposit', `${qty}x ${name} (${cat})`);
+  closeModal('modal-deposit');
+  showToast('Item deposited');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function submitAwardDKP() {
+  if (!userHasPermission('award_dkp')) {
+    showToast('You do not have permission to award DKP.', 'error');
+    return;
+  }
+
+  const userId = Number(document.getElementById('award-user')?.value);
+  const poolId = Number(document.getElementById('award-pool')?.value);
+  const amount = Number(document.getElementById('award-amount')?.value);
+  const reason = (document.getElementById('award-reason')?.value || '').trim() || 'Adjustment';
+
+  if (!userId || !poolId) {
+    showToast('Missing user or pool.', 'error');
+    return;
+  }
+  if (!Number.isFinite(amount) || amount === 0) {
+    showToast('Amount must be a non-zero number.', 'error');
+    return;
+  }
+
+  const target = getUserById(userId);
+  if (!target) {
+    showToast('User not found.', 'error');
+    return;
+  }
+
+  const before = target.balances?.[poolId] ?? 0;
+  target.balances = target.balances || {};
+  target.balances[poolId] = before + amount;
+
+  addLog('Award DKP', `${target.username}: ${amount > 0 ? '+' : ''}${fmt(amount)} DKP (${reason})`);
+  closeModal('modal-award-dkp');
+  showToast('DKP updated');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+/* ==========================================
+   ROLES: CRUD + PERMISSIONS
+   ========================================== */
+const ROLE_PERMISSION_KEYS = ['manage_roles', 'create_event', 'start_auction', 'award_dkp', 'manage_market'];
+
+function readRolePermissions(prefix) {
+  const perms = {};
+  for (const key of ROLE_PERMISSION_KEYS) {
+    const el = document.getElementById(`${prefix}-perm-${key}`);
+    perms[key] = !!el?.checked;
+  }
+  return perms;
+}
+
+function submitCreateRole() {
+  if (!userHasPermission('manage_roles')) {
+    showToast('You do not have permission to manage roles.', 'error');
+    return;
+  }
+
+  const name = (document.getElementById('role-name')?.value || '').trim();
+  if (!name) {
+    showToast('Role name is required.', 'error');
+    return;
+  }
+
+  const exists = mockData.roles.some(r => String(r.name).toLowerCase() === name.toLowerCase());
+  if (exists) {
+    showToast('Role name already exists.', 'error');
+    return;
+  }
+
+  const id = (mockData.roles.reduce((m, r) => Math.max(m, r.id), 0) || 0) + 1;
+  const permissions = readRolePermissions('create');
+
+  mockData.roles.push({ id, name, permissions });
+
+  const enabled = Object.keys(permissions).filter(k => permissions[k]);
+  addLog('Create Role', `${name} (${enabled.length ? enabled.join(', ') : 'no permissions'})`);
+
+  closeModal('modal-create-role');
+  showToast('Role created');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function openEditRoleModal(roleId) {
+  if (!userHasPermission('manage_roles')) {
+    showToast('You do not have permission to manage roles.', 'error');
+    return;
+  }
+
+  const role = getRoleById(roleId);
+  if (!role) {
+    showToast('Role not found.', 'error');
+    return;
+  }
+
+  const idEl = document.getElementById('edit-role-id');
+  const nameEl = document.getElementById('edit-role-name');
+  const helpEl = document.getElementById('edit-role-name-help');
+
+  if (idEl) idEl.value = String(role.id);
+
+  const nameLocked = isSystemRole(role.name) || isRoleInUse(role.name);
+  if (nameEl) {
+    nameEl.value = role.name || '';
+    nameEl.disabled = !!nameLocked;
+  }
+  if (helpEl) {
+    helpEl.textContent = nameLocked ? 'Role name is locked for system roles or roles currently assigned to users.' : '';
+  }
+
+  const perms = role.permissions || {};
+  for (const key of ROLE_PERMISSION_KEYS) {
+    const cb = document.getElementById(`edit-perm-${key}`);
+    if (cb) cb.checked = !!perms[key];
+  }
+
+  openModal('modal-edit-role');
+}
+
+function submitEditRole() {
+  if (!userHasPermission('manage_roles')) {
+    showToast('You do not have permission to manage roles.', 'error');
+    return;
+  }
+
+  const roleId = Number(document.getElementById('edit-role-id')?.value);
+  const role = getRoleById(roleId);
+  if (!role) {
+    showToast('Role not found.', 'error');
+    return;
+  }
+
+  const nameEl = document.getElementById('edit-role-name');
+  const newName = (nameEl?.value || '').trim();
+
+  if (!nameEl?.disabled) {
+    if (!newName) {
+      showToast('Role name is required.', 'error');
+      return;
+    }
+
+    const exists = mockData.roles.some(r => r.id !== role.id && String(r.name).toLowerCase() === newName.toLowerCase());
+    if (exists) {
+      showToast('Role name already exists.', 'error');
+      return;
+    }
+
+    role.name = newName;
+  }
+
+  role.permissions = readRolePermissions('edit');
+
+  const enabled = Object.keys(role.permissions || {}).filter(k => role.permissions[k]);
+  addLog('Edit Role', `${role.name} (${enabled.length ? enabled.join(', ') : 'no permissions'})`);
+
+  closeModal('modal-edit-role');
+  showToast('Role updated');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function deleteRole(roleId) {
+  if (!userHasPermission('manage_roles')) {
+    showToast('You do not have permission to manage roles.', 'error');
+    return;
+  }
+
+  const role = getRoleById(roleId);
+  if (!role) {
+    showToast('Role not found.', 'error');
+    return;
+  }
+
+  if (isSystemRole(role.name) || isRoleInUse(role.name)) {
+    showToast('This role cannot be deleted.', 'error');
+    return;
+  }
+
+  const ok = confirm(`Delete role "${role.name}"? This cannot be undone.`);
+  if (!ok) return;
+
+  const idx = mockData.roles.findIndex(r => r.id === role.id);
+  if (idx >= 0) mockData.roles.splice(idx, 1);
+
+  addLog('Delete Role', `${role.name}`);
+  showToast('Role deleted');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+
+/* ==========================================
+   MARKET ACTIONS
+   ========================================== */
+function buyMarketListing(id) {
+  const listing = mockData.market.find(x => x.id === Number(id));
+  if (!listing || listing.status !== 'active') {
+    showToast('Listing not available.', 'error');
+    return;
+  }
+  if (listing.type !== 'fixed') {
+    showToast('This is an auction listing. Use Bid instead.', 'error');
+    return;
+  }
+
+  const buyer = getCurrentUser();
+  const price = listing.price || 0;
+
+  if ((buyer.gold ?? 0) < price) {
+    showToast(`Insufficient gold. You have ${fmt(buyer.gold)}g.`, 'error');
+    return;
+  }
+
+  buyer.gold -= price;
+  listing.status = 'sold';
+
+  const seller = getUserById(listing.sellerId);
+  if (seller) seller.gold = (seller.gold ?? 0) + price;
+
+  addLog('Buy (Market)', `${buyer.username} bought ${listing.name} for ${fmt(price)}g`);
+  showToast('Purchase complete');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function cancelMarketListing(id) {
+  const listing = mockData.market.find(x => x.id === Number(id));
+  if (!listing || listing.status !== 'active') {
+    showToast('Listing not found or not active.', 'error');
+    return;
+  }
+
+  if (listing.sellerId !== currentState.currentUserId && !userHasPermission('manage_market')) {
+    showToast('You can only cancel your own listings.', 'error');
+    return;
+  }
+
+  listing.status = 'cancelled';
+  addLog('Cancel Listing', `${listing.name}`);
+  showToast('Listing cancelled');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+/* ==========================================
+   DYNAMIC CHANNEL MESSAGES
+   ========================================== */
+function syncDynamicChannels() {
+  syncAuctionChannel();
+  syncMarketChannel();
+  syncBankChannel();
+  syncRaidChannels();
+  syncLogsChannel();
+}
+
+function syncAuctionChannel() {
+  // Build a single message summarizing auctions
+  const act = mockData.auctions.filter(a => a.status === 'active');
+  const lines = act.map(a => {
+    const bidder = a.highBidder ? getUserById(a.highBidder)?.username : 'None';
+    const endsIn = Math.max(0, Math.floor((a.endsAt - nowTs()) / 1000));
+    return `• ${a.item} — ${fmt(a.currentBid)} DKP (High bidder: ${bidder}) — Ends in ${endsIn}s — [Bid]`;
+  });
+
+  const embed = {
+    title: 'Active DKP Auctions',
+    desc: lines.length ? lines.join('\n') : 'No active DKP auctions.',
+    color: 'green'
+  };
+
+  const components = [];
+
+  // Admin/officer can start auction
+  components.push([
+    {
+      label: 'Start DKP Auction',
+      style: userHasPermission('start_auction') ? 'green' : 'grey',
+      action: userHasPermission('start_auction') ? 'open_modal' : 'noop',
+      icon: 'cogs',
+      payload: { modalId: 'modal-start-auction' },
+      disabled: !userHasPermission('start_auction')
+    }
+  ]);
+
+  // Bid buttons per auction
+  for (const a of act) {
+    components.push([
+      { label: `Bid: ${a.item}`, style: 'blurple', action: 'open_bid', icon: 'cogs', payload: { type: 'dkp', id: a.id } }
+    ]);
+  }
+
+  upsertMessage('dkp-auctions', {
+    id: 'auctions-summary',
+    bot: true,
+    user: 'Universal DKP Bot',
+    createdAt: nowTs(),
+    embed,
+    components
+  });
+}
+
+function syncMarketChannel() {
+  const act = mockData.market.filter(m => m.status === 'active');
+  const lines = act.map(m => {
+    const seller = getUserById(m.sellerId)?.username || 'Unknown';
+    if (m.type === 'fixed') return `• ${m.name} — ${fmt(m.price)}g (Fixed) — Seller: ${seller} — [Buy]`;
+    const bidder = m.highBidder ? getUserById(m.highBidder)?.username : 'None';
+    return `• ${m.name} — ${fmt(m.currentBid || m.startBid)}g (Auction) — Seller: ${seller} — High bidder: ${bidder} — [Bid]`;
+  });
+
+  const embed = {
+    title: 'Marketplace Listings',
+    desc: lines.length ? lines.join('\n') : 'No active listings.',
+    color: 'blurple'
+  };
+
+  const components = [];
+
+  // Sell Item button
+  components.push([
+    { label: 'Sell Item', style: 'green', action: 'open_modal', icon: 'market', payload: { modalId: 'modal-sell-item' } }
+  ]);
+
+  // Per listing actions
+  for (const m of act) {
+    const isSeller = m.sellerId === currentState.currentUserId;
+
+    const row = [];
+
+    if (m.type === 'fixed') {
+      row.push({ label: `Buy: ${m.name}`, style: 'blurple', action: 'buy_market', icon: 'market', payload: { id: m.id } });
+    } else {
+      row.push({ label: `Bid: ${m.name}`, style: 'blurple', action: 'open_bid', icon: 'cogs', payload: { type: 'market', id: m.id } });
+    }
+
+    if (isSeller || userHasPermission('manage_market')) {
+      row.push({ label: 'Cancel', style: 'red', action: 'cancel_market', icon: 'eyeSlash', payload: { id: m.id } });
+    }
+
+    components.push(row);
+  }
+
+  upsertMessage('marketplace', {
+    id: 'market-summary',
+    bot: true,
+    user: 'Universal DKP Bot',
+    createdAt: nowTs(),
+    embed,
+    components
+  });
+}
+
+function syncBankChannel() {
+  const items = mockData.bank.slice(0, 12).map(i => {
+    const who = getUserById(i.depositedBy)?.username || 'Unknown';
+    return `• ${i.qty}x ${i.name} (${i.category}) — Deposited by ${who} on ${formatDateTime(i.at)}`;
+  });
+
+  upsertMessage('guild-bank', {
+    id: 'bank-summary',
+    bot: true,
+    user: 'Universal DKP Bot',
+    createdAt: nowTs(),
+    embed: {
+      title: 'Guild Bank Inventory',
+      desc: items.length ? items.join('\n') : 'No items deposited.',
+      color: 'blurple'
+    },
+    components: [[{ label: 'Deposit Item', style: 'blurple', action: 'open_modal', icon: 'bank', payload: { modalId: 'modal-deposit' } }]]
+  });
+}
+
+function syncRaidChannels() {
+  // active-raids: upcoming events
+  const upcoming = mockData.events.filter(e => e.date >= nowTs()).slice(0, 10).map(e => {
+    const ppl = e.participants.map(id => getUserById(id)?.username || 'Unknown').join(', ');
+    return `• ${e.name} — ${formatDateTime(e.date)} — Participants: ${ppl}`;
+  });
+
+  upsertMessage('active-raids', {
+    id: 'raids-summary',
+    bot: true,
+    user: 'Universal DKP Bot',
+    createdAt: nowTs(),
+    embed: {
+      title: 'Active / Upcoming Raids',
+      desc: upcoming.length ? upcoming.join('\n') : 'No upcoming events.',
+      color: 'blurple'
+    },
+    components: [[{ label: 'Open Control Panel', style: 'blurple', action: 'open_panel', icon: 'cogs' }]]
+  });
+}
+
+function syncLogsChannel() {
+  const lines = mockData.logs.slice(0, 20).map(l => `• [${formatTimestamp(l.at)}] ${l.actor}: ${l.action} — ${l.details}`);
+  upsertMessage('raid-logs', {
+    id: 'logs-summary',
+    bot: true,
+    user: 'Universal DKP Bot',
+    createdAt: nowTs(),
+    embed: {
+      title: 'Activity Logs',
+      desc: lines.length ? lines.join('\n') : 'No logs yet.',
+      color: 'grey'
+    },
+    components: [[{ label: 'Open Control Panel', style: 'grey', action: 'open_panel', icon: 'skull' }]]
+  });
+}
+
+/* ==========================================
+   AUCTION TICKER
+   ========================================== */
+function tickAuctions() {
+  let changed = false;
+
+  const now = nowTs();
+  for (const a of mockData.auctions) {
+    if (a.status !== 'active') continue;
+    if (a.endsAt <= now) {
+      a.status = 'closed';
+      const winner = a.highBidder ? getUserById(a.highBidder) : null;
+      const winnerName = winner ? winner.username : 'No winner';
+      addLog('Close Auction', `${a.item} — Winner: ${winnerName} — Final: ${fmt(a.currentBid)} DKP`);
+
+      // Deduct DKP if winner exists
+      if (winner) {
+        const bal = winner.balances?.[a.poolId] ?? 0;
+        winner.balances[a.poolId] = Math.max(0, bal - a.currentBid);
+        addLog('Deduct DKP', `${winner.username}: -${fmt(a.currentBid)} DKP for ${a.item}`);
+      }
+
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    syncDynamicChannels();
+    if (currentState.panelOpen) refreshControlPanel();
+    renderMessages();
+  }
+}
+
+function startTicker() {
+  setInterval(tickAuctions, 1000);
+}
+
+
+/* ==========================================
+   EVENTS: UPCOMING EVENT SIGNUPS + ROLE ASSIGNMENT (ADDED)
+   ========================================== */
+const EVENT_ROLE_OPTIONS = [
+  { key: 'tank', label: 'Tank' },
+  { key: 'healer', label: 'Healer' },
+  { key: 'dps', label: 'Damage Dealer' },
+  { key: 'tentative', label: 'Tentative' }
+];
+
+function getEventById(eventId) {
+  return mockData.events.find(e => e.id === Number(eventId)) || null;
+}
+
+function getEventCreatorId(evt) {
+  if (!evt) return null;
+  if (evt.createdBy != null) return Number(evt.createdBy);
+  if (Array.isArray(evt.participants) && evt.participants.length) return Number(evt.participants[0]);
+  return null;
+}
+
+function ensureEventSignupState(evt) {
+  if (!evt) return;
+  if (!evt.signups || typeof evt.signups !== 'object') evt.signups = {};
+
+  // Treat existing participants as tentative by default (unless already assigned)
+  if (Array.isArray(evt.participants)) {
+    for (const uid of evt.participants) {
+      const id = Number(uid);
+      if (!id) continue;
+      if (evt.signups[id] == null) evt.signups[id] = 'tentative';
+    }
+  }
+}
+
+function getUsernamesForRole(evt, roleKey, useAssignments = false) {
+  if (!evt) return [];
+  const map = (useAssignments && evt.assignments && typeof evt.assignments === 'object') ? evt.assignments : evt.signups;
+
+  if (!map || typeof map !== 'object') return [];
+
+  const ids = Object.keys(map)
+    .map(k => Number(k))
+    .filter(id => Number.isFinite(id) && (map[id] === roleKey));
+
+  const names = ids
+    .map(id => getUserById(id)?.username || 'Unknown')
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+  return names;
+}
+
+function formatRoleList(names) {
+  return names.length ? names.map(n => `• ${n}`).join('\n') : '—';
+}
+
+function openEventInterestModal(eventId) {
+  const evt = getEventById(eventId);
+  if (!evt) {
+    showToast('Event not found.', 'error');
+    return;
+  }
+  if (evt.started) {
+    showToast('Event already started. Signups are locked.', 'error');
+    return;
+  }
+
+  ensureEventSignupState(evt);
+
+  const info = [
+    `${evt.name}`,
+    `Date: ${formatDateTime(evt.date)}`,
+    `Pool: ${getPoolName(evt.poolId)}`
+  ].join('\n');
+
+  const infoEl = document.getElementById('interest-info-text');
+  if (infoEl) infoEl.textContent = info;
+
+  const idEl = document.getElementById('interest-event-id');
+  if (idEl) idEl.value = String(evt.id);
+
+  const sel = document.getElementById('interest-role');
+  if (sel) {
+    sel.innerHTML = '';
+    for (const opt of EVENT_ROLE_OPTIONS) {
+      const o = document.createElement('option');
+      o.value = opt.key;
+      o.textContent = opt.label;
+      sel.appendChild(o);
+    }
+
+    const currentRole = evt.signups?.[currentState.currentUserId] || 'tentative';
+    sel.value = EVENT_ROLE_OPTIONS.some(o => o.key === currentRole) ? currentRole : 'tentative';
+  }
+
+  openModal('modal-event-interest');
+}
+
+function submitEventInterest() {
+  const eventId = Number(document.getElementById('interest-event-id')?.value);
+  const roleKey = document.getElementById('interest-role')?.value;
+
+  const evt = getEventById(eventId);
+  if (!evt) {
+    showToast('Event not found.', 'error');
+    return;
+  }
+  if (evt.started) {
+    showToast('Event already started. Signups are locked.', 'error');
+    closeModal('modal-event-interest');
+    return;
+  }
+
+  ensureEventSignupState(evt);
+
+  const allowed = EVENT_ROLE_OPTIONS.map(o => o.key);
+  const picked = allowed.includes(roleKey) ? roleKey : 'tentative';
+
+  // Ensure current user is part of this event and store their selected role
+  evt.signups[currentState.currentUserId] = picked;
+  evt.participants = evt.participants || [];
+  if (!evt.participants.includes(currentState.currentUserId)) {
+    evt.participants.push(currentState.currentUserId);
+  }
+
+  // Preserve creator identity (use first participant if createdBy isn't present)
+  if (evt.createdBy == null) evt.createdBy = getEventCreatorId(evt);
+
+  addLog('RSVP', `${getCurrentUser()?.username || 'Unknown'}: ${evt.name} — ${picked}`);
+  closeModal('modal-event-interest');
+  showToast('Signup updated');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function startEventRaid(eventId) {
+  const evt = getEventById(eventId);
+  if (!evt) {
+    showToast('Event not found.', 'error');
+    return;
+  }
+
+  ensureEventSignupState(evt);
+
+  const creatorId = getEventCreatorId(evt);
+  if (!creatorId || creatorId !== currentState.currentUserId) {
+    showToast('Only the event creator can start this event.', 'error');
+    return;
+  }
+
+  if (evt.started) {
+    showToast('Event already started.', 'error');
+    return;
+  }
+
+  // Finalize assignments from signups (defaulting to tentative)
+  const assignments = {};
+  const participantIds = Array.isArray(evt.participants) ? evt.participants.slice() : [];
+  for (const uid of participantIds) {
+    const id = Number(uid);
+    if (!id) continue;
+    const sel = evt.signups?.[id] || 'tentative';
+    assignments[id] = EVENT_ROLE_OPTIONS.some(o => o.key === sel) ? sel : 'tentative';
+  }
+
+  evt.assignments = assignments;
+  evt.started = true;
+  evt.startedAt = nowTs();
+
+  addLog('Start Event', `${evt.name} — ${participantIds.length} participant(s)`);
+  showToast('Event started');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function syncUpcomingEventsChannel() {
+  const ch = 'upcomming-events';
+  if (!channelMessages[ch]) channelMessages[ch] = [];
+
+  // Keep a set of message ids we still want
+  const keep = new Set();
+
+  const upcoming = mockData.events
+    .filter(e => e.date >= nowTs() && !e.started)
+    .slice()
+    .sort((a, b) => a.date - b.date);
+
+  for (const evt of upcoming) {
+    ensureEventSignupState(evt);
+
+    const creatorId = getEventCreatorId(evt);
+    const creatorName = creatorId ? (getUserById(creatorId)?.username || 'Unknown') : 'Unknown';
+
+    const fields = EVENT_ROLE_OPTIONS.map(opt => {
+      const names = getUsernamesForRole(evt, opt.key, false);
+      return { name: `${opt.label} (${names.length})`, value: formatRoleList(names) };
+    });
+
+    const embed = {
+      title: `Event: ${evt.name}`,
+      desc:
+        `Date: ${formatDateTime(evt.date)}\n` +
+        `Pool: ${getPoolName(evt.poolId)}\n` +
+        `Created by: ${creatorName}\n\n` +
+        `Click "Interested" to choose a role or "Tentative".`,
+      fields,
+      color: 'blurple'
+    };
+
+    const canStart = (creatorId === currentState.currentUserId);
+
+    const components = [[
+      { label: 'Interested', style: 'blurple', action: 'event_interest', icon: 'calendar', payload: { eventId: evt.id } },
+      {
+        label: 'Start event',
+        style: canStart ? 'green' : 'grey',
+        action: canStart ? 'event_start' : 'noop',
+        icon: 'cogs',
+        payload: { eventId: evt.id },
+        disabled: !canStart
+      }
+    ]];
+
+    const msgId = `event-signup-${evt.id}`;
+    keep.add(msgId);
+
+    upsertMessage(ch, {
+      id: msgId,
+      bot: true,
+      user: 'Universal DKP Bot',
+      createdAt: nowTs(),
+      embed,
+      components
+    });
+  }
+
+  // Remove stale signup messages (event started or deleted)
+  const msgs = channelMessages[ch] || [];
+  const toRemove = msgs
+    .filter(m => typeof m.id === 'string' && m.id.startsWith('event-signup-'))
+    .filter(m => !keep.has(m.id))
+    .map(m => m.id);
+
+  for (const id of toRemove) removeMessage(ch, id);
+}
+
+function syncActiveRaidRoleMessages() {
+  const ch = 'active-raids';
+  if (!channelMessages[ch]) return;
+
+  const keep = new Set();
+
+  const started = mockData.events
+    .filter(e => !!e.started)
+    .slice()
+    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+
+  for (const evt of started) {
+    ensureEventSignupState(evt);
+
+    const fields = EVENT_ROLE_OPTIONS.map(opt => {
+      const names = getUsernamesForRole(evt, opt.key, true);
+      return { name: `${opt.label} (${names.length})`, value: formatRoleList(names) };
+    });
+
+    const embed = {
+      title: `Raid Started: ${evt.name}`,
+      desc:
+        `Started: ${formatDateTime(evt.startedAt || nowTs())}\n` +
+        `Scheduled: ${formatDateTime(evt.date)}\n` +
+        `Pool: ${getPoolName(evt.poolId)}\n\n` +
+        `Role assignments were generated from signups.`,
+      fields,
+      color: 'green'
+    };
+
+    const msgId = `active-raid-${evt.id}`;
+    keep.add(msgId);
+
+    upsertMessage(ch, {
+      id: msgId,
+      bot: true,
+      user: 'Universal DKP Bot',
+      createdAt: nowTs(),
+      embed,
+      components: []
+    });
+  }
+
+  // Remove stale started raid messages if event no longer started
+  const msgs = channelMessages[ch] || [];
+  const toRemove = msgs
+    .filter(m => typeof m.id === 'string' && m.id.startsWith('active-raid-'))
+    .filter(m => !keep.has(m.id))
+    .map(m => m.id);
+
+  for (const id of toRemove) removeMessage(ch, id);
+}
+
+
+/* ==========================================
+   MARKETPLACE UPGRADE (ID-based actions, pagination, sort, expiration, admin settings)
+   ========================================== */
+
+// Settings + View State Defaults (non-breaking)
+if (!mockData.marketSettings) {
+  mockData.marketSettings = {
+    currencyName: 'Gold',
+    maxListingActiveHours: 72
+  };
+} else {
+  if (mockData.marketSettings.currencyName == null) mockData.marketSettings.currencyName = 'Gold';
+  if (mockData.marketSettings.maxListingActiveHours == null) mockData.marketSettings.maxListingActiveHours = 72;
+}
+
+if (currentState.marketPage == null) currentState.marketPage = 0;
+if (!currentState.marketSortMode) currentState.marketSortMode = 'date';
+
+const MARKET_PAGE_SIZE = 50;
+
+function isAdminUser() {
+  const u = getCurrentUser();
+  return (u?.role || '').toLowerCase() === 'admin';
+}
+
+function getMarketCurrencyName() {
+  return (mockData.marketSettings?.currencyName || 'Gold').trim() || 'Gold';
+}
+
+function getMarketMaxListingActiveHours() {
+  const v = Number(mockData.marketSettings?.maxListingActiveHours ?? 72);
+  if (!Number.isFinite(v) || v <= 0) return 72;
+  return Math.floor(v);
+}
+
+function getMarketMaxListingDurationMs() {
+  return getMarketMaxListingActiveHours() * 3600000;
+}
+
+function marketCurrencyLabel(currency) {
+  if (currency === 'Gold') return getMarketCurrencyName();
+  return currency || getMarketCurrencyName();
+}
+
+function ensureMarketListingMeta(listing, forceRecalcExpiry = false) {
+  if (!listing) return;
+
+  if (!listing.createdAt || !Number.isFinite(Number(listing.createdAt))) {
+    listing.createdAt = nowTs();
+  }
+
+  if (forceRecalcExpiry || !listing.expiresAt || !Number.isFinite(Number(listing.expiresAt))) {
+    listing.expiresAt = Number(listing.createdAt) + getMarketMaxListingDurationMs();
+  }
+}
+
+function reconcileMarketExpirations() {
+  const now = nowTs();
+  for (const m of mockData.market) {
+    ensureMarketListingMeta(m, false);
+    if (m.status === 'active' && Number(m.expiresAt) <= now) {
+      m.status = 'expired';
+    }
+  }
+}
+
+function getActiveMarketListings() {
+  reconcileMarketExpirations();
+  return mockData.market.filter(m => m.status === 'active');
+}
+
+function getSortedMarketListings(listings) {
+  const mode = currentState.marketSortMode === 'name' ? 'name' : 'date';
+  const arr = listings.slice();
+
+  if (mode === 'name') {
+    arr.sort((a, b) => {
+      const an = String(a.name || '').toLowerCase();
+      const bn = String(b.name || '').toLowerCase();
+      const cmp = an.localeCompare(bn);
+      if (cmp !== 0) return cmp;
+      return Number(b.createdAt || 0) - Number(a.createdAt || 0);
+    });
+  } else {
+    arr.sort((a, b) => {
+      const cmp = Number(b.createdAt || 0) - Number(a.createdAt || 0);
+      if (cmp !== 0) return cmp;
+      return String(a.name || '').toLowerCase().localeCompare(String(b.name || '').toLowerCase());
+    });
+  }
+
+  return arr;
+}
+
+function getMarketPageCount(total) {
+  const t = Number(total || 0);
+  if (t <= 0) return 1;
+  return Math.max(1, Math.ceil(t / MARKET_PAGE_SIZE));
+}
+
+function clampMarketPage(pageCount) {
+  const maxIdx = Math.max(0, pageCount - 1);
+  if (currentState.marketPage == null) currentState.marketPage = 0;
+  currentState.marketPage = Math.min(Math.max(0, currentState.marketPage), maxIdx);
+}
+
+function formatMarketListingLine(m) {
+  const seller = getUserById(m.sellerId)?.username || 'Unknown';
+  const listedAt = formatDateTime(m.createdAt);
+  const expiresAt = formatDateTime(m.expiresAt);
+  const curLabel = marketCurrencyLabel(m.currency);
+
+  if (m.type === 'fixed') {
+    const price = fmt(m.price ?? 0);
+    return `• ${m.name} — ${price} ${curLabel} (Fixed) — Seller: ${seller} — Listed: ${listedAt} — Expires: ${expiresAt} — ID: ${m.id}`;
+  }
+
+  const bid = fmt(m.currentBid || m.startBid || 0);
+  const bidder = m.highBidder ? (getUserById(m.highBidder)?.username || 'Unknown') : 'None';
+  return `• ${m.name} — ${bid} ${curLabel} (Auction) — Seller: ${seller} — High bidder: ${bidder} — Listed: ${listedAt} — Expires: ${expiresAt} — ID: ${m.id}`;
+}
+
+function updateSellCurrencyOptionLabel() {
+  const sel = document.getElementById('sell-currency');
+  if (!sel) return;
+  const goldOpt = Array.from(sel.options).find(o => o.value === 'Gold');
+  if (goldOpt) goldOpt.textContent = getMarketCurrencyName();
+}
+
+function populateMarketplaceSettingsModal() {
+  const nameEl = document.getElementById('market-currency-name');
+  const hoursEl = document.getElementById('market-max-hours');
+  if (nameEl) nameEl.value = getMarketCurrencyName();
+  if (hoursEl) hoursEl.value = String(getMarketMaxListingActiveHours());
+}
+
+function submitMarketplaceSettings() {
+  if (!isAdminUser()) {
+    showToast('Only admins can change marketplace settings.', 'error');
+    return;
+  }
+
+  const name = (document.getElementById('market-currency-name')?.value || '').trim();
+  const hours = Number(document.getElementById('market-max-hours')?.value || 0);
+
+  if (!name) {
+    showToast('Currency name is required.', 'error');
+    return;
+  }
+  if (!Number.isFinite(hours) || hours <= 0) {
+    showToast('Max active time must be greater than 0.', 'error');
+    return;
+  }
+
+  mockData.marketSettings.currencyName = name;
+  mockData.marketSettings.maxListingActiveHours = Math.floor(hours);
+
+  // Apply new expiration window to all active listings
+  for (const m of mockData.market) {
+    if (m.status === 'active') ensureMarketListingMeta(m, true);
+    else ensureMarketListingMeta(m, false);
+  }
+
+  updateSellCurrencyOptionLabel();
+
+  closeModal('modal-market-settings');
+  showToast('Marketplace settings saved');
+
+  syncDynamicChannels();
+  if (currentState.panelOpen) refreshControlPanel();
+  renderMessages();
+}
+
+function resetBuyRemoveModals() {
+  // Buy
+  const buyId = document.getElementById('buy-item-id');
+  const buyPrev = document.getElementById('buy-item-preview');
+  const buyRes = document.getElementById('buy-item-resolved-id');
+  const buyBtn = document.getElementById('buy-item-confirm-btn');
+
+  if (buyId) buyId.value = '';
+  if (buyPrev) buyPrev.textContent = '';
+  if (buyRes) buyRes.value = '';
+  if (buyBtn) {
+    buyBtn.disabled = true;
+    buyBtn.textContent = 'Buy';
+    buyBtn.className = 'btn btn-green';
+  }
+
+  // Remove
+  const remId = document.getElementById('remove-item-id');
+  const remPrev = document.getElementById('remove-item-preview');
+  const remRes = document.getElementById('remove-item-resolved-id');
+  const remBtn = document.getElementById('remove-item-confirm-btn');
+
+  if (remId) remId.value = '';
+  if (remPrev) remPrev.textContent = '';
+  if (remRes) remRes.value = '';
+  if (remBtn) {
+    remBtn.disabled = true;
+    remBtn.textContent = 'Remove listing';
+    remBtn.className = 'btn btn-red';
+  }
+}
+
+function getListingByIdInput(idValue) {
+  const id = Number(idValue);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const listing = mockData.market.find(x => x.id === id) || null;
+  if (listing) ensureMarketListingMeta(listing, false);
+  return listing;
+}
+
+function updateBuyItemPreview() {
+  const idValue = document.getElementById('buy-item-id')?.value;
+  const previewEl = document.getElementById('buy-item-preview');
+  const resolvedEl = document.getElementById('buy-item-resolved-id');
+  const btn = document.getElementById('buy-item-confirm-btn');
+
+  if (!previewEl || !resolvedEl || !btn) return;
+
+  resolvedEl.value = '';
+  btn.disabled = true;
+  btn.textContent = 'Buy';
+  btn.className = 'btn btn-green';
+
+  const listing = getListingByIdInput(idValue);
+
+  if (!idValue) {
+    previewEl.textContent = 'Enter an Item ID to preview the listing.';
+    return;
+  }
+
+  if (!listing) {
+    previewEl.textContent = `No listing found for ID ${idValue}.`;
+    return;
+  }
+
+  // Reconcile expiration in real-time
+  if (listing.status === 'active' && Number(listing.expiresAt) <= nowTs()) {
+    listing.status = 'expired';
+  }
+
+  if (listing.status !== 'active') {
+    previewEl.textContent = `Listing found: ${listing.name} — Status: ${listing.status}.`;
+    return;
+  }
+
+  const seller = getUserById(listing.sellerId)?.username || 'Unknown';
+  const curLabel = marketCurrencyLabel(listing.currency);
+  const listedAt = formatDateTime(listing.createdAt);
+  const expiresAt = formatDateTime(listing.expiresAt);
+
+  if (listing.type === 'fixed') {
+    previewEl.textContent =
+      `Selected: ${listing.name} (Fixed) — Price: ${fmt(listing.price ?? 0)} ${curLabel}\n` +
+      `Seller: ${seller}\n` +
+      `Listed: ${listedAt} — Expires: ${expiresAt}`;
+    btn.textContent = 'Buy';
+    btn.className = 'btn btn-green';
+  } else {
+    const bid = fmt(listing.currentBid || listing.startBid || 0);
+    const bidder = listing.highBidder ? (getUserById(listing.highBidder)?.username || 'Unknown') : 'None';
+    previewEl.textContent =
+      `Selected: ${listing.name} (Auction) — Current bid: ${bid} ${curLabel}\n` +
+      `Seller: ${seller} — High bidder: ${bidder}\n` +
+      `Listed: ${listedAt} — Expires: ${expiresAt}`;
+    btn.textContent = 'Bid';
+    btn.className = 'btn btn-blurple';
+  }
+
+  resolvedEl.value = String(listing.id);
+  btn.disabled = false;
+}
+
+function confirmBuyItemById() {
+  const id = Number(document.getElementById('buy-item-resolved-id')?.value || 0);
+  if (!Number.isFinite(id) || id <= 0) {
+    showToast('Enter a valid Item ID first.', 'error');
+    return;
+  }
+
+  const listing = mockData.market.find(x => x.id === id);
+  if (!listing) {
+    showToast('Listing not found.', 'error');
+    return;
+  }
+
+  ensureMarketListingMeta(listing, false);
+  if (listing.status === 'active' && Number(listing.expiresAt) <= nowTs()) {
+    listing.status = 'expired';
+  }
+
+  if (listing.status !== 'active') {
+    showToast('Listing is not active.', 'error');
+    return;
+  }
+
+  if (listing.type === 'fixed') {
+    closeModal('modal-buy-item');
+    buyMarketListing(id);
+    return;
+  }
+
+  // Auction listing: proceed to bid modal
+  closeModal('modal-buy-item');
+  openBidModal('market', id);
+}
+
+function updateRemoveListingPreview() {
+  const idValue = document.getElementById('remove-item-id')?.value;
+  const previewEl = document.getElementById('remove-item-preview');
+  const resolvedEl = document.getElementById('remove-item-resolved-id');
+  const btn = document.getElementById('remove-item-confirm-btn');
+
+  if (!previewEl || !resolvedEl || !btn) return;
+
+  resolvedEl.value = '';
+  btn.disabled = true;
+  btn.textContent = 'Remove listing';
+  btn.className = 'btn btn-red';
+
+  if (!idValue) {
+    previewEl.textContent = 'Enter an Item ID to preview the listing.';
+    return;
+  }
+
+  const listing = getListingByIdInput(idValue);
+  if (!listing) {
+    previewEl.textContent = `No listing found for ID ${idValue}.`;
+    return;
+  }
+
+  // Reconcile expiration in real-time
+  if (listing.status === 'active' && Number(listing.expiresAt) <= nowTs()) {
+    listing.status = 'expired';
+  }
+
+  const sellerName = getUserById(listing.sellerId)?.username || 'Unknown';
+  const listedAt = formatDateTime(listing.createdAt);
+  const expiresAt = formatDateTime(listing.expiresAt);
+
+  previewEl.textContent =
+    `Selected: ${listing.name} — Seller: ${sellerName}\n` +
+    `Status: ${listing.status}\n` +
+    `Listed: ${listedAt} — Expires: ${expiresAt}`;
+
+  if (listing.status !== 'active') {
+    previewEl.textContent += `\n\nThis listing is not active and cannot be removed.`;
+    return;
+  }
+
+  const canRemove = (listing.sellerId === currentState.currentUserId) || isAdminUser();
+  if (!canRemove) {
+    previewEl.textContent += `\n\nYou can only remove your own listings unless you are an admin.`;
+    return;
+  }
+
+  resolvedEl.value = String(listing.id);
+  btn.disabled = false;
+}
+
+function confirmRemoveListingById() {
+  const id = Number(document.getElementById('remove-item-resolved-id')?.value || 0);
+  if (!Number.isFinite(id) || id <= 0) {
+    showToast('Enter a valid Item ID first.', 'error');
+    return;
+  }
+
+  const listing = mockData.market.find(x => x.id === id);
+  if (!listing) {
+    showToast('Listing not found.', 'error');
+    return;
+  }
+
+  ensureMarketListingMeta(listing, false);
+  if (listing.status === 'active' && Number(listing.expiresAt) <= nowTs()) {
+    listing.status = 'expired';
+  }
+
+  if (listing.status !== 'active') {
+    showToast('Listing is not active.', 'error');
+    return;
+  }
+
+  const canRemove = (listing.sellerId === currentState.currentUserId) || isAdminUser();
+  if (!canRemove) {
+    showToast('You can only remove your own listings unless you are an admin.', 'error');
+    return;
+  }
+
+  closeModal('modal-remove-listing');
+  cancelMarketListing(id);
+}
+
+function wireMarketplaceDialogs() {
+  // Ensure option labels match settings on load
+  updateSellCurrencyOptionLabel();
+
+  // Buy modal wiring
+  const buyId = document.getElementById('buy-item-id');
+  if (buyId) {
+    buyId.addEventListener('input', updateBuyItemPreview);
+    buyId.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const btn = document.getElementById('buy-item-confirm-btn');
+        if (btn && !btn.disabled) confirmBuyItemById();
+      }
+    });
+  }
+
+  // Remove modal wiring
+  const remId = document.getElementById('remove-item-id');
+  if (remId) {
+    remId.addEventListener('input', updateRemoveListingPreview);
+    remId.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const btn = document.getElementById('remove-item-confirm-btn');
+        if (btn && !btn.disabled) confirmRemoveListingById();
+      }
+    });
+  }
+}
+
+const __origResetModalFields_market = resetModalFields;
+resetModalFields = function(modalId) {
+  __origResetModalFields_market(modalId);
+
+  if (modalId === 'modal-buy-item' || modalId === 'modal-remove-listing') {
+    resetBuyRemoveModals();
+  }
+
+  if (modalId === 'modal-market-settings') {
+    const nameEl = document.getElementById('market-currency-name');
+    const hoursEl = document.getElementById('market-max-hours');
+    if (nameEl) nameEl.value = '';
+    if (hoursEl) hoursEl.value = String(getMarketMaxListingActiveHours());
+  }
+};
+
+const __origOpenModal_market = openModal;
+openModal = function(modalId) {
+  __origOpenModal_market(modalId);
+
+  if (modalId === 'modal-buy-item') {
+    resetBuyRemoveModals();
+    const prev = document.getElementById('buy-item-preview');
+    if (prev) prev.textContent = 'Enter an Item ID to preview the listing.';
+  }
+
+  if (modalId === 'modal-remove-listing') {
+    resetBuyRemoveModals();
+    const prev = document.getElementById('remove-item-preview');
+    if (prev) prev.textContent = 'Enter an Item ID to preview the listing.';
+  }
+
+  if (modalId === 'modal-market-settings') {
+    populateMarketplaceSettingsModal();
+  }
+};
+
+// Override market channel rendering to match the new workflow
+const __origSyncMarketChannel_market = syncMarketChannel;
+syncMarketChannel = function() {
+  const act = getSortedMarketListings(getActiveMarketListings());
+  const pageCount = getMarketPageCount(act.length);
+  clampMarketPage(pageCount);
+
+  const page = currentState.marketPage || 0;
+  const start = page * MARKET_PAGE_SIZE;
+  const pageItems = act.slice(start, start + MARKET_PAGE_SIZE);
+
+  const lines = pageItems.map(m => formatMarketListingLine(m));
+
+  const sortLabel = (currentState.marketSortMode === 'name') ? 'Name' : 'Date';
+  const titleSuffix = `Page ${page + 1}/${pageCount} — Sort: ${sortLabel}`;
+
+  const embed = {
+    title: 'Marketplace Listings',
+    desc: lines.length ? lines.join('\n') : 'No active listings.',
+    color: 'blurple'
+  };
+
+  embed.desc += `\n\n${titleSuffix}`;
+
+  const components = [];
+
+  // Main actions row (exactly 3 buttons as requested)
+  components.push([
+    { label: 'Sell Item', style: 'green', action: 'open_modal', icon: 'market', payload: { modalId: 'modal-sell-item' } },
+    { label: 'Buy Item', style: 'blurple', action: 'open_modal', icon: 'market', payload: { modalId: 'modal-buy-item' } },
+    { label: 'Remove listing', style: 'red', action: 'open_modal', icon: 'eyeSlash', payload: { modalId: 'modal-remove-listing' } }
+  ]);
+
+  // Pagination + sort row
+  components.push([
+    { label: 'Previous', style: 'grey', action: 'market_prev_page', payload: {}, disabled: page <= 0 },
+    { label: 'Next', style: 'grey', action: 'market_next_page', payload: {}, disabled: page >= (pageCount - 1) },
+    { label: 'Sort', style: 'grey', action: 'market_toggle_sort', payload: {} }
+  ]);
+
+  upsertMessage('marketplace', {
+    id: 'market-summary',
+    bot: true,
+    user: 'Universal DKP Bot',
+    createdAt: nowTs(),
+    embed,
+    components
+  });
+};
+
+// Extend control panel with Admin->Marketplace settings (admin only)
+const __origBuildPanelEmbed_market = buildPanelEmbed;
+buildPanelEmbed = function(screen, u) {
+  if (screen === 'admin') {
+    const base = __origBuildPanelEmbed_market('home', u);
+    return {
+      title: 'Control Panel — Admin',
+      desc: `Admin tools (offline demo):\n• Marketplace settings\n\nUse the buttons below to open admin sections.`,
+      fields: base.fields,
+      color: 'blurple'
+    };
+  }
+
+  if (screen === 'admin_marketplace') {
+    const base = __origBuildPanelEmbed_market('home', u);
+    const cur = getMarketCurrencyName();
+    const hrs = getMarketMaxListingActiveHours();
+    return {
+      title: 'Admin — Marketplace',
+      desc:
+        `Global marketplace settings:\n` +
+        `• Currency name: ${cur}\n` +
+        `• Max active time: ${hrs} hour(s)\n\n` +
+        `These settings affect listing displays and expiration behavior.`,
+      fields: base.fields,
+      color: 'blurple'
+    };
+  }
+
+  return __origBuildPanelEmbed_market(screen, u);
+};
+
+const __origBuildPanelComponents_market = buildPanelComponents;
+buildPanelComponents = function(screen, u) {
+  if (screen === 'admin') {
+    if (!isAdminUser()) {
+      return [[{ label: 'Admin Only', style: 'grey', action: 'noop', icon: 'eyeSlash', payload: {}, disabled: true }]];
+    }
+    return [[
+      { label: 'Marketplace', style: 'blurple', action: 'panel_nav', icon: 'market', payload: { screen: 'admin_marketplace' }, disabled: false }
+    ]];
+  }
+
+  if (screen === 'admin_marketplace') {
+    if (!isAdminUser()) {
+      return [[{ label: 'Admin Only', style: 'grey', action: 'noop', icon: 'eyeSlash', payload: {}, disabled: true }]];
+    }
+    return [[
+      { label: 'Edit Settings', style: 'blurple', action: 'open_modal', icon: 'cogs', payload: { modalId: 'modal-market-settings' }, disabled: false }
+    ]];
+  }
+
+  return __origBuildPanelComponents_market(screen, u);
+};
+
+// Marketplace paging/sort actions (wrapped, non-destructive)
+const __origHandleAction_market2 = handleAction;
+handleAction = function(action, payload = {}) {
+  switch (action) {
+    case 'market_prev_page': {
+      currentState.marketPage = Math.max(0, (currentState.marketPage || 0) - 1);
+      syncMarketChannel();
+      renderMessages();
+      return;
+    }
+    case 'market_next_page': {
+      currentState.marketPage = (currentState.marketPage || 0) + 1;
+      syncMarketChannel();
+      renderMessages();
+      return;
+    }
+    case 'market_toggle_sort': {
+      currentState.marketSortMode = (currentState.marketSortMode === 'name') ? 'date' : 'name';
+      currentState.marketPage = 0;
+      showToast(`Sorted by ${currentState.marketSortMode === 'name' ? 'name' : 'date'}`);
+      syncMarketChannel();
+      renderMessages();
+      return;
+    }
+    default:
+      return __origHandleAction_market2(action, payload);
+  }
+};
+
+// Marketplace init
+document.addEventListener('DOMContentLoaded', () => {
+  // Ensure all market listings have timestamps/expirations for display
+  for (const m of mockData.market) ensureMarketListingMeta(m, false);
+  reconcileMarketExpirations();
+
+  wireMarketplaceDialogs();
+  updateSellCurrencyOptionLabel();
+});
+/* ------------------------------------------
+   ACTION + SYNC EXTENSIONS (NON-DESTRUCTIVE)
+   ------------------------------------------ */
+const __origHandleAction = handleAction;
+handleAction = function(action, payload = {}) {
+  switch (action) {
+    case 'event_interest':
+      openEventInterestModal(payload.eventId);
+      return;
+    case 'event_start':
+      startEventRaid(payload.eventId);
+      return;
+    default:
+      return __origHandleAction(action, payload);
+  }
+};
+
+const __origSyncDynamicChannels = syncDynamicChannels;
+syncDynamicChannels = function() {
+  __origSyncDynamicChannels();
+  syncUpcomingEventsChannel();
+  syncActiveRaidRoleMessages();
+};
+
+
+/* ==========================================
+   INIT
+   ========================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  initUserSwitcher();
+  wireModalOverlayClickToClose();
+  syncDynamicChannels();
+  renderMessages();
+  startTicker();
+});
+</script>
+</body>
+</html>
