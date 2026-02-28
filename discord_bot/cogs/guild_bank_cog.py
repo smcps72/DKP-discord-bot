@@ -73,7 +73,7 @@ class GuildBankCog(commands.Cog):
             note = note[:300]
 
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.defer()
 
         item_id = await self.bot.db.guild_bank_deposit(
             guild_id=interaction.guild.id,
@@ -94,7 +94,7 @@ class GuildBankCog(commands.Cog):
             f"Held by: {held_by.mention}\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
 
         await self._update_bank_panel(interaction.guild)
 
@@ -130,7 +130,7 @@ class GuildBankCog(commands.Cog):
             note = note[:300]
 
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.defer()
 
         item = await self.bot.db.guild_bank_get_item(item_id, interaction.guild.id)
         if not item:
@@ -162,7 +162,7 @@ class GuildBankCog(commands.Cog):
             f"**{quantity}x {item['item_name']}** withdrawn from the guild bank.\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
 
         await self._update_bank_panel(interaction.guild)
 
@@ -305,7 +305,7 @@ class GuildBankCog(commands.Cog):
             held_by = interaction.user
 
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.defer()
 
         item_id = await self.bot.db.guild_bank_deposit(
             guild_id=guild.id,
@@ -326,7 +326,7 @@ class GuildBankCog(commands.Cog):
             f"Held by: {held_by.mention}\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
 
         await self._update_bank_panel(guild)
 
@@ -362,7 +362,7 @@ class GuildBankCog(commands.Cog):
         note = (note or "").strip()[:300]
 
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.defer()
 
         item = await self.bot.db.guild_bank_get_item(item_id, guild.id)
         if not item:
@@ -394,7 +394,7 @@ class GuildBankCog(commands.Cog):
             f"**{quantity}x {item['item_name']}** withdrawn from the guild bank.\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
 
         await self._update_bank_panel(guild)
 
