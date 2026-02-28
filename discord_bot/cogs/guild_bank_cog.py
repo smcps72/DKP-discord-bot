@@ -1,8 +1,14 @@
+import asyncio
 import discord
 import logging
 from discord.ext import commands
 from discord import app_commands
-from ..utils import create_info_embed, create_success_embed, create_error_embed, is_officer
+from ..utils import (
+    create_info_embed,
+    create_success_embed,
+    create_error_embed,
+    is_raid_leader,
+)
 
 
 BANK_CATEGORIES = [
@@ -17,6 +23,7 @@ BANK_CATEGORIES = [
 class GuildBankCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._inventory_sync_locks: dict[int, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # Slash commands
@@ -24,7 +31,7 @@ class GuildBankCog(commands.Cog):
 
     @app_commands.command(
         name="bank_deposit",
-        description="Deposit an item into the guild bank. Officers only.",
+        description="Deposit an item into the guild bank. Raid leaders only.",
     )
     @app_commands.describe(
         item_name="Name of the item to deposit",
@@ -35,7 +42,7 @@ class GuildBankCog(commands.Cog):
         note="Optional note for the transaction log",
     )
     @app_commands.choices(category=BANK_CATEGORIES)
-    @app_commands.check(is_officer)
+    @app_commands.check(is_raid_leader)
     async def bank_deposit_cmd(
         self,
         interaction: discord.Interaction,
@@ -86,6 +93,19 @@ class GuildBankCog(commands.Cog):
             note=note,
         )
 
+        await self._post_transaction_notification(
+            interaction.guild,
+            action="deposit",
+            item_id=item_id,
+            item_name=item_name,
+            quantity=quantity,
+            category=category.value,
+            location=location,
+            held_by_user_id=held_by.id,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
         embed = create_success_embed(
             "Item Deposited",
             f"**{quantity}x {item_name}** deposited into the guild bank.\n"
@@ -94,20 +114,20 @@ class GuildBankCog(commands.Cog):
             f"Held by: {held_by.mention}\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
         await self._update_bank_panel(interaction.guild)
 
     @app_commands.command(
         name="bank_withdraw",
-        description="Withdraw an item from the guild bank. Officers only.",
+        description="Withdraw an item from the guild bank. Raid leaders only.",
     )
     @app_commands.describe(
         item_id="The ID of the item to withdraw (use /bank_inventory to find IDs)",
         quantity="How many to withdraw",
         note="Optional note for the transaction log",
     )
-    @app_commands.check(is_officer)
+    @app_commands.check(is_raid_leader)
     async def bank_withdraw_cmd(
         self,
         interaction: discord.Interaction,
@@ -162,7 +182,19 @@ class GuildBankCog(commands.Cog):
             f"**{quantity}x {item['item_name']}** withdrawn from the guild bank.\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed)
+        await self._post_transaction_notification(
+            interaction.guild,
+            action="withdraw",
+            item_id=item_id,
+            item_name=item["item_name"],
+            quantity=quantity,
+            category=item.get("category", "other"),
+            location=item.get("location", ""),
+            held_by_user_id=item.get("held_by_user_id"),
+            actor_id=interaction.user.id,
+            note=note,
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
         await self._update_bank_panel(interaction.guild)
 
@@ -223,9 +255,9 @@ class GuildBankCog(commands.Cog):
 
     @app_commands.command(
         name="bank_panel",
-        description="Post the guild bank panel in the current channel. Officers only.",
+        description="Post the guild bank panel in the current channel. Raid leaders only.",
     )
-    @app_commands.check(is_officer)
+    @app_commands.check(is_raid_leader)
     async def bank_panel_cmd(self, interaction: discord.Interaction):
         if interaction.guild is None:
             return await interaction.response.send_message(
@@ -235,8 +267,17 @@ class GuildBankCog(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
-        items = await self.bot.db.guild_bank_get_inventory(interaction.guild.id)
-        embed = self._build_inventory_embed(items, interaction.guild)
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        inventory_id = config["guild_bank_inventory_channel_id"] if config and "guild_bank_inventory_channel_id" in config.keys() else None
+        transactions_id = config["guild_bank_transactions_channel_id"] if config and "guild_bank_transactions_channel_id" in config.keys() else None
+        inventory_ref = f"<#{inventory_id}>" if inventory_id else "(not configured)"
+        transactions_ref = f"<#{transactions_id}>" if transactions_id else "(not configured)"
+        embed = create_info_embed(
+            "Guild Bank",
+            "Use the buttons below to deposit or withdraw items.\n"
+            f"Inventory is searchable in {inventory_ref}.\n"
+            f"Transaction history is posted in {transactions_ref}.",
+        )
 
         from ..ui.views import GuildBankPanelView
 
@@ -318,6 +359,19 @@ class GuildBankCog(commands.Cog):
             note=note,
         )
 
+        await self._post_transaction_notification(
+            guild,
+            action="deposit",
+            item_id=item_id,
+            item_name=item_name,
+            quantity=quantity,
+            category=category,
+            location=location,
+            held_by_user_id=held_by.id,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
         embed = create_success_embed(
             "Item Deposited",
             f"**{quantity}x {item_name}** deposited into the guild bank.\n"
@@ -326,7 +380,7 @@ class GuildBankCog(commands.Cog):
             f"Held by: {held_by.mention}\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
         await self._update_bank_panel(guild)
 
@@ -394,7 +448,19 @@ class GuildBankCog(commands.Cog):
             f"**{quantity}x {item['item_name']}** withdrawn from the guild bank.\n"
             f"Item ID: `{item_id}`",
         )
-        await interaction.followup.send(embed=embed)
+        await self._post_transaction_notification(
+            guild,
+            action="withdraw",
+            item_id=item_id,
+            item_name=item["item_name"],
+            quantity=quantity,
+            category=item.get("category", "other"),
+            location=item.get("location", ""),
+            held_by_user_id=item.get("held_by_user_id"),
+            actor_id=interaction.user.id,
+            note=note,
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
         await self._update_bank_panel(guild)
 
@@ -459,15 +525,205 @@ class GuildBankCog(commands.Cog):
 
         return create_info_embed("Guild Bank Transaction Log", description)
 
-    async def _update_bank_panel(self, guild: discord.Guild):
-        """Try to update any existing guild bank panel message in the bank channel."""
+    def _build_inventory_item_message(self, item) -> str:
+        item_id = int(item["id"])
+        qty = int(item["quantity"])
+        name = str(item.get("item_name") or "Unknown Item")
+        category = str(item.get("category") or "other")
+        location = str(item.get("location") or "—")
+        holder_id = item.get("held_by_user_id")
+        holder_str = f"<@{holder_id}>" if holder_id else "—"
+        return (
+            f"`#{item_id}` **{name}** ×{qty}\n"
+            f"Category: `{category}`\n"
+            f"Location: `{location}`\n"
+            f"Held by: {holder_str}"
+        )
+
+    def _build_transaction_message(
+        self,
+        *,
+        action: str,
+        item_id: int,
+        item_name: str,
+        quantity: int,
+        category: str,
+        location: str,
+        held_by_user_id: int | None,
+        actor_id: int,
+        note: str = "",
+    ) -> str:
+        emoji = "📥" if action == "deposit" else "📤"
+        holder_str = f"<@{held_by_user_id}>" if held_by_user_id else "—"
+        note_str = f"\nNote: {note}" if (note or "").strip() else ""
+        return (
+            f"{emoji} **{action.title()}** — `#{item_id}` **{item_name}** ×{int(quantity)}\n"
+            f"Category: `{category}`\n"
+            f"Location: `{location or '—'}`\n"
+            f"Held by: {holder_str}\n"
+            f"Actor: <@{actor_id}>"
+            f"{note_str}"
+        )
+
+    async def _resolve_config_channel(self, guild: discord.Guild, channel_id):
+        if not channel_id:
+            return None
+        channel = guild.get_channel(int(channel_id))
+        if channel is None:
+            try:
+                channel = await guild.fetch_channel(int(channel_id))
+            except Exception:
+                return None
+        return channel
+
+    async def _post_transaction_notification(
+        self,
+        guild: discord.Guild,
+        *,
+        action: str,
+        item_id: int,
+        item_name: str,
+        quantity: int,
+        category: str,
+        location: str,
+        held_by_user_id: int | None,
+        actor_id: int,
+        note: str = "",
+    ):
         try:
             config = await self.bot.db.get_guild_config(guild.id)
         except Exception:
             return
 
+        if not config or "guild_bank_transactions_channel_id" not in config.keys():
+            return
+
+        channel = await self._resolve_config_channel(
+            guild,
+            config["guild_bank_transactions_channel_id"],
+        )
+        if channel is None or not hasattr(channel, "send"):
+            return
+
+        try:
+            await channel.send(
+                self._build_transaction_message(
+                    action=action,
+                    item_id=item_id,
+                    item_name=item_name,
+                    quantity=quantity,
+                    category=category,
+                    location=location,
+                    held_by_user_id=held_by_user_id,
+                    actor_id=actor_id,
+                    note=note,
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except Exception:
+            logging.exception("Failed to send guild bank transaction notification")
+
+    async def _sync_inventory_channel(self, guild: discord.Guild):
+        guild_id = int(guild.id)
+        lock = self._inventory_sync_locks.setdefault(guild_id, asyncio.Lock())
+        async with lock:
+            try:
+                config = await self.bot.db.get_guild_config(guild.id)
+            except Exception:
+                return
+
+            if not config or "guild_bank_inventory_channel_id" not in config.keys():
+                return
+
+            inventory_channel = await self._resolve_config_channel(
+                guild,
+                config["guild_bank_inventory_channel_id"],
+            )
+            if inventory_channel is None or not hasattr(inventory_channel, "send"):
+                return
+
+            try:
+                items = await self.bot.db.guild_bank_get_inventory(guild.id)
+                mappings = await self.bot.db.guild_bank_list_inventory_messages(guild.id)
+            except Exception:
+                logging.exception("Failed loading guild bank inventory state")
+                return
+
+            items_by_id = {int(item["id"]): item for item in list(items or [])}
+
+            for row in list(mappings or []):
+                item_id = int(row["item_id"])
+                if item_id in items_by_id:
+                    continue
+
+                channel = inventory_channel
+                if int(row["channel_id"]) != getattr(inventory_channel, "id", 0):
+                    channel = await self._resolve_config_channel(guild, row["channel_id"])
+                try:
+                    if channel is not None and hasattr(channel, "fetch_message"):
+                        msg = await channel.fetch_message(int(row["message_id"]))
+                        await msg.delete()
+                except Exception:
+                    pass
+                try:
+                    await self.bot.db.guild_bank_delete_inventory_message(guild.id, item_id)
+                except Exception:
+                    pass
+
+            for item_id, item in items_by_id.items():
+                content = self._build_inventory_item_message(item)
+                mapping = None
+                try:
+                    mapping = await self.bot.db.guild_bank_get_inventory_message(guild.id, item_id)
+                except Exception:
+                    mapping = None
+
+                target_msg = None
+                if mapping is not None:
+                    mapped_channel = inventory_channel
+                    if int(mapping["channel_id"]) != getattr(inventory_channel, "id", 0):
+                        mapped_channel = await self._resolve_config_channel(guild, mapping["channel_id"])
+                    if mapped_channel is not None and hasattr(mapped_channel, "fetch_message"):
+                        try:
+                            target_msg = await mapped_channel.fetch_message(int(mapping["message_id"]))
+                            if mapped_channel.id != inventory_channel.id:
+                                await target_msg.delete()
+                                target_msg = None
+                        except Exception:
+                            target_msg = None
+
+                try:
+                    if target_msg is None:
+                        target_msg = await inventory_channel.send(
+                            content,
+                            allowed_mentions=discord.AllowedMentions.none(),
+                        )
+                    else:
+                        await target_msg.edit(
+                            content=content,
+                            allowed_mentions=discord.AllowedMentions.none(),
+                        )
+
+                    await self.bot.db.guild_bank_set_inventory_message(
+                        guild.id,
+                        item_id,
+                        inventory_channel.id,
+                        target_msg.id,
+                    )
+                except Exception:
+                    logging.exception("Failed to sync inventory message for item_id=%s", item_id)
+
+    async def _update_bank_panel(self, guild: discord.Guild):
+        """Keep guild bank panel static and synchronize searchable inventory channel messages."""
+        try:
+            config = await self.bot.db.get_guild_config(guild.id)
+        except Exception:
+            return
+
+        await self._sync_inventory_channel(guild)
+
         bank_channel_id = None
-        if config:
+        if config and "guild_bank_channel_id" in config.keys():
             bank_channel_id = config["guild_bank_channel_id"]
 
         if not bank_channel_id:
@@ -483,12 +739,16 @@ class GuildBankCog(commands.Cog):
         if channel is None or not hasattr(channel, "history"):
             return
 
-        try:
-            items = await self.bot.db.guild_bank_get_inventory(guild.id)
-            embed = self._build_inventory_embed(items, guild)
-        except Exception:
-            logging.exception("Failed to build bank inventory embed for panel update")
-            return
+        inventory_id = config["guild_bank_inventory_channel_id"] if "guild_bank_inventory_channel_id" in config.keys() else None
+        transactions_id = config["guild_bank_transactions_channel_id"] if "guild_bank_transactions_channel_id" in config.keys() else None
+        inventory_ref = f"<#{inventory_id}>" if inventory_id else "(not configured)"
+        transactions_ref = f"<#{transactions_id}>" if transactions_id else "(not configured)"
+        embed = create_info_embed(
+            "Guild Bank",
+            "Use the buttons below to deposit or withdraw items.\n"
+            f"Inventory is searchable in {inventory_ref}.\n"
+            f"Transaction history is posted in {transactions_ref}.",
+        )
 
         bot_user = self.bot.user
         if bot_user is None:
@@ -499,7 +759,7 @@ class GuildBankCog(commands.Cog):
                 if msg.author.id != bot_user.id:
                     continue
                 for emb in list(getattr(msg, "embeds", []) or []):
-                    if (getattr(emb, "title", None) or "").strip() == "Guild Bank Inventory":
+                    if (getattr(emb, "title", None) or "").strip() in {"Guild Bank", "Guild Bank Inventory"}:
                         try:
                             from ..ui.views import GuildBankPanelView
 

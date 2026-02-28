@@ -146,6 +146,18 @@ class Database:
                 "guild_bank_channel_id",
                 "ALTER TABLE guilds ADD COLUMN guild_bank_channel_id INTEGER",
             ),
+            (
+                "guild_bank_category_id",
+                "ALTER TABLE guilds ADD COLUMN guild_bank_category_id INTEGER",
+            ),
+            (
+                "guild_bank_inventory_channel_id",
+                "ALTER TABLE guilds ADD COLUMN guild_bank_inventory_channel_id INTEGER",
+            ),
+            (
+                "guild_bank_transactions_channel_id",
+                "ALTER TABLE guilds ADD COLUMN guild_bank_transactions_channel_id INTEGER",
+            ),
         ]
 
         for col, sql in migrations:
@@ -210,7 +222,10 @@ class Database:
                     default_dkp_interval INTEGER DEFAULT 1,
                     raid_member_list_order TEXT DEFAULT 'name',
                     last_announced_version TEXT,
-                    guild_bank_channel_id INTEGER
+                    guild_bank_channel_id INTEGER,
+                    guild_bank_category_id INTEGER,
+                    guild_bank_inventory_channel_id INTEGER,
+                    guild_bank_transactions_channel_id INTEGER
                 )
             """)
             await cursor.execute("""
@@ -406,6 +421,16 @@ class Database:
                     FOREIGN KEY (item_id) REFERENCES guild_bank_items(id)
                 )
             """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS guild_bank_inventory_messages (
+                    guild_id INTEGER NOT NULL,
+                    item_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (guild_id, item_id)
+                )
+            """)
             await self.pool.commit()
 
     # Generic execute/fetch methods
@@ -494,11 +519,47 @@ class Database:
 
     async def clear_all_raid_member_groups(self, raid_id: int) -> int:
         """Clear all group assignments for a raid. Returns the number of rows deleted."""
-        result = await self.execute(
-            "DELETE FROM raid_member_groups WHERE raid_id = ?",
-            (raid_id,),
-        )
-        return result.rowcount if hasattr(result, "rowcount") else 0
+        attempts = 3
+        delay = 0.2
+        did_reconnect = False
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(
+                    "DELETE FROM raid_member_groups WHERE raid_id = ?",
+                    (int(raid_id),),
+                ) as cursor:
+                    await self.pool.commit()
+                    try:
+                        return int(cursor.rowcount)
+                    except Exception:
+                        return 0
+            except (aiosqlite.OperationalError, OSError) as e:
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning(
+                        "DB clear_all_raid_member_groups error suggests stale/readonly connection; reconnecting: %s",
+                        e,
+                    )
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
+                if attempt == attempts - 1:
+                    logging.error(
+                        "DB clear_all_raid_member_groups failed after %s attempts: %s",
+                        attempts,
+                        e,
+                    )
+                    raise
+                logging.warning(
+                    "Transient DB clear_all_raid_member_groups error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
 
     async def get_raid_group_count(self, raid_id: int) -> int | None:
         raid_id_int = int(raid_id)
@@ -1126,4 +1187,52 @@ class Database:
             LIMIT ?
             """,
             (int(guild_id), int(item_id), limit),
+        )
+
+    async def guild_bank_get_inventory_message(self, guild_id: int, item_id: int):
+        return await self.fetchone(
+            """
+            SELECT * FROM guild_bank_inventory_messages
+            WHERE guild_id = ? AND item_id = ?
+            """,
+            (int(guild_id), int(item_id)),
+        )
+
+    async def guild_bank_set_inventory_message(
+        self,
+        guild_id: int,
+        item_id: int,
+        channel_id: int,
+        message_id: int,
+    ):
+        await self.execute(
+            """
+            INSERT INTO guild_bank_inventory_messages
+                (guild_id, item_id, channel_id, message_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(guild_id, item_id)
+            DO UPDATE SET
+                channel_id = excluded.channel_id,
+                message_id = excluded.message_id,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (int(guild_id), int(item_id), int(channel_id), int(message_id)),
+        )
+
+    async def guild_bank_delete_inventory_message(self, guild_id: int, item_id: int):
+        await self.execute(
+            """
+            DELETE FROM guild_bank_inventory_messages
+            WHERE guild_id = ? AND item_id = ?
+            """,
+            (int(guild_id), int(item_id)),
+        )
+
+    async def guild_bank_list_inventory_messages(self, guild_id: int):
+        return await self.fetchall(
+            """
+            SELECT * FROM guild_bank_inventory_messages
+            WHERE guild_id = ?
+            """,
+            (int(guild_id),),
         )

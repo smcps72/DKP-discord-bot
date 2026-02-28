@@ -9,6 +9,169 @@ class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _ensure_guild_bank_channels(
+        self,
+        guild: discord.Guild,
+        config,
+        overwrites,
+        dkp_category=None,
+    ):
+        """Ensure Guild Bank category + channels exist and are linked in config."""
+        changed = False
+
+        def _is_category_channel(ch) -> bool:
+            return isinstance(ch, discord.CategoryChannel) or (
+                ch is not None and hasattr(ch, "create_text_channel") and hasattr(ch, "text_channels")
+            )
+
+        def _is_text_channel(ch) -> bool:
+            return isinstance(ch, discord.TextChannel) or (ch is not None and hasattr(ch, "send"))
+
+        keys = set(getattr(config, "keys", lambda: [])()) if config else set()
+
+        def _cfg(key: str):
+            return config[key] if config and key in keys else None
+
+        bank_category_id = _cfg("guild_bank_category_id")
+        bank_category = guild.get_channel(bank_category_id) if bank_category_id else None
+        if not _is_category_channel(bank_category):
+            bank_category = None
+            for ch in guild.categories:
+                if (ch.name or "").strip().lower() in {"guild bank", "guild-bank"}:
+                    bank_category = ch
+                    break
+            if bank_category is None:
+                bank_category = await guild.create_category("Guild Bank", overwrites=overwrites)
+                changed = True
+
+        if _cfg("guild_bank_category_id") != getattr(bank_category, "id", None):
+            await self.bot.db.execute(
+                "UPDATE guilds SET guild_bank_category_id = ? WHERE guild_id = ?",
+                (bank_category.id, guild.id),
+            )
+            changed = True
+
+        update_channel_id_queries = {
+            "guild_bank_channel_id": "UPDATE guilds SET guild_bank_channel_id = ? WHERE guild_id = ?",
+            "guild_bank_inventory_channel_id": "UPDATE guilds SET guild_bank_inventory_channel_id = ? WHERE guild_id = ?",
+            "guild_bank_transactions_channel_id": "UPDATE guilds SET guild_bank_transactions_channel_id = ? WHERE guild_id = ?",
+        }
+
+        async def _ensure_channel(col_name: str, channel_name: str, allow_legacy_dkp_lookup: bool = False):
+            nonlocal changed
+            ch_id = _cfg(col_name)
+            channel = guild.get_channel(ch_id) if ch_id else None
+
+            if not _is_text_channel(channel):
+                channel = None
+                for ch in bank_category.text_channels:
+                    if (ch.name or "").lower() == channel_name:
+                        channel = ch
+                        break
+
+            if channel is None and allow_legacy_dkp_lookup and dkp_category is not None:
+                for ch in getattr(dkp_category, "text_channels", []):
+                    if (ch.name or "").lower() == channel_name:
+                        channel = ch
+                        break
+
+            if channel is None:
+                channel = await bank_category.create_text_channel(channel_name)
+                changed = True
+
+            if getattr(channel, "category_id", None) != bank_category.id:
+                try:
+                    await channel.edit(category=bank_category)
+                except Exception:
+                    pass
+
+            if _cfg(col_name) != channel.id:
+                query = update_channel_id_queries.get(col_name)
+                if query is None:
+                    raise ValueError(f"Unsupported guild bank channel column: {col_name}")
+                await self.bot.db.execute(
+                    query,
+                    (channel.id, guild.id),
+                )
+                changed = True
+
+            return channel
+
+        panel_channel = await _ensure_channel(
+            "guild_bank_channel_id",
+            "guild-bank",
+            allow_legacy_dkp_lookup=True,
+        )
+        inventory_channel = await _ensure_channel(
+            "guild_bank_inventory_channel_id",
+            "inventory",
+        )
+        transactions_channel = await _ensure_channel(
+            "guild_bank_transactions_channel_id",
+            "transactions",
+        )
+
+        return bank_category, panel_channel, inventory_channel, transactions_channel, changed
+
+    async def _ensure_guild_bank_panel_message(
+        self,
+        panel_channel,
+        inventory_channel,
+        transactions_channel,
+    ) -> bool:
+        """Ensure a single persistent Guild Bank panel message exists in the panel channel."""
+        if panel_channel is None or not hasattr(panel_channel, "history"):
+            return False
+
+        inventory_ref = f"<#{inventory_channel.id}>" if inventory_channel else "(not configured)"
+        transactions_ref = f"<#{transactions_channel.id}>" if transactions_channel else "(not configured)"
+        embed = create_info_embed(
+            "Guild Bank",
+            "Use the buttons below to deposit or withdraw items.\n"
+            f"Inventory is searchable in {inventory_ref}.\n"
+            f"Transaction history is posted in {transactions_ref}.",
+        )
+        view = GuildBankPanelView(self.bot)
+
+        bot_user = self.bot.user
+        target = None
+        try:
+            async for msg in panel_channel.history(limit=50):
+                if bot_user is not None and getattr(msg.author, "id", None) != bot_user.id:
+                    continue
+                for emb in list(getattr(msg, "embeds", []) or []):
+                    title = (getattr(emb, "title", None) or "").strip()
+                    if title in {"Guild Bank", "Guild Bank Inventory"}:
+                        target = msg
+                        break
+                if target is not None:
+                    break
+        except Exception:
+            target = None
+
+        try:
+            if target is None:
+                new_msg = await panel_channel.send(embed=embed, view=view)
+                try:
+                    await new_msg.pin()
+                except Exception:
+                    pass
+                return True
+
+            await target.edit(embed=embed, view=view)
+            return False
+        except Exception:
+            return False
+
+    async def _sync_guild_bank_views(self, guild: discord.Guild):
+        bank_cog = self.bot.get_cog("GuildBankCog")
+        if bank_cog is None or not hasattr(bank_cog, "_update_bank_panel"):
+            return
+        try:
+            await bank_cog._update_bank_panel(guild)
+        except Exception:
+            logging.exception("Failed to sync guild bank views during setup")
+
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
         await self.run_setup(guild)
@@ -204,30 +367,30 @@ class SetupCog(commands.Cog):
                     )
                     changed = True
 
-                # Repair guild-bank channel if missing
-                guild_bank_channel_id = config['guild_bank_channel_id']
-                guild_bank_channel = guild.get_channel(guild_bank_channel_id) if guild_bank_channel_id else None
-                if not _is_text_channel(guild_bank_channel):
-                    guild_bank_channel = None
-                    for ch in category.text_channels:
-                        if (ch.name or "").lower() == "guild-bank":
-                            guild_bank_channel = ch
-                            break
-                    if guild_bank_channel is None:
-                        guild_bank_channel = await category.create_text_channel("guild-bank")
-                    await self.bot.db.execute(
-                        "UPDATE guilds SET guild_bank_channel_id = ? WHERE guild_id = ?",
-                        (guild_bank_channel.id, guild.id),
-                    )
-                    # Post initial bank panel
-                    bank_embed = create_info_embed("Guild Bank Inventory", "The guild bank is empty.")
-                    bank_view = GuildBankPanelView(self.bot)
-                    try:
-                        bank_msg = await guild_bank_channel.send(embed=bank_embed, view=bank_view)
-                        await bank_msg.pin()
-                    except Exception:
-                        pass
+                (
+                    _bank_category,
+                    guild_bank_channel,
+                    inventory_channel,
+                    transactions_channel,
+                    bank_changed,
+                ) = await self._ensure_guild_bank_channels(
+                    guild,
+                    config,
+                    overwrites,
+                    dkp_category=category,
+                )
+                if bank_changed:
                     changed = True
+
+                panel_changed = await self._ensure_guild_bank_panel_message(
+                    guild_bank_channel,
+                    inventory_channel,
+                    transactions_channel,
+                )
+                if panel_changed:
+                    changed = True
+
+                await self._sync_guild_bank_views(guild)
 
                 if changed and msg.startswith("Setup already exists"):
                     msg = f"Setup repaired for {guild.name}."
@@ -335,14 +498,18 @@ class SetupCog(commands.Cog):
             # (Legacy) Raid voice channel template is no longer used; store NULL for compatibility.
             vc_template_id = None
 
-            # Create or reuse guild-bank channel under the DKP category
-            guild_bank_channel = None
-            for channel in category.text_channels:
-                if (channel.name or "").lower() == "guild-bank":
-                    guild_bank_channel = channel
-                    break
-            if guild_bank_channel is None:
-                guild_bank_channel = await category.create_text_channel("guild-bank")
+            (
+                guild_bank_category,
+                guild_bank_channel,
+                guild_bank_inventory_channel,
+                guild_bank_transactions_channel,
+                _,
+            ) = await self._ensure_guild_bank_channels(
+                guild,
+                None,
+                overwrites,
+                dkp_category=category,
+            )
 
             # Create or reuse roles
             admin_role = discord.utils.get(guild.roles, name="DKP Admin")
@@ -383,8 +550,25 @@ class SetupCog(commands.Cog):
 
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, guild_bank_channel_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (guild.id, category.id, archive_category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, admin_role.id, officer_role.id, raider_role.id, raid_leader_role.id, guild_bank_channel.id, self.bot.license_key)
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, guild_bank_category_id, guild_bank_channel_id, guild_bank_inventory_channel_id, guild_bank_transactions_channel_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    guild.id,
+                    category.id,
+                    archive_category.id,
+                    dkp_channel.id,
+                    raid_channel.id,
+                    completed_raid_channel.id,
+                    vc_template_id,
+                    admin_role.id,
+                    officer_role.id,
+                    raider_role.id,
+                    raid_leader_role.id,
+                    guild_bank_category.id,
+                    guild_bank_channel.id,
+                    guild_bank_inventory_channel.id,
+                    guild_bank_transactions_channel.id,
+                    self.bot.license_key,
+                )
             )
             # Send welcome panel
             embed = create_info_embed(
@@ -397,17 +581,12 @@ class SetupCog(commands.Cog):
             message = await dkp_channel.send(embed=embed, view=view)
             await message.pin()
 
-            # Send guild bank panel
-            bank_embed = create_info_embed(
-                "Guild Bank Inventory",
-                "The guild bank is empty.",
+            await self._ensure_guild_bank_panel_message(
+                guild_bank_channel,
+                guild_bank_inventory_channel,
+                guild_bank_transactions_channel,
             )
-            bank_view = GuildBankPanelView(self.bot)
-            bank_msg = await guild_bank_channel.send(embed=bank_embed, view=bank_view)
-            try:
-                await bank_msg.pin()
-            except Exception:
-                pass
+            await self._sync_guild_bank_views(guild)
 
             logging.info(f"Successfully set up DKP system for guild {guild.name}")
             if interaction:

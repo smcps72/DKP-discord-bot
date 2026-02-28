@@ -367,14 +367,20 @@ class AdminCog(commands.Cog):
         ts = int(datetime.utcnow().timestamp())
         default_award = config.get('default_dkp_award', 10) or 10
         default_interval = config.get('default_dkp_interval', 1) or 1
-        guild_bank_ch_id = config['guild_bank_channel_id']
+        guild_bank_category_id = config.get('guild_bank_category_id')
+        guild_bank_ch_id = config.get('guild_bank_channel_id')
+        guild_bank_inventory_ch_id = config.get('guild_bank_inventory_channel_id')
+        guild_bank_transactions_ch_id = config.get('guild_bank_transactions_channel_id')
         description = (
             f"**Guild ID:** `{config['guild_id']}`\n"
             f"**License Status:** `{config['license_status']}`\n"
             f"**DKP Category:** {fmt_channel(config['dkp_category_id'])}\n"
             f"**DKP Channel:** {fmt_channel(config['dkp_channel_id'])}\n"
             f"**Raid Channel:** {fmt_channel(config['raid_channel_id'])}\n"
+            f"**Guild Bank Category:** {fmt_channel(guild_bank_category_id)}\n"
             f"**Guild Bank Channel:** {fmt_channel(guild_bank_ch_id)}\n"
+            f"**Guild Bank Inventory Channel:** {fmt_channel(guild_bank_inventory_ch_id)}\n"
+            f"**Guild Bank Transactions Channel:** {fmt_channel(guild_bank_transactions_ch_id)}\n"
             f"**Bot Admin Role:** {fmt_role(config['admin_role_id'])}\n"
             f"**Officer Role:** {fmt_role(config['officer_role_id'])}\n"
             f"**Raider Role:** {fmt_role(config['raider_role_id'])}\n"

@@ -160,6 +160,53 @@ async def is_admin(interaction: discord.Interaction) -> bool:
     return False
 
 
+async def is_raid_leader(interaction: discord.Interaction) -> bool:
+    guild = getattr(interaction, "guild", None)
+    user = getattr(interaction, "user", None)
+
+    member = await _resolve_member(guild, user)
+    if not guild or not member:
+        return False
+
+    guild_roles = getattr(guild, "roles", None) or []
+    if inspect.isawaitable(guild_roles):
+        guild_roles = []
+    member_roles = getattr(member, "roles", None) or []
+    if inspect.isawaitable(member_roles):
+        member_roles = []
+
+    try:
+        config = await interaction.client.db.get_guild_config(guild.id)
+    except Exception:
+        config = None
+
+    raid_leader_role_id = None
+    if config and ("raid_leader_role_id" in getattr(config, "keys", lambda: [])()):
+        raid_leader_role_id = config["raid_leader_role_id"]
+    if raid_leader_role_id:
+        try:
+            raid_leader_role_id = int(raid_leader_role_id)
+        except Exception:
+            raid_leader_role_id = None
+    if raid_leader_role_id:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == raid_leader_role_id:
+                return True
+
+    fallback_raid_leader_role_id = None
+    for role in list(guild_roles):
+        role_name = (getattr(role, "name", "") or "").strip().casefold()
+        if role_name in {"raid-leader", "raid leader"}:
+            fallback_raid_leader_role_id = getattr(role, "id", None)
+            break
+    if fallback_raid_leader_role_id is not None:
+        for role in list(member_roles):
+            if getattr(role, "id", None) == fallback_raid_leader_role_id:
+                return True
+
+    return False
+
+
 async def is_allowed_guild(interaction: discord.Interaction) -> bool:
     guild = getattr(interaction, "guild", None)
     allowed = _get_allowed_guild_ids()
