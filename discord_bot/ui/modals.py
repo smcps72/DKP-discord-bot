@@ -807,3 +807,102 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
             f"**Tip:** We recommend using the smallest interval (e.g., 6 DKP per 1 minute instead of 10 DKP per 60 minutes).",
             ephemeral=True,
         )
+
+
+class GuildBankDepositModal(Modal, title="Deposit Item"):
+    def __init__(self, bank_cog):
+        super().__init__()
+        self.bank_cog = bank_cog
+
+        self.item_name = TextInput(
+            label="Item Name",
+            placeholder="e.g., Arcanite Bar",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=100,
+        )
+        self.quantity = TextInput(
+            label="Quantity",
+            placeholder="e.g., 10",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=10,
+        )
+        self.category = TextInput(
+            label="Category",
+            placeholder="material / consumable / equipment / currency / other",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=20,
+            default="other",
+        )
+        self.location = TextInput(
+            label="Location / Storage Name",
+            placeholder="e.g., Guild Vault Tab 1, BankAlt",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=100,
+        )
+        self.held_by = TextInput(
+            label="Held By (member name or ID, blank = you)",
+            placeholder="Leave blank to use your own name",
+            style=discord.TextStyle.short,
+            required=False,
+            max_length=100,
+        )
+
+        self.add_item(self.item_name)
+        self.add_item(self.quantity)
+        self.add_item(self.category)
+        self.add_item(self.location)
+        self.add_item(self.held_by)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.bank_cog.process_deposit(
+            interaction,
+            item_name=self.item_name.value,
+            quantity_str=self.quantity.value,
+            category=self.category.value,
+            location=self.location.value,
+            held_by_name=self.held_by.value or "",
+        )
+
+
+class GuildBankWithdrawModal(Modal, title="Withdraw Item"):
+    def __init__(self, bank_cog):
+        super().__init__()
+        self.bank_cog = bank_cog
+
+        self.item_id = TextInput(
+            label="Item ID (from /bank_inventory)",
+            placeholder="e.g., 3",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=10,
+        )
+        self.quantity = TextInput(
+            label="Quantity",
+            placeholder="e.g., 5",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=10,
+        )
+        self.note = TextInput(
+            label="Note (optional)",
+            placeholder="e.g., For raid consumables",
+            style=discord.TextStyle.long,
+            required=False,
+            max_length=300,
+        )
+
+        self.add_item(self.item_id)
+        self.add_item(self.quantity)
+        self.add_item(self.note)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.bank_cog.process_withdraw(
+            interaction,
+            item_id_str=self.item_id.value,
+            quantity_str=self.quantity.value,
+            note=self.note.value or "",
+        )

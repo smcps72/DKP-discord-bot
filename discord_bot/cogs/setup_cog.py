@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from ..ui.views import WelcomeView
+from ..ui.views import WelcomeView, GuildBankPanelView
 from ..utils import create_info_embed, is_admin
 import logging
 
@@ -204,6 +204,31 @@ class SetupCog(commands.Cog):
                     )
                     changed = True
 
+                # Repair guild-bank channel if missing
+                guild_bank_channel_id = config['guild_bank_channel_id']
+                guild_bank_channel = guild.get_channel(guild_bank_channel_id) if guild_bank_channel_id else None
+                if not _is_text_channel(guild_bank_channel):
+                    guild_bank_channel = None
+                    for ch in category.text_channels:
+                        if (ch.name or "").lower() == "guild-bank":
+                            guild_bank_channel = ch
+                            break
+                    if guild_bank_channel is None:
+                        guild_bank_channel = await category.create_text_channel("guild-bank")
+                    await self.bot.db.execute(
+                        "UPDATE guilds SET guild_bank_channel_id = ? WHERE guild_id = ?",
+                        (guild_bank_channel.id, guild.id),
+                    )
+                    # Post initial bank panel
+                    bank_embed = create_info_embed("Guild Bank Inventory", "The guild bank is empty.")
+                    bank_view = GuildBankPanelView(self.bot)
+                    try:
+                        bank_msg = await guild_bank_channel.send(embed=bank_embed, view=bank_view)
+                        await bank_msg.pin()
+                    except Exception:
+                        pass
+                    changed = True
+
                 if changed and msg.startswith("Setup already exists"):
                     msg = f"Setup repaired for {guild.name}."
 
@@ -309,6 +334,16 @@ class SetupCog(commands.Cog):
 
             # (Legacy) Raid voice channel template is no longer used; store NULL for compatibility.
             vc_template_id = None
+
+            # Create or reuse guild-bank channel under the DKP category
+            guild_bank_channel = None
+            for channel in category.text_channels:
+                if (channel.name or "").lower() == "guild-bank":
+                    guild_bank_channel = channel
+                    break
+            if guild_bank_channel is None:
+                guild_bank_channel = await category.create_text_channel("guild-bank")
+
             # Create or reuse roles
             admin_role = discord.utils.get(guild.roles, name="DKP Admin")
             if admin_role is None:
@@ -348,8 +383,8 @@ class SetupCog(commands.Cog):
 
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (guild.id, category.id, archive_category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, admin_role.id, officer_role.id, raider_role.id, raid_leader_role.id, self.bot.license_key)
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, guild_bank_channel_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guild.id, category.id, archive_category.id, dkp_channel.id, raid_channel.id, completed_raid_channel.id, vc_template_id, admin_role.id, officer_role.id, raider_role.id, raid_leader_role.id, guild_bank_channel.id, self.bot.license_key)
             )
             # Send welcome panel
             embed = create_info_embed(
@@ -361,6 +396,19 @@ class SetupCog(commands.Cog):
             view = WelcomeView(self.bot)
             message = await dkp_channel.send(embed=embed, view=view)
             await message.pin()
+
+            # Send guild bank panel
+            bank_embed = create_info_embed(
+                "Guild Bank Inventory",
+                "The guild bank is empty.",
+            )
+            bank_view = GuildBankPanelView(self.bot)
+            bank_msg = await guild_bank_channel.send(embed=bank_embed, view=bank_view)
+            try:
+                await bank_msg.pin()
+            except Exception:
+                pass
+
             logging.info(f"Successfully set up DKP system for guild {guild.name}")
             if interaction:
                 try:

@@ -4,7 +4,7 @@ import re
 import random
 import subprocess
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, DefaultDKPAwardModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, DefaultDKPAwardModal, GuildBankDepositModal, GuildBankWithdrawModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import is_admin, is_officer, ensure_allowed_guild, create_info_embed
@@ -5817,3 +5817,158 @@ class RaidGroupSignupView(discord.ui.View):
             return
 
         await raid_cog.handle_group_signup(interaction, "ungrouped")
+
+
+class GuildBankPanelView(discord.ui.View):
+    """Persistent panel view for the guild bank channel with Deposit, Withdraw, Inventory, and Log buttons."""
+
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await ensure_allowed_guild(interaction)
+
+    @discord.ui.button(
+        label="Deposit",
+        style=discord.ButtonStyle.success,
+        custom_id="guild_bank_deposit",
+        emoji="📥",
+    )
+    async def deposit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        officer_ok = await is_officer(interaction)
+        if not officer_ok:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Only officers can deposit items.", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "Only officers can deposit items.", ephemeral=True
+                    )
+            except discord.HTTPException:
+                pass
+            return
+
+        bank_cog = self.bot.get_cog("GuildBankCog")
+        if not bank_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+            except discord.HTTPException:
+                pass
+            return
+
+        await interaction.response.send_modal(GuildBankDepositModal(bank_cog))
+
+    @discord.ui.button(
+        label="Withdraw",
+        style=discord.ButtonStyle.danger,
+        custom_id="guild_bank_withdraw",
+        emoji="📤",
+    )
+    async def withdraw_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        officer_ok = await is_officer(interaction)
+        if not officer_ok:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Only officers can withdraw items.", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "Only officers can withdraw items.", ephemeral=True
+                    )
+            except discord.HTTPException:
+                pass
+            return
+
+        bank_cog = self.bot.get_cog("GuildBankCog")
+        if not bank_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+            except discord.HTTPException:
+                pass
+            return
+
+        await interaction.response.send_modal(GuildBankWithdrawModal(bank_cog))
+
+    @discord.ui.button(
+        label="Inventory",
+        style=discord.ButtonStyle.primary,
+        custom_id="guild_bank_inventory",
+        emoji="📋",
+    )
+    async def inventory_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bank_cog = self.bot.get_cog("GuildBankCog")
+        if not bank_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+            except discord.HTTPException:
+                pass
+            return
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            return
+
+        items = await self.bot.db.guild_bank_get_inventory(guild.id)
+        embed = bank_cog._build_inventory_embed(items, guild)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(
+        label="Transaction Log",
+        style=discord.ButtonStyle.secondary,
+        custom_id="guild_bank_log",
+        emoji="📜",
+    )
+    async def log_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bank_cog = self.bot.get_cog("GuildBankCog")
+        if not bank_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "Guild bank module is currently offline.", ephemeral=True
+                    )
+            except discord.HTTPException:
+                pass
+            return
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            return
+
+        rows = await self.bot.db.guild_bank_get_transactions(guild.id, limit=15)
+        embed = bank_cog._build_log_embed(rows, guild)
+        await interaction.followup.send(embed=embed, ephemeral=True)

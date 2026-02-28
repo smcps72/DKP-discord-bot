@@ -1,0 +1,515 @@
+import discord
+import logging
+from discord.ext import commands
+from discord import app_commands
+from ..utils import create_info_embed, create_success_embed, create_error_embed, is_officer
+
+
+BANK_CATEGORIES = [
+    app_commands.Choice(name="Material", value="material"),
+    app_commands.Choice(name="Consumable", value="consumable"),
+    app_commands.Choice(name="Equipment", value="equipment"),
+    app_commands.Choice(name="Currency", value="currency"),
+    app_commands.Choice(name="Other", value="other"),
+]
+
+
+class GuildBankCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    # ------------------------------------------------------------------
+    # Slash commands
+    # ------------------------------------------------------------------
+
+    @app_commands.command(
+        name="bank_deposit",
+        description="Deposit an item into the guild bank. Officers only.",
+    )
+    @app_commands.describe(
+        item_name="Name of the item to deposit",
+        quantity="How many to deposit",
+        category="Item category",
+        location="Where the item is stored (e.g. bank alt name, guild vault tab)",
+        held_by="The guild member physically holding the item",
+        note="Optional note for the transaction log",
+    )
+    @app_commands.choices(category=BANK_CATEGORIES)
+    @app_commands.check(is_officer)
+    async def bank_deposit_cmd(
+        self,
+        interaction: discord.Interaction,
+        item_name: str,
+        quantity: int,
+        category: app_commands.Choice[str],
+        location: str,
+        held_by: discord.Member,
+        note: str = "",
+    ):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "This command cannot be used in DMs.", ephemeral=True
+            )
+
+        if quantity <= 0:
+            return await interaction.response.send_message(
+                "Quantity must be greater than 0.", ephemeral=True
+            )
+
+        item_name = item_name.strip()
+        if not item_name:
+            return await interaction.response.send_message(
+                "Item name cannot be empty.", ephemeral=True
+            )
+        if len(item_name) > 100:
+            item_name = item_name[:100]
+
+        location = (location or "").strip()
+        if len(location) > 100:
+            location = location[:100]
+
+        note = (note or "").strip()
+        if len(note) > 300:
+            note = note[:300]
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        item_id = await self.bot.db.guild_bank_deposit(
+            guild_id=interaction.guild.id,
+            item_name=item_name,
+            quantity=quantity,
+            category=category.value,
+            location=location,
+            held_by_user_id=held_by.id,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
+        embed = create_success_embed(
+            "Item Deposited",
+            f"**{quantity}x {item_name}** deposited into the guild bank.\n"
+            f"Category: `{category.value}`\n"
+            f"Location: `{location}`\n"
+            f"Held by: {held_by.mention}\n"
+            f"Item ID: `{item_id}`",
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        await self._update_bank_panel(interaction.guild)
+
+    @app_commands.command(
+        name="bank_withdraw",
+        description="Withdraw an item from the guild bank. Officers only.",
+    )
+    @app_commands.describe(
+        item_id="The ID of the item to withdraw (use /bank_inventory to find IDs)",
+        quantity="How many to withdraw",
+        note="Optional note for the transaction log",
+    )
+    @app_commands.check(is_officer)
+    async def bank_withdraw_cmd(
+        self,
+        interaction: discord.Interaction,
+        item_id: int,
+        quantity: int,
+        note: str = "",
+    ):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "This command cannot be used in DMs.", ephemeral=True
+            )
+
+        if quantity <= 0:
+            return await interaction.response.send_message(
+                "Quantity must be greater than 0.", ephemeral=True
+            )
+
+        note = (note or "").strip()
+        if len(note) > 300:
+            note = note[:300]
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        item = await self.bot.db.guild_bank_get_item(item_id, interaction.guild.id)
+        if not item:
+            embed = create_error_embed(
+                "Item Not Found",
+                f"No guild bank item found with ID `{item_id}`.",
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        success = await self.bot.db.guild_bank_withdraw(
+            guild_id=interaction.guild.id,
+            item_id=item_id,
+            quantity=quantity,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
+        if not success:
+            current_qty = int(item["quantity"])
+            embed = create_error_embed(
+                "Withdrawal Failed",
+                f"Cannot withdraw **{quantity}** — only **{current_qty}** of "
+                f"**{item['item_name']}** available.",
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        embed = create_success_embed(
+            "Item Withdrawn",
+            f"**{quantity}x {item['item_name']}** withdrawn from the guild bank.\n"
+            f"Item ID: `{item_id}`",
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        await self._update_bank_panel(interaction.guild)
+
+    @app_commands.command(
+        name="bank_inventory",
+        description="View all items currently in the guild bank.",
+    )
+    async def bank_inventory_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "This command cannot be used in DMs.", ephemeral=True
+            )
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        items = await self.bot.db.guild_bank_get_inventory(interaction.guild.id)
+        if not items:
+            embed = create_info_embed(
+                "Guild Bank Inventory",
+                "The guild bank is empty.",
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        embed = self._build_inventory_embed(items, interaction.guild)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="bank_log",
+        description="View the guild bank transaction log (papertrail).",
+    )
+    @app_commands.describe(limit="How many transactions to show (1-25)")
+    async def bank_log_cmd(
+        self, interaction: discord.Interaction, limit: int = 15
+    ):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "This command cannot be used in DMs.", ephemeral=True
+            )
+
+        limit = max(1, min(int(limit), 25))
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        rows = await self.bot.db.guild_bank_get_transactions(
+            interaction.guild.id, limit=limit
+        )
+        if not rows:
+            embed = create_info_embed(
+                "Guild Bank Log",
+                "No transactions recorded yet.",
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        embed = self._build_log_embed(rows, interaction.guild)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="bank_panel",
+        description="Post the guild bank panel in the current channel. Officers only.",
+    )
+    @app_commands.check(is_officer)
+    async def bank_panel_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message(
+                "This command cannot be used in DMs.", ephemeral=True
+            )
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        items = await self.bot.db.guild_bank_get_inventory(interaction.guild.id)
+        embed = self._build_inventory_embed(items, interaction.guild)
+
+        from ..ui.views import GuildBankPanelView
+
+        view = GuildBankPanelView(self.bot)
+        msg = await interaction.channel.send(embed=embed, view=view)
+
+        await interaction.followup.send(
+            f"Guild bank panel posted: {msg.jump_url}", ephemeral=True
+        )
+
+    # ------------------------------------------------------------------
+    # Deposit / withdraw from panel buttons (called by views)
+    # ------------------------------------------------------------------
+
+    async def process_deposit(
+        self,
+        interaction: discord.Interaction,
+        item_name: str,
+        quantity_str: str,
+        category: str,
+        location: str,
+        held_by_name: str,
+        note: str = "",
+    ):
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            return
+
+        item_name = (item_name or "").strip()
+        if not item_name:
+            return await interaction.response.send_message(
+                "Item name cannot be empty.", ephemeral=True
+            )
+        if len(item_name) > 100:
+            item_name = item_name[:100]
+
+        try:
+            quantity = int(quantity_str)
+        except (ValueError, TypeError):
+            return await interaction.response.send_message(
+                "Quantity must be a whole number.", ephemeral=True
+            )
+        if quantity <= 0:
+            return await interaction.response.send_message(
+                "Quantity must be greater than 0.", ephemeral=True
+            )
+
+        category = (category or "other").strip().lower()
+        location = (location or "").strip()[:100]
+        note = (note or "").strip()[:300]
+
+        # Resolve held_by member
+        held_by_name = (held_by_name or "").strip()
+        held_by = None
+        if held_by_name:
+            held_by = guild.get_member_named(held_by_name)
+            if held_by is None:
+                digits = [c for c in held_by_name if c.isdigit()]
+                if digits:
+                    try:
+                        member_id = int("".join(digits))
+                        held_by = guild.get_member(member_id)
+                    except ValueError:
+                        pass
+        if held_by is None:
+            held_by = interaction.user
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        item_id = await self.bot.db.guild_bank_deposit(
+            guild_id=guild.id,
+            item_name=item_name,
+            quantity=quantity,
+            category=category,
+            location=location,
+            held_by_user_id=held_by.id,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
+        embed = create_success_embed(
+            "Item Deposited",
+            f"**{quantity}x {item_name}** deposited into the guild bank.\n"
+            f"Category: `{category}`\n"
+            f"Location: `{location}`\n"
+            f"Held by: {held_by.mention}\n"
+            f"Item ID: `{item_id}`",
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        await self._update_bank_panel(guild)
+
+    async def process_withdraw(
+        self,
+        interaction: discord.Interaction,
+        item_id_str: str,
+        quantity_str: str,
+        note: str = "",
+    ):
+        guild = getattr(interaction, "guild", None)
+        if not guild:
+            return
+
+        try:
+            item_id = int(item_id_str)
+        except (ValueError, TypeError):
+            return await interaction.response.send_message(
+                "Item ID must be a whole number.", ephemeral=True
+            )
+
+        try:
+            quantity = int(quantity_str)
+        except (ValueError, TypeError):
+            return await interaction.response.send_message(
+                "Quantity must be a whole number.", ephemeral=True
+            )
+        if quantity <= 0:
+            return await interaction.response.send_message(
+                "Quantity must be greater than 0.", ephemeral=True
+            )
+
+        note = (note or "").strip()[:300]
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        item = await self.bot.db.guild_bank_get_item(item_id, guild.id)
+        if not item:
+            embed = create_error_embed(
+                "Item Not Found",
+                f"No guild bank item found with ID `{item_id}`.",
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        success = await self.bot.db.guild_bank_withdraw(
+            guild_id=guild.id,
+            item_id=item_id,
+            quantity=quantity,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
+        if not success:
+            current_qty = int(item["quantity"])
+            embed = create_error_embed(
+                "Withdrawal Failed",
+                f"Cannot withdraw **{quantity}** — only **{current_qty}** of "
+                f"**{item['item_name']}** available.",
+            )
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+
+        embed = create_success_embed(
+            "Item Withdrawn",
+            f"**{quantity}x {item['item_name']}** withdrawn from the guild bank.\n"
+            f"Item ID: `{item_id}`",
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        await self._update_bank_panel(guild)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _build_inventory_embed(
+        self, items, guild: discord.Guild
+    ) -> discord.Embed:
+        if not items:
+            return create_info_embed(
+                "Guild Bank Inventory", "The guild bank is empty."
+            )
+
+        categories: dict[str, list[str]] = {}
+        for item in items:
+            cat = (item["category"] or "other").capitalize()
+            qty = int(item["quantity"])
+            name = item["item_name"]
+            loc = item["location"] or "—"
+            holder_id = item["held_by_user_id"]
+            holder_str = f"<@{holder_id}>" if holder_id else "—"
+            line = f"`#{item['id']}` **{name}** ×{qty}  📍{loc}  👤{holder_str}"
+            categories.setdefault(cat, []).append(line)
+
+        desc_parts: list[str] = []
+        for cat_name in sorted(categories.keys()):
+            desc_parts.append(f"__**{cat_name}**__")
+            desc_parts.extend(categories[cat_name])
+            desc_parts.append("")
+
+        description = "\n".join(desc_parts).strip()
+        if len(description) > 4000:
+            description = description[:3997] + "..."
+
+        return create_info_embed("Guild Bank Inventory", description)
+
+    def _build_log_embed(self, rows, guild: discord.Guild) -> discord.Embed:
+        if not rows:
+            return create_info_embed(
+                "Guild Bank Transaction Log", "No transactions recorded yet."
+            )
+        lines: list[str] = []
+        for r in rows:
+            action = r["action"]
+            emoji = "📥" if action == "deposit" else "📤"
+            qty = int(r["quantity"])
+            name = r["item_name"]
+            actor = f"<@{r['actor_id']}>"
+            ts = r["timestamp"]
+            note = (r["note"] or "").strip()
+            note_str = f" — {note}" if note else ""
+
+            lines.append(
+                f"`{ts}` {emoji} **{qty}x {name}** by {actor}{note_str}"
+            )
+
+        description = "\n".join(lines)
+        if len(description) > 4000:
+            description = description[:3997] + "..."
+
+        return create_info_embed("Guild Bank Transaction Log", description)
+
+    async def _update_bank_panel(self, guild: discord.Guild):
+        """Try to update any existing guild bank panel message in the bank channel."""
+        try:
+            config = await self.bot.db.get_guild_config(guild.id)
+        except Exception:
+            return
+
+        bank_channel_id = None
+        if config:
+            bank_channel_id = config["guild_bank_channel_id"]
+
+        if not bank_channel_id:
+            return
+
+        channel = guild.get_channel(int(bank_channel_id))
+        if channel is None:
+            try:
+                channel = await guild.fetch_channel(int(bank_channel_id))
+            except Exception:
+                return
+
+        if channel is None or not hasattr(channel, "history"):
+            return
+
+        try:
+            items = await self.bot.db.guild_bank_get_inventory(guild.id)
+            embed = self._build_inventory_embed(items, guild)
+        except Exception:
+            logging.exception("Failed to build bank inventory embed for panel update")
+            return
+
+        bot_user = self.bot.user
+        if bot_user is None:
+            return
+
+        try:
+            async for msg in channel.history(limit=30):
+                if msg.author.id != bot_user.id:
+                    continue
+                for emb in list(getattr(msg, "embeds", []) or []):
+                    if (getattr(emb, "title", None) or "").strip() == "Guild Bank Inventory":
+                        try:
+                            from ..ui.views import GuildBankPanelView
+
+                            await msg.edit(embed=embed, view=GuildBankPanelView(self.bot))
+                        except Exception:
+                            logging.exception("Failed to edit guild bank panel message")
+                        return
+        except Exception:
+            logging.exception("Failed to scan for guild bank panel message")
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(GuildBankCog(bot))

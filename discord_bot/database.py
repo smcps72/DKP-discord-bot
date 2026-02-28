@@ -142,6 +142,10 @@ class Database:
                 "default_dkp_interval",
                 "ALTER TABLE guilds ADD COLUMN default_dkp_interval INTEGER DEFAULT 1",
             ),
+            (
+                "guild_bank_channel_id",
+                "ALTER TABLE guilds ADD COLUMN guild_bank_channel_id INTEGER",
+            ),
         ]
 
         for col, sql in migrations:
@@ -205,7 +209,8 @@ class Database:
                     default_dkp_award INTEGER DEFAULT 10,
                     default_dkp_interval INTEGER DEFAULT 1,
                     raid_member_list_order TEXT DEFAULT 'name',
-                    last_announced_version TEXT
+                    last_announced_version TEXT,
+                    guild_bank_channel_id INTEGER
                 )
             """)
             await cursor.execute("""
@@ -369,6 +374,36 @@ class Database:
                     actor_id INTEGER,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS guild_bank_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    item_name TEXT NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    category TEXT DEFAULT 'other',
+                    location TEXT DEFAULT '',
+                    held_by_user_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS guild_bank_transactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    item_id INTEGER,
+                    item_name TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    category TEXT DEFAULT 'other',
+                    location TEXT DEFAULT '',
+                    held_by_user_id INTEGER,
+                    actor_id INTEGER NOT NULL,
+                    note TEXT DEFAULT '',
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (item_id) REFERENCES guild_bank_items(id)
                 )
             """)
             await self.pool.commit()
@@ -954,3 +989,141 @@ class Database:
             except Exception:
                 continue
         return out
+
+    # ---- Guild Bank helpers ----
+
+    async def guild_bank_deposit(
+        self,
+        guild_id: int,
+        item_name: str,
+        quantity: int,
+        category: str,
+        location: str,
+        held_by_user_id: int,
+        actor_id: int,
+        note: str = "",
+    ) -> int:
+        """Deposit an item into the guild bank. Returns the item row id."""
+        existing = await self.fetchone(
+            """
+            SELECT id, quantity FROM guild_bank_items
+            WHERE guild_id = ? AND item_name = ? COLLATE NOCASE
+              AND category = ? AND location = ? AND held_by_user_id = ?
+            """,
+            (int(guild_id), item_name, category, location, int(held_by_user_id)),
+        )
+        if existing:
+            item_id = int(existing["id"])
+            new_qty = int(existing["quantity"]) + int(quantity)
+            await self.execute(
+                "UPDATE guild_bank_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_qty, item_id),
+            )
+        else:
+            item_id = await self.execute_insert(
+                """
+                INSERT INTO guild_bank_items
+                    (guild_id, item_name, quantity, category, location, held_by_user_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (int(guild_id), item_name, int(quantity), category, location, int(held_by_user_id)),
+            )
+
+        await self.execute_insert(
+            """
+            INSERT INTO guild_bank_transactions
+                (guild_id, item_id, item_name, action, quantity, category, location, held_by_user_id, actor_id, note)
+            VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, ?)
+            """,
+            (int(guild_id), item_id, item_name, int(quantity), category, location, int(held_by_user_id), int(actor_id), note),
+        )
+        return item_id
+
+    async def guild_bank_withdraw(
+        self,
+        guild_id: int,
+        item_id: int,
+        quantity: int,
+        actor_id: int,
+        note: str = "",
+    ) -> bool:
+        """Withdraw quantity from a guild bank item. Returns True on success."""
+        item = await self.fetchone(
+            "SELECT * FROM guild_bank_items WHERE id = ? AND guild_id = ?",
+            (int(item_id), int(guild_id)),
+        )
+        if not item:
+            return False
+        current_qty = int(item["quantity"])
+        if quantity > current_qty:
+            return False
+
+        new_qty = current_qty - quantity
+        if new_qty <= 0:
+            await self.execute("DELETE FROM guild_bank_items WHERE id = ?", (int(item_id),))
+        else:
+            await self.execute(
+                "UPDATE guild_bank_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_qty, int(item_id)),
+            )
+
+        await self.execute_insert(
+            """
+            INSERT INTO guild_bank_transactions
+                (guild_id, item_id, item_name, action, quantity, category, location, held_by_user_id, actor_id, note)
+            VALUES (?, ?, ?, 'withdraw', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(guild_id),
+                int(item_id),
+                item["item_name"],
+                int(quantity),
+                item["category"],
+                item["location"],
+                item["held_by_user_id"],
+                int(actor_id),
+                note,
+            ),
+        )
+        return True
+
+    async def guild_bank_get_inventory(self, guild_id: int):
+        """Get all items in the guild bank with quantity > 0."""
+        return await self.fetchall(
+            """
+            SELECT * FROM guild_bank_items
+            WHERE guild_id = ? AND quantity > 0
+            ORDER BY category, item_name
+            """,
+            (int(guild_id),),
+        )
+
+    async def guild_bank_get_item(self, item_id: int, guild_id: int):
+        return await self.fetchone(
+            "SELECT * FROM guild_bank_items WHERE id = ? AND guild_id = ?",
+            (int(item_id), int(guild_id)),
+        )
+
+    async def guild_bank_get_transactions(self, guild_id: int, limit: int = 25):
+        limit = max(1, min(int(limit), 100))
+        return await self.fetchall(
+            """
+            SELECT * FROM guild_bank_transactions
+            WHERE guild_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (int(guild_id), limit),
+        )
+
+    async def guild_bank_get_item_transactions(self, guild_id: int, item_id: int, limit: int = 25):
+        limit = max(1, min(int(limit), 100))
+        return await self.fetchall(
+            """
+            SELECT * FROM guild_bank_transactions
+            WHERE guild_id = ? AND item_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (int(guild_id), int(item_id), limit),
+        )
