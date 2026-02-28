@@ -237,3 +237,54 @@ async def test_get_and_modify_dkp():
     finally:
         if db.pool:
             await db.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_guild_bank_deposit_reuses_gap_ids():
+    """Depleted item slots (deleted rows) should be reused by the next deposit."""
+    db = Database(":memory:")
+    try:
+        await db.connect()
+        guild_id = 999
+        actor_id = 1
+
+        async def deposit(name, qty=1):
+            return await db.guild_bank_deposit(
+                guild_id=guild_id,
+                item_name=name,
+                quantity=qty,
+                category="other",
+                location="vault",
+                held_by_user_id=actor_id,
+                actor_id=actor_id,
+            )
+
+        # Deposit 4 items → IDs 1, 2, 3, 4
+        id1 = await deposit("Item A")
+        id2 = await deposit("Item B")
+        id3 = await deposit("Item C")
+        id4 = await deposit("Item D")
+        assert [id1, id2, id3, id4] == [1, 2, 3, 4]
+
+        # Fully withdraw item 2 → row deleted, gap at ID 2
+        await db.guild_bank_withdraw(guild_id, id2, 1, actor_id=actor_id)
+        row = await db.fetchone("SELECT id FROM guild_bank_items WHERE id = ?", (id2,))
+        assert row is None, "Item B row should have been deleted after full withdrawal"
+
+        # Next deposit must fill the gap: should get ID 2 again
+        id5 = await deposit("Item E")
+        assert id5 == 2, f"Expected gap ID 2 to be reused, got {id5}"
+
+        # Withdraw items 1 and 3 → gaps at 1 and 3
+        await db.guild_bank_withdraw(guild_id, id1, 1, actor_id=actor_id)
+        await db.guild_bank_withdraw(guild_id, id3, 1, actor_id=actor_id)
+
+        # Next two deposits should fill gap 1 then gap 3
+        id6 = await deposit("Item F")
+        id7 = await deposit("Item G")
+        assert id6 == 1, f"Expected gap ID 1 to be reused, got {id6}"
+        assert id7 == 3, f"Expected gap ID 3 to be reused, got {id7}"
+
+    finally:
+        if db.pool:
+            await db.pool.close()

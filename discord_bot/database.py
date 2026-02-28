@@ -220,6 +220,34 @@ class Database:
 
         await self.pool.commit()
 
+        async with self.pool.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='guild_bank_items'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row[0] and "AUTOINCREMENT" in row[0].upper():
+            logging.info("Migrating guild_bank_items: removing AUTOINCREMENT")
+            await self.pool.execute("""
+                CREATE TABLE guild_bank_items_new (
+                    id INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    item_name TEXT NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    category TEXT DEFAULT 'other',
+                    location TEXT DEFAULT '',
+                    held_by_user_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await self.pool.execute(
+                "INSERT INTO guild_bank_items_new SELECT * FROM guild_bank_items"
+            )
+            await self.pool.execute("DROP TABLE guild_bank_items")
+            await self.pool.execute(
+                "ALTER TABLE guild_bank_items_new RENAME TO guild_bank_items"
+            )
+            await self.pool.commit()
+
     async def _create_tables(self):
         async with self.pool.cursor() as cursor:
             await cursor.execute("""
@@ -413,7 +441,7 @@ class Database:
             """)
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS guild_bank_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY,
                     guild_id INTEGER NOT NULL,
                     item_name TEXT NOT NULL,
                     quantity INTEGER NOT NULL DEFAULT 0,
@@ -1073,6 +1101,24 @@ class Database:
 
     # ---- Guild Bank helpers ----
 
+    async def _guild_bank_next_item_id(self, guild_id: int) -> int:
+        """Return the lowest positive item ID not currently in use for this guild.
+
+        When items are depleted their rows are deleted, leaving gaps in the ID
+        sequence.  This fills those gaps so slot numbers stay compact and
+        predictable for users (e.g. if IDs 1, 3, 4 exist the next deposit gets
+        ID 2, not 5).
+        """
+        rows = await self.fetchall(
+            "SELECT id FROM guild_bank_items WHERE guild_id = ? ORDER BY id ASC",
+            (int(guild_id),),
+        )
+        existing = {int(r["id"]) for r in rows}
+        candidate = 1
+        while candidate in existing:
+            candidate += 1
+        return candidate
+
     async def guild_bank_deposit(
         self,
         guild_id: int,
@@ -1101,14 +1147,22 @@ class Database:
                 (new_qty, item_id),
             )
         else:
-            item_id = await self.execute_insert(
-                """
-                INSERT INTO guild_bank_items
-                    (guild_id, item_name, quantity, category, location, held_by_user_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (int(guild_id), item_name, int(quantity), category, location, int(held_by_user_id)),
-            )
+            for _attempt in range(5):
+                next_id = await self._guild_bank_next_item_id(int(guild_id))
+                try:
+                    item_id = await self.execute_insert(
+                        """
+                        INSERT INTO guild_bank_items
+                            (id, guild_id, item_name, quantity, category, location, held_by_user_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (next_id, int(guild_id), item_name, int(quantity), category, location, int(held_by_user_id)),
+                    )
+                    break
+                except aiosqlite.IntegrityError:
+                    if _attempt == 4:
+                        raise
+                    continue
 
         await self.execute_insert(
             """
