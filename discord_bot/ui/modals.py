@@ -810,13 +810,15 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
 
 
 class GuildBankDepositModal(Modal, title="Deposit Item"):
-    def __init__(self, bank_cog):
+    def __init__(self, bank_cog, held_by_user_id: int | None = None, category: str = "other"):
         super().__init__()
         self.bank_cog = bank_cog
+        self.held_by_user_id = held_by_user_id
+        self.category = category
 
         self.item_name = TextInput(
             label="Item Name",
-            placeholder="e.g., Arcanite Bar",
+            placeholder="e.g., Agricium",
             style=discord.TextStyle.short,
             required=True,
             max_length=100,
@@ -828,43 +830,27 @@ class GuildBankDepositModal(Modal, title="Deposit Item"):
             required=True,
             max_length=10,
         )
-        self.category = TextInput(
-            label="Category",
-            placeholder="material / consumable / equipment / currency / other",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=20,
-            default="other",
-        )
-        self.location = TextInput(
-            label="Location / Storage Name",
-            placeholder="e.g., Guild Vault Tab 1, BankAlt",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=100,
-        )
-        self.held_by = TextInput(
-            label="Held By (member name or ID, blank = you)",
-            placeholder="Leave blank to use your own name",
+        self.note = TextInput(
+            label="Note (optional)",
+            placeholder="e.g., For raid consumables",
             style=discord.TextStyle.short,
             required=False,
-            max_length=100,
+            max_length=300,
         )
 
         self.add_item(self.item_name)
         self.add_item(self.quantity)
-        self.add_item(self.category)
-        self.add_item(self.location)
-        self.add_item(self.held_by)
+        self.add_item(self.note)
 
     async def on_submit(self, interaction: discord.Interaction):
         await self.bank_cog.process_deposit(
             interaction,
             item_name=self.item_name.value,
             quantity_str=self.quantity.value,
-            category=self.category.value,
-            location=self.location.value,
-            held_by_name=self.held_by.value or "",
+            category=self.category,
+            location="guild vault",
+            held_by_user_id=self.held_by_user_id,
+            note=self.note.value or "",
         )
 
 

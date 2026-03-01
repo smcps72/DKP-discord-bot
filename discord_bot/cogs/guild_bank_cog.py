@@ -1,7 +1,6 @@
 import asyncio
 import discord
 import logging
-import re
 from discord.ext import commands
 from discord import app_commands
 from ..utils import (
@@ -13,7 +12,8 @@ from ..utils import (
 
 
 BANK_CATEGORIES = [
-    app_commands.Choice(name="Material", value="material"),
+    app_commands.Choice(name="Ship Component", value="ship_component"),
+    app_commands.Choice(name="Commodities", value="commodities"),
     app_commands.Choice(name="Consumable", value="consumable"),
     app_commands.Choice(name="Equipment", value="equipment"),
     app_commands.Choice(name="Currency", value="currency"),
@@ -346,7 +346,7 @@ class GuildBankCog(commands.Cog):
         quantity_str: str,
         category: str,
         location: str,
-        held_by_name: str,
+        held_by_user_id: int | None = None,
         note: str = "",
     ):
         guild = getattr(interaction, "guild", None)
@@ -376,24 +376,7 @@ class GuildBankCog(commands.Cog):
         location = (location or "").strip()[:100]
         note = (note or "").strip()[:300]
 
-        # Resolve held_by member
-        held_by_name = (held_by_name or "").strip()
-        held_by = None
-        if held_by_name:
-            held_by = guild.get_member_named(held_by_name)
-            if held_by is None:
-                raw_id = None
-                if held_by_name.isdigit():
-                    raw_id = held_by_name
-                else:
-                    mention_match = re.match(r'^<@!?(\d+)>$', held_by_name)
-                    if mention_match:
-                        raw_id = mention_match.group(1)
-                if raw_id:
-                    try:
-                        held_by = guild.get_member(int(raw_id))
-                    except (ValueError, TypeError):
-                        pass
+        held_by = guild.get_member(held_by_user_id) if held_by_user_id else None
         if held_by is None:
             held_by = interaction.user
 
