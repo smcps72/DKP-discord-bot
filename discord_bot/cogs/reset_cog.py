@@ -220,15 +220,19 @@ class ResetCog(commands.Cog):
             completed_raid_channel_id = (
                 config['completed_raid_channel_id'] if 'completed_raid_channel_id' in config.keys() else None
             )
+            guild_bank_category_id = config.get('guild_bank_category_id') if isinstance(config, dict) else None
 
             in_dkp_category = getattr(channel, 'category_id', None) == dkp_category_id
             in_archive_category = (
                 archive_category_id is not None and getattr(channel, 'category_id', None) == archive_category_id
             )
+            in_bank_category = (
+                guild_bank_category_id is not None and getattr(channel, 'category_id', None) == guild_bank_category_id
+            )
             is_dkp_channel = channel.id in (dkp_channel_id, raid_channel_id)
             is_archive_channel = completed_raid_channel_id is not None and channel.id == completed_raid_channel_id
 
-            if in_dkp_category or is_dkp_channel or in_archive_category or is_archive_channel:
+            if in_dkp_category or is_dkp_channel or in_archive_category or is_archive_channel or in_bank_category:
                 await interaction.response.send_message(
                     "For safety, please run `/reset` in a non-DKP channel such as #general.",
                     ephemeral=True,
@@ -339,6 +343,34 @@ class ResetCog(commands.Cog):
                     logging.info(
                         f"Deleted category {getattr(dkp_category, 'name', '')} ({getattr(dkp_category, 'id', None)})"
                     )
+
+            # Delete Guild Bank channels and category.
+            async def safe_delete_bank_channel(item_id, expected_name: str):
+                if not item_id:
+                    return
+                ch = guild.get_channel(item_id)
+                if ch is None:
+                    return
+                bank_cat_id = config.get("guild_bank_category_id") if isinstance(config, dict) else None
+                if _channel_in_category(ch, bank_cat_id):
+                    await ch.delete(reason="DKP Bot Reset")
+                    logging.info(f"Deleted guild bank channel {getattr(ch, 'name', '')} ({item_id})")
+                    return
+                if bank_cat_id is not None and (getattr(ch, "name", "") or "").lower() == expected_name:
+                    await ch.delete(reason="DKP Bot Reset")
+                    logging.info(f"Deleted guild bank channel {getattr(ch, 'name', '')} ({item_id})")
+
+            await safe_delete_bank_channel(config.get('guild_bank_channel_id'), "guild-bank")
+            await safe_delete_bank_channel(config.get('guild_bank_inventory_channel_id'), "inventory")
+            await safe_delete_bank_channel(config.get('guild_bank_transactions_channel_id'), "transactions")
+
+            bank_category = guild.get_channel(config.get('guild_bank_category_id')) if config.get('guild_bank_category_id') else None
+            if _is_category_channel(bank_category):
+                if (getattr(bank_category, "name", "") or "").lower() in {"guild bank", "guild-bank"}:
+                    await bank_category.delete(reason="DKP Bot Reset")
+                    logging.info(
+                        f"Deleted guild bank category {getattr(bank_category, 'name', '')} ({getattr(bank_category, 'id', None)})"
+                    )
             # Officer role is preserved intentionally (role object and assignments)
             await safe_delete(config.get('raider_role_id'), guild.get_role, "role")
             if config.get('raider_role_id'):
@@ -363,6 +395,9 @@ class ResetCog(commands.Cog):
             await db.execute("DELETE FROM raids WHERE guild_id = ?", (guild.id,))
             await db.execute("DELETE FROM transactions WHERE guild_id = ?", (guild.id,))
             await db.execute("DELETE FROM users WHERE guild_id = ?", (guild.id,))
+            await db.execute("DELETE FROM guild_bank_transactions WHERE guild_id = ?", (guild.id,))
+            await db.execute("DELETE FROM guild_bank_inventory_messages WHERE guild_id = ?", (guild.id,))
+            await db.execute("DELETE FROM guild_bank_items WHERE guild_id = ?", (guild.id,))
             await db.execute("DELETE FROM guilds WHERE guild_id = ?", (guild.id,))
             logging.info(f"Finished deleting database entries for guild {guild.id}")
 
