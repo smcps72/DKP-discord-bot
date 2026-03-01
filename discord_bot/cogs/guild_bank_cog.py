@@ -366,12 +366,6 @@ class GuildBankCog(commands.Cog):
             )
 
         category = (category or "other").strip().lower()
-        valid_categories = {c.value for c in BANK_CATEGORIES}
-        if category not in valid_categories:
-            return await interaction.response.send_message(
-                f"Invalid category `{category}`. Valid options: {', '.join(sorted(valid_categories))}.",
-                ephemeral=True,
-            )
         location = (location or "").strip()[:100]
         note = (note or "").strip()[:300]
 
