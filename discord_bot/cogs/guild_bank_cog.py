@@ -314,16 +314,9 @@ class GuildBankCog(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
-        config = await self.bot.db.get_guild_config(interaction.guild.id)
-        inventory_id = config["guild_bank_inventory_channel_id"] if config and "guild_bank_inventory_channel_id" in config.keys() else None
-        transactions_id = config["guild_bank_transactions_channel_id"] if config and "guild_bank_transactions_channel_id" in config.keys() else None
-        inventory_ref = f"<#{inventory_id}>" if inventory_id else "(not configured)"
-        transactions_ref = f"<#{transactions_id}>" if transactions_id else "(not configured)"
         embed = create_info_embed(
             "Guild Bank",
-            "Use the buttons below to deposit or withdraw items.\n"
-            f"Inventory is searchable in {inventory_ref}.\n"
-            f"Transaction history is posted in {transactions_ref}.",
+            "Use the buttons below to deposit or withdraw items.",
         )
 
         from ..ui.views import GuildBankPanelView
@@ -346,7 +339,7 @@ class GuildBankCog(commands.Cog):
         quantity_str: str,
         category: str,
         location: str,
-        held_by_user_id: int | None = None,
+        held_by_name: str = "",
         note: str = "",
     ):
         guild = getattr(interaction, "guild", None)
@@ -373,11 +366,29 @@ class GuildBankCog(commands.Cog):
             )
 
         category = (category or "other").strip().lower()
+        valid_categories = {c.value for c in BANK_CATEGORIES}
+        if category not in valid_categories:
+            return await interaction.response.send_message(
+                f"Invalid category `{category}`. Valid options: {', '.join(sorted(valid_categories))}.",
+                ephemeral=True,
+            )
         location = (location or "").strip()[:100]
         note = (note or "").strip()[:300]
 
-        held_by = guild.get_member(held_by_user_id) if held_by_user_id else None
-        if held_by is None:
+        held_by_name = (held_by_name or "").strip()
+        held_by: discord.Member | None = None
+        if held_by_name:
+            lower = held_by_name.lower()
+            held_by = discord.utils.find(
+                lambda m: m.display_name.lower() == lower or m.name.lower() == lower,
+                guild.members,
+            )
+            if held_by is None:
+                return await interaction.response.send_message(
+                    f"Could not find member `{held_by_name}`. Check the exact display name and try again.",
+                    ephemeral=True,
+                )
+        else:
             held_by = interaction.user
 
         if not interaction.response.is_done():
@@ -518,7 +529,11 @@ class GuildBankCog(commands.Cog):
             name = item["item_name"]
             loc = item["location"] or "—"
             holder_id = item["held_by_user_id"]
-            holder_str = f"<@{holder_id}>" if holder_id else "—"
+            if holder_id:
+                member = guild.get_member(int(holder_id))
+                holder_str = member.display_name if member else str(holder_id)
+            else:
+                holder_str = "—"
             line = f"`#{item['id']}` **{name}** ×{qty}  📍{loc}  👤{holder_str}"
             categories.setdefault(cat, []).append(line)
 
@@ -545,7 +560,8 @@ class GuildBankCog(commands.Cog):
             emoji = "📥" if action == "deposit" else "📤"
             qty = int(r["quantity"])
             name = r["item_name"]
-            actor = f"<@{r['actor_id']}>"
+            actor_member = guild.get_member(int(r["actor_id"]))
+            actor = actor_member.display_name if actor_member else str(r["actor_id"])
             ts = r["timestamp"]
             note = (r["note"] or "").strip()
             note_str = f" — {note}" if note else ""
@@ -560,14 +576,20 @@ class GuildBankCog(commands.Cog):
 
         return create_info_embed("Guild Bank Transaction Log", description)
 
-    def _build_inventory_item_message(self, item) -> str:
+    def _build_inventory_item_message(self, item, guild: discord.Guild | None = None) -> str:
         item_id = int(item["id"])
         qty = int(item["quantity"])
         name = str(item["item_name"] or "Unknown Item")
         category = str(item["category"] or "other")
         location = str(item["location"] or "—")
         holder_id = item["held_by_user_id"]
-        holder_str = f"<@{holder_id}>" if holder_id else "—"
+        if holder_id and guild:
+            member = guild.get_member(int(holder_id))
+            holder_str = member.display_name if member else str(holder_id)
+        elif holder_id:
+            holder_str = str(holder_id)
+        else:
+            holder_str = "—"
         return (
             f"`#{item_id}` **{name}** ×{qty}\n"
             f"Category: `{category}`\n"
@@ -584,19 +606,18 @@ class GuildBankCog(commands.Cog):
         quantity: int,
         category: str,
         location: str,
-        held_by_user_id: int | None,
-        actor_id: int,
+        held_by_display: str,
+        actor_display: str,
         note: str = "",
     ) -> str:
         emoji = "📥" if action == "deposit" else "📤"
-        holder_str = f"<@{held_by_user_id}>" if held_by_user_id else "—"
         note_str = f"\nNote: {note}" if (note or "").strip() else ""
         return (
             f"{emoji} **{action.title()}** — `#{item_id}` **{item_name}** ×{int(quantity)}\n"
             f"Category: `{category}`\n"
             f"Location: `{location or '—'}`\n"
-            f"Held by: {holder_str}\n"
-            f"Logger: <@{actor_id}>"
+            f"Held by: {held_by_display or '—'}\n"
+            f"Logger: {actor_display}"
             f"{note_str}"
         )
 
@@ -640,6 +661,13 @@ class GuildBankCog(commands.Cog):
         if channel is None or not hasattr(channel, "send"):
             return
 
+        held_by_display = "—"
+        if held_by_user_id:
+            member = guild.get_member(int(held_by_user_id))
+            held_by_display = member.display_name if member else str(held_by_user_id)
+        actor_member = guild.get_member(int(actor_id))
+        actor_display = actor_member.display_name if actor_member else str(actor_id)
+
         try:
             await channel.send(
                 self._build_transaction_message(
@@ -649,8 +677,8 @@ class GuildBankCog(commands.Cog):
                     quantity=quantity,
                     category=category,
                     location=location,
-                    held_by_user_id=held_by_user_id,
-                    actor_id=actor_id,
+                    held_by_display=held_by_display,
+                    actor_display=actor_display,
                     note=note,
                 ),
                 allowed_mentions=discord.AllowedMentions.none(),
@@ -706,7 +734,7 @@ class GuildBankCog(commands.Cog):
                     pass
 
             for item_id, item in items_by_id.items():
-                content = self._build_inventory_item_message(item)
+                content = self._build_inventory_item_message(item, guild)
                 mapping = None
                 try:
                     mapping = await self.bot.db.guild_bank_get_inventory_message(guild.id, item_id)
@@ -738,6 +766,7 @@ class GuildBankCog(commands.Cog):
                             content=content,
                             allowed_mentions=discord.AllowedMentions.none(),
                         )
+
 
                     await self.bot.db.guild_bank_set_inventory_message(
                         guild.id,
@@ -774,15 +803,9 @@ class GuildBankCog(commands.Cog):
         if channel is None or not hasattr(channel, "history"):
             return
 
-        inventory_id = config["guild_bank_inventory_channel_id"] if "guild_bank_inventory_channel_id" in config.keys() else None
-        transactions_id = config["guild_bank_transactions_channel_id"] if "guild_bank_transactions_channel_id" in config.keys() else None
-        inventory_ref = f"<#{inventory_id}>" if inventory_id else "(not configured)"
-        transactions_ref = f"<#{transactions_id}>" if transactions_id else "(not configured)"
         embed = create_info_embed(
             "Guild Bank",
-            "Use the buttons below to deposit or withdraw items.\n"
-            f"Inventory is searchable in {inventory_ref}.\n"
-            f"Transaction history is posted in {transactions_ref}.",
+            "Use the buttons below to deposit or withdraw items.",
         )
 
         bot_user = self.bot.user

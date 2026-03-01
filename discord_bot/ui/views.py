@@ -5824,72 +5824,8 @@ class RaidGroupSignupView(discord.ui.View):
         await raid_cog.handle_group_signup(interaction, "ungrouped")
 
 
-class _CategorySelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Ship Component", value="ship_component", emoji="⚙️"),
-            discord.SelectOption(label="Commodities", value="commodities", emoji="💎"),
-            discord.SelectOption(label="Consumable", value="consumable", emoji="🧪"),
-            discord.SelectOption(label="Equipment", value="equipment", emoji="⚔️"),
-            discord.SelectOption(label="Currency", value="currency", emoji="💰"),
-            discord.SelectOption(label="Other", value="other", emoji="📦"),
-        ]
-        super().__init__(
-            placeholder="Select item category",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-
-class _HeldBySelect(discord.ui.UserSelect):
-    def __init__(self):
-        super().__init__(
-            placeholder="Who is holding the item? (blank = you)",
-            min_values=0,
-            max_values=1,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-
-class GuildBankDepositSetupView(discord.ui.View):
-    """Ephemeral pre-step view that lets an officer pick the held-by member via UserSelect before opening the deposit modal."""
-
-    def __init__(self, bank_cog):
-        super().__init__(timeout=120)
-        self.bank_cog = bank_cog
-        self.category_select = _CategorySelect()
-        self.held_by_select = _HeldBySelect()
-        self.add_item(self.category_select)
-        self.add_item(self.held_by_select)
-
-    @discord.ui.button(
-        label="Proceed to Deposit",
-        style=discord.ButtonStyle.success,
-        emoji="📥",
-    )
-    async def proceed_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        selected_cats = self.category_select.values
-        if not selected_cats:
-            await interaction.response.send_message(
-                "Please select an item category before proceeding.", ephemeral=True
-            )
-            return
-        selected_users = self.held_by_select.values
-        held_by_user_id = selected_users[0].id if selected_users else None
-        category = selected_cats[0]
-        await interaction.response.send_modal(
-            GuildBankDepositModal(self.bank_cog, held_by_user_id=held_by_user_id, category=category)
-        )
-
-
 class GuildBankPanelView(discord.ui.View):
-    """Persistent panel view for the guild bank channel with Deposit, Withdraw, Inventory, and Log buttons."""
+    """Persistent panel view for the guild bank channel with Deposit and Withdraw buttons."""
 
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -5935,11 +5871,7 @@ class GuildBankPanelView(discord.ui.View):
                 pass
             return
 
-        await interaction.response.send_message(
-            "Select who is physically holding the item, then click **Proceed to Deposit**.",
-            view=GuildBankDepositSetupView(bank_cog),
-            ephemeral=True,
-        )
+        await interaction.response.send_modal(GuildBankDepositModal(bank_cog))
 
     @discord.ui.button(
         label="Withdraw",
@@ -5980,68 +5912,3 @@ class GuildBankPanelView(discord.ui.View):
 
         await interaction.response.send_modal(GuildBankWithdrawModal(bank_cog))
 
-    @discord.ui.button(
-        label="Inventory",
-        style=discord.ButtonStyle.primary,
-        custom_id="guild_bank_inventory",
-        emoji="📋",
-    )
-    async def inventory_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        bank_cog = self.bot.get_cog("GuildBankCog")
-        if not bank_cog:
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(
-                        "Guild bank module is currently offline.", ephemeral=True
-                    )
-                else:
-                    await interaction.followup.send(
-                        "Guild bank module is currently offline.", ephemeral=True
-                    )
-            except discord.HTTPException:
-                pass
-            return
-
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        guild = getattr(interaction, "guild", None)
-        if not guild:
-            return
-
-        items = await self.bot.db.guild_bank_get_inventory(guild.id)
-        embed = bank_cog._build_inventory_embed(items, guild)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @discord.ui.button(
-        label="Transaction Log",
-        style=discord.ButtonStyle.secondary,
-        custom_id="guild_bank_log",
-        emoji="📜",
-    )
-    async def log_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        bank_cog = self.bot.get_cog("GuildBankCog")
-        if not bank_cog:
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(
-                        "Guild bank module is currently offline.", ephemeral=True
-                    )
-                else:
-                    await interaction.followup.send(
-                        "Guild bank module is currently offline.", ephemeral=True
-                    )
-            except discord.HTTPException:
-                pass
-            return
-
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        guild = getattr(interaction, "guild", None)
-        if not guild:
-            return
-
-        rows = await self.bot.db.guild_bank_get_transactions(guild.id, limit=15)
-        embed = bank_cog._build_log_embed(rows, guild)
-        await interaction.followup.send(embed=embed, ephemeral=True)

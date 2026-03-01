@@ -810,17 +810,29 @@ class DefaultDKPAwardModal(Modal, title="Default Timed DKP"):
 
 
 class GuildBankDepositModal(Modal, title="Deposit Item"):
-    def __init__(self, bank_cog, held_by_user_id: int | None = None, category: str = "other"):
+    def __init__(self, bank_cog):
         super().__init__()
         self.bank_cog = bank_cog
-        self.held_by_user_id = held_by_user_id
-        self.category = category
 
         self.item_name = TextInput(
             label="Item Name",
             placeholder="e.g., Agricium",
             style=discord.TextStyle.short,
             required=True,
+            max_length=100,
+        )
+        self.category = TextInput(
+            label="Category",
+            placeholder="commodities / consumable / equipment / currency / other",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=50,
+        )
+        self.held_by = TextInput(
+            label="Held By (player name, blank = you)",
+            placeholder="e.g., Weyland",
+            style=discord.TextStyle.short,
+            required=False,
             max_length=100,
         )
         self.quantity = TextInput(
@@ -839,6 +851,8 @@ class GuildBankDepositModal(Modal, title="Deposit Item"):
         )
 
         self.add_item(self.item_name)
+        self.add_item(self.category)
+        self.add_item(self.held_by)
         self.add_item(self.quantity)
         self.add_item(self.note)
 
@@ -847,9 +861,9 @@ class GuildBankDepositModal(Modal, title="Deposit Item"):
             interaction,
             item_name=self.item_name.value,
             quantity_str=self.quantity.value,
-            category=self.category,
+            category=self.category.value,
             location="guild vault",
-            held_by_user_id=self.held_by_user_id,
+            held_by_name=self.held_by.value or "",
             note=self.note.value or "",
         )
 
