@@ -2,9 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.1.0-alpha.6
 
-- Added raid auto-join from voice and auto-close when raid leader absent 10+ minutes.
+- Added Guild Bank feature: deposit, withdraw, searchable inventory channel, and transaction log channel with auto-sync.
+- Added held-by member selector (UserSelect with autocomplete) on deposit; simplified deposit modal.
+- Added dedicated Guild Bank inventory and transactions channels; deposit/withdraw success messages are public.
+- Reuse deleted item IDs to maintain compact slot numbering in the inventory.
+- Added guild bank cleanup to the reset command.
+- Added public audit message for raid DKP reversals (reason truncated to 200 chars).
+- Reduced member absence threshold for auto-close from 15 to 5 minutes.
+- Officers can now create raids (previously admin-only); exclusion entries now include a reason column.
+
+## 0.1.0-alpha.5
+
+- Added raid auto-join from voice and auto-close when raid leader absent 5+ minutes.
 - Added bulk group assignment, voice-channel group assignment, and multi-member DKP adjustments with member mentions.
 - Added configurable timed DKP interval with per-minute granularity; timed DKP awards now recorded in raid transaction history.
 - Added exclusion reasons and auto-rejoin logic with voice sync before timed DKP awards.
@@ -13,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - Improved raid panel and roster UX: full roster display, added member names, reorganized button layout.
 - Updated default DKP award modal placeholder and recommendation to 6 DKP per 1 minute.
 - Added feature-complete-testing Playwright workflow and multi-select E2E tests.
+- Improved security-scan cross-platform support and command execution safety.
 
 ## 0.1.0-alpha.4
 
