@@ -227,7 +227,8 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
             self.member1.id,
             self.interaction.guild.id,  # Should be interaction.guild.id
             -200,
-            f"Won auction for {auction_data['item_name']}"
+            f"Won auction for {auction_data['item_name']}",
+            username=self.member1.display_name,
         )
 
         # Verify winner announcement is posted publicly in the raid thread
@@ -293,7 +294,8 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
             winner_id_left_guild,
             self.interaction.guild.id,  # Should be interaction.guild.id
             -50,
-            f"Won auction for {auction_data['item_name']}"
+            f"Won auction for {auction_data['item_name']}",
+            username=None,
         )
         # Winner announcement is posted publicly even if the user left the guild
         self.interaction.channel.send.assert_called_once()

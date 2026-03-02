@@ -168,6 +168,22 @@ class Database:
             except aiosqlite.OperationalError:
                 continue
 
+        async with self.pool.execute("PRAGMA table_info(users)") as cursor:
+            user_rows = await cursor.fetchall()
+        user_existing = {row[1] for row in user_rows}
+
+        user_migrations: list[tuple[str, str]] = [
+            ("username", "ALTER TABLE users ADD COLUMN username TEXT"),
+        ]
+
+        for col, sql in user_migrations:
+            if col in user_existing:
+                continue
+            try:
+                await self.pool.execute(sql)
+            except aiosqlite.OperationalError:
+                continue
+
         async with self.pool.execute("PRAGMA table_info(raids)") as cursor:
             raid_rows = await cursor.fetchall()
         raid_existing = {row[1] for row in raid_rows}
@@ -882,13 +898,18 @@ class Database:
     async def get_guild_config(self, guild_id):
         return await self.fetchone("SELECT * FROM guilds WHERE guild_id = ?", (guild_id,))
 
-    async def get_user_dkp(self, user_id, guild_id):
+    async def get_user_dkp(self, user_id, guild_id, username: str | None = None):
         await self.execute("INSERT OR IGNORE INTO users (user_id, guild_id) VALUES (?, ?)", (user_id, guild_id))
+        if username:
+            await self.execute(
+                "UPDATE users SET username = ? WHERE user_id = ? AND guild_id = ? AND (username IS NULL OR username != ?)",
+                (username, user_id, guild_id, username),
+            )
         row = await self.fetchone("SELECT dkp FROM users WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
         return row['dkp'] if row else 0
 
-    async def modify_user_dkp(self, user_id, guild_id, amount, reason):
-        await self.get_user_dkp(user_id, guild_id) # Ensure user exists
+    async def modify_user_dkp(self, user_id, guild_id, amount, reason, username: str | None = None):
+        await self.get_user_dkp(user_id, guild_id, username=username) # Ensure user exists and update username
         await self.execute("UPDATE users SET dkp = dkp + ? WHERE user_id = ? AND guild_id = ?", (amount, user_id, guild_id))
         await self.execute(
             "INSERT INTO transactions (guild_id, user_id, change, reason) VALUES (?, ?, ?, ?)",

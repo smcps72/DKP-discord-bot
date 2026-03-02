@@ -388,6 +388,7 @@ class AuctionCog(commands.Cog):
             interaction.guild.id,
             -winning_amount,
             f"Won auction for {auction['item_name']}",
+            username=winner.display_name if winner else None,
         )
 
         if winner is not None and interaction.guild is not None:

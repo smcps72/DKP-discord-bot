@@ -314,6 +314,7 @@ class TasksCog(commands.Cog):
                         int(guild_id),
                         int(amount),
                         f"Timed raid award (+{amount} every {interval_minutes}m)",
+                        username=member.display_name,
                     )
                     await self.bot.db.record_raid_dkp_transaction(
                         int(raid_id),

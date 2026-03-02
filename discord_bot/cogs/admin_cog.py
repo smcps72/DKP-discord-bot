@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -241,14 +242,14 @@ class AdminCog(commands.Cog):
             if member.bot:
                 return await interaction.followup.send("Bots do not have DKP.")
 
-            dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id)
+            dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id, username=member.display_name)
             description = f"{member.mention}  **{dkp} DKP**"
             embed = create_info_embed("Server DKP (Member)", description)
             return await interaction.followup.send(embed=embed)
 
         # Otherwise, show DKP for all users with entries in this guild
         rows = await self.bot.db.fetchall(
-            "SELECT user_id, dkp FROM users WHERE guild_id = ? ORDER BY dkp DESC",
+            "SELECT user_id, dkp, username FROM users WHERE guild_id = ? ORDER BY dkp DESC",
             (interaction.guild.id,)
         )
 
@@ -256,9 +257,27 @@ class AdminCog(commands.Cog):
             return await interaction.followup.send("No DKP data found for this server.")
 
         lines = []
+        backfill = []
         for row in rows:
-            user = interaction.guild.get_member(row["user_id"]) or f"Unknown User ({row['user_id']})"
-            lines.append(f"{getattr(user, 'mention', user)}  **{row['dkp']} DKP**")
+            member = interaction.guild.get_member(row["user_id"])
+            if member:
+                display = f"@{member.display_name}"
+                if row["username"] != member.display_name:
+                    backfill.append((member.display_name, row["user_id"], interaction.guild.id))
+            elif row["username"]:
+                display = f"@{row['username']}"
+            else:
+                display = f"Unknown User ({row['user_id']})"
+            lines.append(f"{display}  **{row['dkp']} DKP**")
+
+        if backfill:
+            async def _do_backfill(rows):
+                for uname, uid, gid in rows:
+                    await self.bot.db.execute(
+                        "UPDATE users SET username = ? WHERE user_id = ? AND guild_id = ? AND (username IS NULL OR username != ?)",
+                        (uname, uid, gid, uname),
+                    )
+            asyncio.create_task(_do_backfill(backfill))
 
         description = "\n".join(lines)
         embed = create_info_embed("Server DKP", description)

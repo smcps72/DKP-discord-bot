@@ -456,7 +456,8 @@ class RaidCog(commands.Cog):
         applied = 0
         for uid, delta in reversals:
             try:
-                await self.bot.db.modify_user_dkp(uid, guild_id, delta, f"Reverse Raid DKP: {reason}")
+                _member = interaction.guild.get_member(uid)
+                await self.bot.db.modify_user_dkp(uid, guild_id, delta, f"Reverse Raid DKP: {reason}", username=_member.display_name if _member else None)
             except Exception:
                 continue
             try:
@@ -2742,6 +2743,7 @@ class RaidCog(commands.Cog):
                 interaction.guild.id,
                 amount,
                 f"{action}: {reason} (Raid)",
+                username=m.display_name,
             )
             try:
                 await self.bot.db.record_raid_dkp_transaction(

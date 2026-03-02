@@ -452,6 +452,7 @@ class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
             guild.id,
             amount,
             f"ADMIN MANUAL ADJUST: {reason}",
+            username=member.display_name,
         )
 
         new_dkp = await self.admin_cog.bot.db.get_user_dkp(member.id, guild.id)

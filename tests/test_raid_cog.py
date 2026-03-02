@@ -272,12 +272,14 @@ async def test_process_dkp_adjustment_awards_all_vc_and_raid_members(raid_cog, m
         mock_interaction.guild.id,
         5,
         "Award: Mass award (Raid)",
+        username=member_in_vc.display_name,
     )
     raid_cog.bot.db.modify_user_dkp.assert_any_await(
         manual_member.id,
         mock_interaction.guild.id,
         5,
         "Award: Mass award (Raid)",
+        username=manual_member.display_name,
     )
 
 
@@ -342,6 +344,7 @@ async def test_process_dkp_adjustment_allows_raid_member_not_in_vc(raid_cog, moc
         mock_interaction.guild.id,
         5,
         "Award: Manual raid member (Raid)",
+        username=member.display_name,
     )
 
 
@@ -454,6 +457,7 @@ async def test_process_dkp_adjustment_excludes_members_and_groups(raid_cog, mock
         mock_interaction.guild.id,
         5,
         "Award: Mass award with exclusions (Raid)",
+        username=m1.display_name,
     )
 
 
@@ -526,6 +530,7 @@ async def test_process_dkp_adjustment_includes_groups(raid_cog, mock_interaction
         mock_interaction.guild.id,
         5,
         "Award: Mass award include group 2 (Raid)",
+        username=m2.display_name,
     )
 
 
@@ -556,10 +561,12 @@ async def test_update_team_from_voice_channel_adds_all_voice_members(raid_cog, m
     vc_member_ok = MagicMock(spec=discord.Member)
     vc_member_ok.id = 111
     vc_member_ok.bot = False
+    vc_member_ok.display_name = "MemberOne"
 
     vc_member_two = MagicMock(spec=discord.Member)
     vc_member_two.id = 222
     vc_member_two.bot = False
+    vc_member_two.display_name = "MemberTwo"
 
     leader_vc.id = 999
     leader_vc.members = [vc_member_ok, vc_member_two]
