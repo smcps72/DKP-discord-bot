@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, PropertyMock, patch
 
 import discord
 
@@ -11,6 +11,8 @@ from discord_bot.ui.views import (
     RaidPopupView,
     RaidPopupTimedDKPView,
     RaidPopupDKPSelectView,
+    RaidSyncVoicePickerView,
+    RaidSyncVoiceChannelSelect,
 )
 
 # Mock objects for testing
@@ -240,6 +242,57 @@ async def test_raid_popup_dkp_picker_is_limited_to_raid_members():
 
     option_values = {o.value for o in picker.options}
     assert option_values == {"111", "222"}
+
+
+@pytest.mark.asyncio
+async def test_sync_voice_channel_select_resolves_selected_channel_id_to_voice_channel(mock_bot):
+    view = RaidSyncVoicePickerView(bot=mock_bot)
+    select = next(c for c in view.children if isinstance(c, RaidSyncVoiceChannelSelect))
+
+    guild = MockGuild(id=123)
+    user = MockUser(id=456)
+    interaction = MockInteraction(guild=guild, user=user)
+
+    selected = MagicMock()
+    selected.id = 999
+
+    resolved_voice_channel = MagicMock(spec=discord.VoiceChannel)
+    guild.get_channel = MagicMock(return_value=resolved_voice_channel)
+    guild.fetch_channel = AsyncMock()
+    view.run_sync = AsyncMock()
+
+    with patch.object(RaidSyncVoiceChannelSelect, "values", new_callable=PropertyMock, return_value=[selected]):
+        await select.callback(interaction)
+
+    view.run_sync.assert_awaited_once_with(interaction, channel=resolved_voice_channel)
+    interaction.response.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sync_voice_channel_select_rejects_non_voice_channel_selection(mock_bot):
+    view = RaidSyncVoicePickerView(bot=mock_bot)
+    select = next(c for c in view.children if isinstance(c, RaidSyncVoiceChannelSelect))
+
+    guild = MockGuild(id=123)
+    user = MockUser(id=456)
+    interaction = MockInteraction(guild=guild, user=user)
+
+    selected = MagicMock()
+    selected.id = 999
+
+    resolved_text_channel = MagicMock(spec=discord.TextChannel)
+    guild.get_channel = MagicMock(return_value=resolved_text_channel)
+    guild.fetch_channel = AsyncMock()
+    view.run_sync = AsyncMock()
+
+    with patch.object(RaidSyncVoiceChannelSelect, "values", new_callable=PropertyMock, return_value=[selected]):
+        await select.callback(interaction)
+
+    view.run_sync.assert_not_awaited()
+    interaction.response.send_message.assert_awaited_once_with(
+        "Please choose a valid voice channel.",
+        ephemeral=True,
+    )
 
 
 # Tests for RaidControlView

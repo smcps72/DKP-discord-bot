@@ -3814,6 +3814,113 @@ class RaidPopupTimedDKPView(discord.ui.View):
         await interaction.response.edit_message(view=None)
 
 
+class RaidSyncVoiceChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, bot):
+        self.bot = bot
+        super().__init__(
+            placeholder="Pick a voice channel to add + sync...",
+            min_values=1,
+            max_values=1,
+            channel_types=[discord.ChannelType.voice],
+            custom_id="raid_sync_voice_channel_select",
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if view is None or not isinstance(view, RaidSyncVoicePickerView):
+            try:
+                await interaction.response.send_message("Please try opening Sync Voice again.", ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        selected = self.values[0] if self.values else None
+        selected_voice_channel = selected if isinstance(selected, discord.VoiceChannel) else None
+        if selected_voice_channel is None and interaction.guild is not None:
+            selected_id = getattr(selected, "id", None)
+            if selected_id is not None:
+                try:
+                    selected_voice_channel = interaction.guild.get_channel(int(selected_id))
+                except (TypeError, ValueError):
+                    selected_voice_channel = None
+
+                if selected_voice_channel is None:
+                    try:
+                        selected_voice_channel = await interaction.guild.fetch_channel(int(selected_id))
+                    except (
+                        discord.NotFound,
+                        discord.Forbidden,
+                        discord.HTTPException,
+                        TypeError,
+                        ValueError,
+                    ):
+                        selected_voice_channel = None
+
+        if not isinstance(selected_voice_channel, discord.VoiceChannel):
+            try:
+                await interaction.response.send_message("Please choose a valid voice channel.", ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        await view.run_sync(interaction, channel=selected_voice_channel)
+
+
+class RaidSyncVoicePickerView(discord.ui.View):
+    def __init__(self, bot, *, source: str | None = None, can_manage: bool = False, can_rename_thread: bool = False):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.source = source
+        self.can_manage = bool(can_manage)
+        self.can_rename_thread = bool(can_rename_thread)
+        self.add_item(RaidSyncVoiceChannelSelect(bot))
+
+    async def run_sync(self, interaction: discord.Interaction, *, channel: discord.VoiceChannel | None):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        await raid_cog.sync_raid_with_voice_channels(
+            interaction,
+            remove_missing=False,
+            confirm=False,
+            channel=channel,
+        )
+
+    @discord.ui.button(label="sync current Voice channel", style=discord.ButtonStyle.primary, custom_id="raid_sync_voice_now", row=1)
+    async def sync_now(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.run_sync(interaction, channel=None)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_sync_voice_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.source == "raid_popup":
+            embed = create_info_embed("Sync Voice", "Select an option from your raid panel.")
+            view = RaidPopupView(
+                self.bot,
+                mode=("manage" if self.can_manage else "main"),
+                can_manage=self.can_manage,
+                can_rename_thread=self.can_rename_thread,
+            )
+            try:
+                await interaction.response.edit_message(embed=embed, view=view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        try:
+            await interaction.response.edit_message(content="Sync Voice canceled.", embed=None, view=None)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            return
+
+
 class RaidControlView(discord.ui.View):
     def __init__(self, bot, show_leader_buttons: bool = True, show_rename_thread_button: bool = True):
         super().__init__(timeout=None)
@@ -4429,45 +4536,96 @@ class RaidControlView(discord.ui.View):
         can_manage: bool = False,
         can_rename_thread: bool = False,
     ):
-        async def respond_popup(message: str):
-            embed = create_info_embed("Sync Voice", message)
-            view = RaidPopupView(
-                self.bot,
-                mode=("manage" if can_manage else "main"),
-                can_manage=can_manage,
-                can_rename_thread=can_rename_thread,
-            )
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(embed=embed, view=view)
-                else:
-                    await interaction.edit_original_response(embed=embed, view=view)
-            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-                return
-
         raid_cog = self.bot.get_cog("RaidCog")
         if not raid_cog:
-            if source == "raid_popup":
-                return await respond_popup("Raid module is currently offline.")
+            if not interaction.response.is_done():
+                return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
             return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
 
         if source == "raid_popup":
             if interaction.guild is None:
-                return await respond_popup("This command can only be used inside a server.")
+                embed = create_info_embed("Sync Voice", "This command can only be used inside a server.")
+                view = RaidPopupView(
+                    self.bot,
+                    mode=("manage" if can_manage else "main"),
+                    can_manage=can_manage,
+                    can_rename_thread=can_rename_thread,
+                )
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.edit_message(embed=embed, view=view)
+                    else:
+                        await interaction.edit_original_response(embed=embed, view=view)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    return
+                return
 
             raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
             if not raid:
-                return await respond_popup("This raid is not active.")
+                embed = create_info_embed("Sync Voice", "This raid is not active.")
+                view = RaidPopupView(
+                    self.bot,
+                    mode=("manage" if can_manage else "main"),
+                    can_manage=can_manage,
+                    can_rename_thread=can_rename_thread,
+                )
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.edit_message(embed=embed, view=view)
+                    else:
+                        await interaction.edit_original_response(embed=embed, view=view)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    return
+                return
 
             admin_ok = await is_admin(interaction)
             officer_ok = await is_officer(interaction)
             if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
-                return await respond_popup("You must be the raid leader, an officer, or a bot admin to sync raid members.")
+                embed = create_info_embed("Sync Voice", "You must be the raid leader, an officer, or a bot admin to sync raid members.")
+                view = RaidPopupView(
+                    self.bot,
+                    mode=("manage" if can_manage else "main"),
+                    can_manage=can_manage,
+                    can_rename_thread=can_rename_thread,
+                )
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.edit_message(embed=embed, view=view)
+                    else:
+                        await interaction.edit_original_response(embed=embed, view=view)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    return
+                return
 
-        await raid_cog.sync_raid_with_voice_channels(interaction, remove_missing=False, confirm=False)
+        picker_embed = create_info_embed(
+            "Sync Voice",
+            "Pick a voice channel below to link it and include it in this sync.\n\n"
+            "Or click **sync current Voice channel** to sync without adding a new channel.",
+        )
+        picker_view = RaidSyncVoicePickerView(
+            self.bot,
+            source=source,
+            can_manage=can_manage,
+            can_rename_thread=can_rename_thread,
+        )
 
         if source == "raid_popup":
-            return await respond_popup("Sync Voice complete.")
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=picker_embed, view=picker_view)
+                else:
+                    await interaction.edit_original_response(embed=picker_embed, view=picker_view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=picker_embed, view=picker_view, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=picker_embed, view=picker_view, ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            return
 
     @discord.ui.button(label="🔁 Sync Voice", style=discord.ButtonStyle.secondary, custom_id="raid_sync_voice", row=2)
     async def sync_voice(self, interaction: discord.Interaction, button: discord.ui.Button):

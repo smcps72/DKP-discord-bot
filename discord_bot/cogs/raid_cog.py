@@ -1522,6 +1522,7 @@ class RaidCog(commands.Cog):
         interaction: discord.Interaction,
         remove_missing: bool = False,
         confirm: bool = False,
+        channel: discord.VoiceChannel | None = None,
     ):
         if not interaction.guild:
             return await interaction.followup.send(
@@ -1548,6 +1549,12 @@ class RaidCog(commands.Cog):
             )
 
         raid_id = int(raid["id"])
+
+        if channel is not None:
+            try:
+                await self.bot.db.add_raid_voice_channel(raid_id, int(channel.id))
+            except Exception:
+                logging.exception("Failed to link voice channel during sync")
 
         linked_vcs = await self._get_linked_voice_channels(interaction.guild, raid)
         if not linked_vcs:
@@ -1654,15 +1661,22 @@ class RaidCog(commands.Cog):
         await self.update_team_list(interaction)
 
     @app_commands.command(name="raid_sync_voice", description="Sync raid membership with linked voice channels.")
+    @app_commands.describe(channel="Optional voice channel to link and include in this sync.")
     @app_commands.describe(remove_missing="Also remove raid members who are not in linked voice channels.")
     @app_commands.describe(confirm="Required when remove_missing is true (safety confirmation).")
     async def raid_sync_voice_cmd(
         self,
         interaction: discord.Interaction,
+        channel: discord.VoiceChannel | None = None,
         remove_missing: bool = False,
         confirm: bool = False,
     ):
-        await self.sync_raid_with_voice_channels(interaction, remove_missing=remove_missing, confirm=confirm)
+        await self.sync_raid_with_voice_channels(
+            interaction,
+            remove_missing=remove_missing,
+            confirm=confirm,
+            channel=channel,
+        )
 
     @app_commands.command(name="raid_add_voice_channel", description="Link an additional voice channel to the current raid.")
     @app_commands.describe(channel="The voice channel to link to this raid.")
