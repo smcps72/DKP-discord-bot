@@ -9,17 +9,24 @@ Use this workflow when a feature is complete and ready for E2E testing via Playw
 ## Prerequisites
 
 1. **Discord auth state must exist**: `js-e2e/discord-auth.json`
-   - If missing, run from `js-e2e/`:
+   - If missing or expired, run from `js-e2e/`:
      ```bash
      DISCORD_SETUP_AUTH=1 npx playwright test tests/setup-discord-auth.spec.js --headed
      ```
    - Log in manually in the browser, then close the Playwright inspector.
+   - If the Playwright MCP browser shows the Discord login page, log in using the
+     credentials from the repo-root `.env` file (`DISCORD_TEST_EMAIL` / `DISCORD_TEST_PASSWORD`).
+     A second account is available as `DISCORD_TEST_EMAIL_2` / `DISCORD_TEST_PASSWORD_2`.
 
 2. **Bot must be running** against the test guild (DKP-local or staging).
 
 3. **Environment variables** in `.env` or `secrets/.env.local`:
+   - `DISCORD_TEST_EMAIL` / `DISCORD_TEST_PASSWORD` — test account credentials
+   - `DISCORD_TEST_EMAIL_2` / `DISCORD_TEST_PASSWORD_2` — second test account
    - `DISCORD_TEST_GUILD_ID` — target guild ID
    - `DISCORD_TEST_CHANNEL_ID` — target channel ID
+   - `DISCORD_TEST_SERVER_NAME` / `DISCORD_TEST_CHANNEL_NAME` — human-readable names
+   - `DISCORD_TEST_RAID_THREAD_URL` — URL to an active raid thread for testing
 
 ---
 
