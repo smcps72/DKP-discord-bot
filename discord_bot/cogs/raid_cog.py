@@ -209,19 +209,23 @@ class RaidCog(commands.Cog):
             )
 
             try:
+                await interaction.edit_original_response(embed=embed, view=popup_view)
+                return
+            except Exception:
+                pass
+
+            try:
                 target_msg = popup_message or getattr(interaction, "message", None)
                 if target_msg is not None:
                     await target_msg.edit(embed=embed, view=popup_view)
-                else:
-                    await interaction.edit_original_response(embed=embed, view=popup_view)
-
-                try:
-                    if interaction.type == discord.InteractionType.modal_submit:
-                        await interaction.delete_original_response()
-                except Exception:
-                    pass
+                    return
             except Exception:
-                return
+                pass
+
+            try:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            except Exception:
+                pass
 
         if not interaction.guild:
             return
@@ -2282,22 +2286,31 @@ class RaidCog(commands.Cog):
             )
 
             try:
+                # Prefer the interaction webhook for editing – ephemeral
+                # messages can only be modified through this endpoint.
+                await interaction.edit_original_response(embed=embed, view=popup_view)
+                return True
+            except Exception:
+                pass
+
+            try:
                 target_msg = popup_message or getattr(interaction, "message", None)
                 if target_msg is not None:
                     await target_msg.edit(embed=embed, view=popup_view)
-                else:
-                    await interaction.edit_original_response(embed=embed, view=popup_view)
+                    return True
+            except Exception:
+                pass
 
-                try:
-                    if interaction.type == discord.InteractionType.modal_submit:
-                        await interaction.delete_original_response()
-                except Exception:
-                    pass
+            # Last resort: send a followup so the user at least sees the
+            # response.  This creates an extra ephemeral message, but
+            # that is better than silently swallowing the error.
+            try:
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 return True
             except Exception:
-                # In popup mode, avoid falling back to followup.send() because that
-                # would create an extra ephemeral message.
-                return True
+                pass
+
+            return False
 
         # Defer if not already deferred
         # For the popup panel flow, try to acknowledge by editing the existing
@@ -2825,8 +2838,11 @@ class RaidCog(commands.Cog):
                 f"(**{len(targets)}** players) for: *{reason}*.\n{mentions}"
             )
         else:
-            mentions = ", ".join([m.mention for m in targets])
-            description = f"**{abs(amount)} DKP** {action_word.lower()} to **{len(targets)}** players for: *{reason}*.\n{mentions}"
+            if len(targets) == 1:
+                description = f"**{abs(amount)} DKP** {action_word.lower()} to {targets[0].mention} for: *{reason}*."
+            else:
+                mentions = ", ".join([m.mention for m in targets])
+                description = f"**{abs(amount)} DKP** {action_word.lower()} to **{len(targets)}** players for: *{reason}*.\n{mentions}"
 
         if len(description) > 4096:
             description = description[:4090] + "..."
@@ -2845,6 +2861,8 @@ class RaidCog(commands.Cog):
 
                 if member:
                     public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to {member.mention}. ({short_reason})"
+                elif len(targets) == 1:
+                    public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to {targets[0].mention}. ({short_reason})"
                 else:
                     mentions = ", ".join([m.mention for m in targets])
                     public_line = f"{interaction.user.mention} {action_word.lower()} **{abs(amount)}** DKP to **{len(targets)}** raid members. ({short_reason})\n{mentions}"
@@ -2916,19 +2934,23 @@ class RaidCog(commands.Cog):
             )
 
             try:
+                await interaction.edit_original_response(embed=embed, view=popup_view)
+                return
+            except Exception:
+                pass
+
+            try:
                 target_msg = popup_message or getattr(interaction, "message", None)
                 if target_msg is not None:
                     await target_msg.edit(embed=embed, view=popup_view)
-                else:
-                    await interaction.edit_original_response(embed=embed, view=popup_view)
-
-                try:
-                    if interaction.type == discord.InteractionType.modal_submit:
-                        await interaction.delete_original_response()
-                except Exception:
-                    pass
+                    return
             except Exception:
-                return
+                pass
+
+            try:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            except Exception:
+                pass
 
         if not interaction.response.is_done():
             try:
