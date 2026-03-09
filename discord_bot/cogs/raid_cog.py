@@ -1115,7 +1115,7 @@ class RaidCog(commands.Cog):
         )
 
     @app_commands.command(name="raid_set_group", description="Assign a raid member to a group number.")
-    @app_commands.describe(member="The member to assign.", group_number="Group number (e.g. 1, 2, 3)")
+    @app_commands.describe(member="The member to assign.", group_number="Group number (0 = Not in raid; 1, 2, 3...)")
     async def raid_set_group_cmd(self, interaction: discord.Interaction, member: discord.Member, group_number: int):
         if interaction.guild is None:
             return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
@@ -1130,8 +1130,8 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
 
-        if group_number < 1:
-            return await interaction.response.send_message("Group number must be 1 or higher.", ephemeral=True)
+        if group_number < 0:
+            return await interaction.response.send_message("Group number must be 0 or higher.", ephemeral=True)
 
         if member.bot:
             return await interaction.response.send_message("Bots cannot be assigned to groups.", ephemeral=True)
@@ -1144,6 +1144,12 @@ class RaidCog(commands.Cog):
             )
 
         await self.bot.db.set_raid_member_group(raid_id, int(member.id), int(group_number))
+        if int(group_number) == 0:
+            return await interaction.response.send_message(
+                f"Assigned {member.mention} to **Not in raid**.",
+                ephemeral=True,
+            )
+
         await interaction.response.send_message(
             f"Assigned {member.mention} to group **{group_number}**.",
             ephemeral=True,
@@ -1893,7 +1899,9 @@ class RaidCog(commands.Cog):
                 except Exception:
                     is_eligible = True
 
-            if not is_eligible:
+            if grp is not None and int(grp) == 0:
+                groups.setdefault("Not in raid", []).append(member.mention)
+            elif not is_eligible:
                 groups.setdefault("Not in raid", []).append(member.mention)
             elif grp is not None and 1 <= int(grp) <= group_count:
                 groups.setdefault(f"Group {int(grp)}", []).append(member.mention)
@@ -2732,6 +2740,26 @@ class RaidCog(commands.Cog):
                 except Exception:
                     pass
             targets = [member]
+
+        # Members explicitly assigned to group 0 (Not in raid) should never
+        # receive raid DKP from any raid adjustment flow.
+        group_zero_ids: set[int] = set()
+        try:
+            group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
+        except Exception:
+            group_rows = []
+
+        for row in list(group_rows or []):
+            try:
+                uid = int(row["user_id"])
+                grp = int(row["group_number"])
+            except Exception:
+                continue
+            if grp == 0:
+                group_zero_ids.add(uid)
+
+        if group_zero_ids:
+            targets = [m for m in targets if int(getattr(m, "id", 0)) not in group_zero_ids]
 
         if not targets:
             await respond_popup(

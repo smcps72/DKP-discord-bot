@@ -308,6 +308,29 @@ async def test_raid_add_member_cmd_adds_member_to_raid(raid_cog, mock_interactio
     assert any("@ManualRaider" in str(arg) for arg in args) or "@ManualRaider" in str(kwargs)
 
 
+@patch("discord_bot.cogs.raid_cog.is_officer", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_raid_set_group_cmd_allows_not_in_raid_group_zero(mock_is_officer, raid_cog, mock_interaction):
+    mock_is_officer.return_value = True
+
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1})
+    raid_cog.bot.db.is_raid_member = AsyncMock(return_value=True)
+    raid_cog.bot.db.set_raid_member_group = AsyncMock()
+
+    member = MagicMock(spec=discord.Member)
+    member.id = 777
+    member.bot = False
+    member.mention = "@ManualRaider"
+
+    await raid_cog.raid_set_group_cmd.callback(raid_cog, mock_interaction, member, 0)
+
+    raid_cog.bot.db.set_raid_member_group.assert_awaited_once_with(1, 777, 0)
+    mock_interaction.response.send_message.assert_awaited_once_with(
+        "Assigned @ManualRaider to **Not in raid**.",
+        ephemeral=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_process_dkp_adjustment_allows_raid_member_not_in_vc(raid_cog, mock_interaction, mock_thread):
     # Arrange: raid exists but VC has no members; target is recorded in raid_members
@@ -385,6 +408,46 @@ async def test_process_dkp_adjustment_rejects_member_not_in_vc_or_raid(raid_cog,
     embed = kwargs.get("embed")
     assert embed is not None
     assert embed.title == "Invalid Target"
+
+
+@pytest.mark.asyncio
+async def test_process_dkp_adjustment_excludes_direct_member_in_not_in_raid_group(raid_cog, mock_interaction, mock_thread):
+    raid = {
+        "id": 1,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "vc_id": 999,
+    }
+    raid_cog.bot.db.get_raid_by_thread = AsyncMock(return_value=raid)
+    raid_cog.bot.db.get_guild_config = AsyncMock(return_value={})
+
+    member = MagicMock(spec=discord.Member)
+    member.id = 333
+    member.bot = False
+    member.mention = f"<@{member.id}>"
+    member.display_name = "NotInRaidMember"
+
+    raid_cog.bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": member.id}])
+    raid_cog.bot.db.get_raid_member_groups = AsyncMock(return_value=[{"user_id": member.id, "group_number": 0}])
+    raid_cog.bot.db.modify_user_dkp = AsyncMock()
+
+    mock_interaction.response.is_done.return_value = True
+
+    await raid_cog.process_dkp_adjustment(
+        mock_interaction,
+        action="Award",
+        amount_str="5",
+        reason="Targeted award",
+        member=member,
+    )
+
+    raid_cog.bot.db.modify_user_dkp.assert_not_awaited()
+    mock_interaction.followup.send.assert_called_once()
+    _args, kwargs = mock_interaction.followup.send.call_args
+    assert kwargs.get("ephemeral") is True
+    embed = kwargs.get("embed")
+    assert embed is not None
+    assert embed.title == "No Eligible Targets"
 
 
 @pytest.mark.asyncio

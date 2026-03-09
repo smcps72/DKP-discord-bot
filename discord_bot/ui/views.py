@@ -1304,6 +1304,7 @@ class RaidMemberAssignGroupNumberSelect(Select):
             discord.SelectOption(label=f"Group {i}", value=str(i))
             for i in range(1, min(self.group_count, 25) + 1)
         ]
+        options.append(discord.SelectOption(label="Not in raid", value="0"))
         options.append(discord.SelectOption(label="Ungrouped", value="ungrouped"))
 
         super().__init__(
@@ -1344,7 +1345,7 @@ class RaidMemberAssignGroupNumberSelect(Select):
                 group_number = int(raw)
             except Exception:
                 group_number = None
-        if group_number is not None and (group_number < 1 or group_number > view.group_count):
+        if group_number is not None and group_number != 0 and (group_number < 1 or group_number > view.group_count):
             try:
                 await interaction.response.edit_message(
                     embed=create_info_embed("Set Group", "Invalid group selection."),
@@ -1385,6 +1386,8 @@ class RaidMemberAssignGroupNumberSelect(Select):
             if isinstance(interaction.channel, discord.Thread):
                 if group_number is None:
                     await interaction.channel.send(f"{mention} was removed from their group.")
+                elif int(group_number) == 0:
+                    await interaction.channel.send(f"{mention} was assigned to **Not in raid**.")
                 else:
                     await interaction.channel.send(f"{mention} was assigned to **Group {int(group_number)}**.")
         except Exception:
@@ -1398,6 +1401,9 @@ class RaidMemberAssignGroupNumberSelect(Select):
         if group_number is None:
             embed = create_info_embed("Set Group", f"Cleared group assignment for {mention}.")
             content = f"Cleared group assignment for {mention}."
+        elif int(group_number) == 0:
+            embed = create_info_embed("Set Group", f"Assigned {mention} to **Not in raid**.")
+            content = f"Assigned {mention} to **Not in raid**."
         else:
             embed = create_info_embed("Set Group", f"Assigned {mention} to **Group {int(group_number)}**.")
             content = f"Assigned {mention} to **Group {int(group_number)}**."
@@ -1710,6 +1716,7 @@ class RaidBulkAssignGroupNumberSelect(Select):
             discord.SelectOption(label=f"Group {i}", value=str(i))
             for i in range(1, min(self.group_count, 25) + 1)
         ]
+        options.append(discord.SelectOption(label="Not in raid", value="0"))
         options.append(discord.SelectOption(label="Ungrouped", value="ungrouped"))
 
         super().__init__(
@@ -1750,7 +1757,7 @@ class RaidBulkAssignGroupNumberSelect(Select):
                 group_number = int(raw)
             except Exception:
                 group_number = None
-        if group_number is not None and (group_number < 1 or group_number > view.group_count):
+        if group_number is not None and group_number != 0 and (group_number < 1 or group_number > view.group_count):
             try:
                 await interaction.response.edit_message(
                     embed=create_info_embed("Bulk Set Group", "Invalid group selection."),
@@ -1784,6 +1791,8 @@ class RaidBulkAssignGroupNumberSelect(Select):
             if isinstance(interaction.channel, discord.Thread):
                 if group_number is None:
                     await interaction.channel.send(f"**{success_count}** member(s) were removed from their groups.")
+                elif int(group_number) == 0:
+                    await interaction.channel.send(f"**{success_count}** member(s) were assigned to **Not in raid**.")
                 else:
                     await interaction.channel.send(f"**{success_count}** member(s) were assigned to **Group {int(group_number)}**.")
         except Exception:
@@ -1791,6 +1800,8 @@ class RaidBulkAssignGroupNumberSelect(Select):
 
         if group_number is None:
             content = f"Cleared group assignment for **{success_count}** member(s)."
+        elif int(group_number) == 0:
+            content = f"Assigned **{success_count}** member(s) to **Not in raid**."
         else:
             content = f"Assigned **{success_count}** member(s) to **Group {int(group_number)}**."
 
@@ -2007,6 +2018,7 @@ class RaidVoiceChannelGroupNumberSelect(Select):
             discord.SelectOption(label=f"Group {i}", value=str(i))
             for i in range(1, min(self.group_count, 25) + 1)
         ]
+        options.append(discord.SelectOption(label="Not in raid", value="0"))
 
         super().__init__(
             placeholder="Select a group...",
@@ -2051,7 +2063,7 @@ class RaidVoiceChannelGroupNumberSelect(Select):
                 return
             return
 
-        if group_number < 1 or group_number > view.group_count:
+        if group_number < 0 or group_number > view.group_count:
             try:
                 await interaction.response.edit_message(
                     embed=create_info_embed("From Voice Channel", "Invalid group selection."),
@@ -2117,14 +2129,20 @@ class RaidVoiceChannelGroupNumberSelect(Select):
 
         try:
             if isinstance(interaction.channel, discord.Thread):
-                msg = f"**{success_count}** member(s) from **{vc.name}** were assigned to **Group {int(group_number)}**."
+                if int(group_number) == 0:
+                    msg = f"**{success_count}** member(s) from **{vc.name}** were assigned to **Not in raid**."
+                else:
+                    msg = f"**{success_count}** member(s) from **{vc.name}** were assigned to **Group {int(group_number)}**."
                 if skipped_count > 0:
                     msg += f" ({skipped_count} skipped - not in raid)"
                 await interaction.channel.send(msg)
         except Exception:
             logging.exception("Failed to send voice channel group assignment message to raid thread")
 
-        content = f"Assigned **{success_count}** member(s) from **{vc.name}** to **Group {int(group_number)}**."
+        if int(group_number) == 0:
+            content = f"Assigned **{success_count}** member(s) from **{vc.name}** to **Not in raid**."
+        else:
+            content = f"Assigned **{success_count}** member(s) from **{vc.name}** to **Group {int(group_number)}**."
         if skipped_count > 0:
             content += f" ({skipped_count} skipped - not in raid)"
 
