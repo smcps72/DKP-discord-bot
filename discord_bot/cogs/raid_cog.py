@@ -1366,7 +1366,7 @@ class RaidCog(commands.Cog):
         vc = getattr(leader_voice, "channel", None)
         if not isinstance(vc, discord.VoiceChannel):
             return await interaction.followup.send(
-                "You must be connected to a voice channel to use Update Team.",
+                "You must be connected to a voice channel to use Sync Voice.",
                 ephemeral=True,
             )
 
@@ -1415,7 +1415,7 @@ class RaidCog(commands.Cog):
         added_members: list[discord.Member] = []
         for member in list(voice_members_by_id.values()):
             # Clear any exclusion for members currently in voice - the raid leader
-            # explicitly clicking Update Team means they want these people back in.
+            # explicitly clicking Sync Voice means they want these people back in.
             try:
                 await self.bot.db.remove_raid_member_exclusion(raid_id, int(member.id))
             except Exception:
@@ -1479,7 +1479,7 @@ class RaidCog(commands.Cog):
                 interaction,
                 raid=raid,
                 throttle=False,
-                notice=f"Update Team complete. {added_msg}",
+                notice=f"Sync Voice complete. {added_msg}",
             )
 
     async def show_voice_roster(self, interaction: discord.Interaction):

@@ -2952,12 +2952,12 @@ class RaidPopupView(discord.ui.View):
                 "**Timed DKP / Stop Timed DKP** (leader/admin): View/configure Timed DKP for this raid, or stop it if it's running.",
                 "**Raid Points** (leader/admin): View raid points for this raid (scoped/sorted).",
                 "**Reverse Raid DKP** (leader/admin): Reverse DKP changes for this raid.",
-                "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Update Team** or have people **Join Raid** first).",
+                "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Sync Voice** or have people **Join Raid** first).",
                 "**End Auction** (leader/admin): Ends the current auction for this raid.",
                 "**Close Raid** (leader/admin): Closes out the raid when finished.",
                 "",
-                "**🔄 Update Team** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes/auctions.",
-                "**🔁 Sync Voice** (leader/admin): Syncs the raid roster with the configured voice channels. Use if people moved channels after the raid started.",
+                "**🔄 Sync Voice** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes/auctions.",
+                "**🔁 Add Voice Channel** (leader/admin): Links an additional voice channel and syncs the raid roster. Use if people are in a different channel.",
                 "**🎙️ Voice Roster**: Shows who is currently in the raid voice channels.",
                 "**Remove Raider** (leader/admin): Removes a member from the raid roster.",
                 "**Groups**: Shows the current raid groups (if your guild uses grouping features).",
@@ -3270,7 +3270,7 @@ class RaidPopupView(discord.ui.View):
         if not members:
             return await self._popup_notice(
                 interaction,
-                "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button.",
+                "No eligible raid members were found. If you are in a voice channel, click \"Sync Voice\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button.",
                 mode="manage",
                 title="Award DKP",
             )
@@ -3315,7 +3315,7 @@ class RaidPopupView(discord.ui.View):
         if not members:
             return await self._popup_notice(
                 interaction,
-                "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button.",
+                "No eligible raid members were found. If you are in a voice channel, click \"Sync Voice\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button.",
                 mode="manage",
                 title="Deduct DKP",
             )
@@ -3491,7 +3491,7 @@ class RaidPopupView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
 
-    @discord.ui.button(label="🔄 Update Team", style=discord.ButtonStyle.secondary, custom_id="raid_popup_update_team", row=2)
+    @discord.ui.button(label="🔄 Sync Voice", style=discord.ButtonStyle.secondary, custom_id="raid_popup_update_team", row=2)
     async def update_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -3510,7 +3510,7 @@ class RaidPopupView(discord.ui.View):
             can_rename_thread=self.can_rename_thread,
         )
 
-    @discord.ui.button(label="🔁 Sync Voice", style=discord.ButtonStyle.secondary, custom_id="raid_popup_sync_voice", row=2)
+    @discord.ui.button(label="🔁 Add Voice Channel", style=discord.ButtonStyle.secondary, custom_id="raid_popup_sync_voice", row=2)
     async def sync_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
         if not raid:
@@ -3848,7 +3848,7 @@ class RaidSyncVoiceChannelSelect(discord.ui.ChannelSelect):
         view = self.view
         if view is None or not isinstance(view, RaidSyncVoicePickerView):
             try:
-                await interaction.response.send_message("Please try opening Sync Voice again.", ephemeral=True)
+                await interaction.response.send_message("Please try opening Add Voice Channel again.", ephemeral=True)
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 return
             return
@@ -3920,7 +3920,7 @@ class RaidSyncVoicePickerView(discord.ui.View):
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_sync_voice_back", row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.source == "raid_popup":
-            embed = create_info_embed("Sync Voice", "Select an option from your raid panel.")
+            embed = create_info_embed("Add Voice Channel", "Select an option from your raid panel.")
             view = RaidPopupView(
                 self.bot,
                 mode=("manage" if self.can_manage else "main"),
@@ -3934,7 +3934,7 @@ class RaidSyncVoicePickerView(discord.ui.View):
             return
 
         try:
-            await interaction.response.edit_message(content="Sync Voice canceled.", embed=None, view=None)
+            await interaction.response.edit_message(content="Add Voice Channel canceled.", embed=None, view=None)
         except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
             return
 
@@ -4003,7 +4003,7 @@ class RaidControlView(discord.ui.View):
             # Only defer if the interaction hasn't already been acknowledged
             # by another handler (e.g., a command or previous callback).
             if not interaction.response.is_done():
-                # "Update Team" should be a public message so raiders can see
+                # "Sync Voice" should be a public message so raiders can see
                 # the current team list. Defer non-ephemerally for that button
                 # while keeping other raid controls ephemeral.
                 ephemeral = custom_id not in ("raid_update_team", "raid_voice_roster", "raid_sync_voice")
@@ -4320,7 +4320,7 @@ class RaidControlView(discord.ui.View):
         members = list(members_by_id.values())
         if not members:
             try:
-                message = "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button."
+                message = "No eligible raid members were found. If you are in a voice channel, click \"Sync Voice\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button."
                 if not interaction.response.is_done():
                     return await interaction.response.send_message(message, ephemeral=True)
                 return await interaction.followup.send(message, ephemeral=True)
@@ -4436,7 +4436,7 @@ class RaidControlView(discord.ui.View):
 
         if not participants:
             message = (
-                "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button. Cannot start auction."
+                "No eligible raid members were found. If you are in a voice channel, click \"Sync Voice\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button. Cannot start auction."
             )
             if source == "raid_popup":
                 return await respond_popup(message)
@@ -4482,7 +4482,7 @@ class RaidControlView(discord.ui.View):
         can_rename_thread: bool = False,
     ):
         async def respond_popup(message: str):
-            embed = create_info_embed("Update Team", message)
+            embed = create_info_embed("Sync Voice", message)
             view = RaidPopupView(
                 self.bot,
                 mode=("manage" if can_manage else "main"),
@@ -4522,7 +4522,7 @@ class RaidControlView(discord.ui.View):
             leader_voice = getattr(leader_member, "voice", None)
             vc = getattr(leader_voice, "channel", None)
             if not isinstance(vc, discord.VoiceChannel):
-                return await respond_popup("You must be connected to a voice channel to use Update Team.")
+                return await respond_popup("You must be connected to a voice channel to use Sync Voice.")
 
         await raid_cog.update_team_from_voice_channel(interaction)
 
@@ -4540,9 +4540,9 @@ class RaidControlView(discord.ui.View):
                 pass
 
         if source == "raid_popup":
-            return await respond_popup("Update Team complete.")
+            return await respond_popup("Sync Voice complete.")
 
-    @discord.ui.button(label="🔄 Update Team", style=discord.ButtonStyle.secondary, custom_id="raid_update_team", row=2)
+    @discord.ui.button(label="🔄 Sync Voice", style=discord.ButtonStyle.secondary, custom_id="raid_update_team", row=2)
     async def update_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_update_team(interaction)
 
@@ -4562,7 +4562,7 @@ class RaidControlView(discord.ui.View):
 
         if source == "raid_popup":
             if interaction.guild is None:
-                embed = create_info_embed("Sync Voice", "This command can only be used inside a server.")
+                embed = create_info_embed("Add Voice Channel", "This command can only be used inside a server.")
                 view = RaidPopupView(
                     self.bot,
                     mode=("manage" if can_manage else "main"),
@@ -4580,7 +4580,7 @@ class RaidControlView(discord.ui.View):
 
             raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
             if not raid:
-                embed = create_info_embed("Sync Voice", "This raid is not active.")
+                embed = create_info_embed("Add Voice Channel", "This raid is not active.")
                 view = RaidPopupView(
                     self.bot,
                     mode=("manage" if can_manage else "main"),
@@ -4599,7 +4599,7 @@ class RaidControlView(discord.ui.View):
             admin_ok = await is_admin(interaction)
             officer_ok = await is_officer(interaction)
             if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
-                embed = create_info_embed("Sync Voice", "You must be the raid leader, an officer, or a bot admin to sync raid members.")
+                embed = create_info_embed("Add Voice Channel", "You must be the raid leader, an officer, or a bot admin to sync raid members.")
                 view = RaidPopupView(
                     self.bot,
                     mode=("manage" if can_manage else "main"),
@@ -4616,7 +4616,7 @@ class RaidControlView(discord.ui.View):
                 return
 
         picker_embed = create_info_embed(
-            "Sync Voice",
+            "Add Voice Channel",
             "Pick a voice channel below to link it and include it in this sync.\n\n"
             "Or click **sync current Voice channel** to sync without adding a new channel.",
         )
@@ -4645,7 +4645,7 @@ class RaidControlView(discord.ui.View):
         except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
             return
 
-    @discord.ui.button(label="🔁 Sync Voice", style=discord.ButtonStyle.secondary, custom_id="raid_sync_voice", row=2)
+    @discord.ui.button(label="🔁 Add Voice Channel", style=discord.ButtonStyle.secondary, custom_id="raid_sync_voice", row=2)
     async def sync_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_sync_voice(interaction)
 
@@ -5125,12 +5125,12 @@ class RaidControlView(discord.ui.View):
                 "**Reverse Raid DKP** (leader/admin): Reverse DKP changes for this raid.",
                 "**Stop Timed DKP** (leader/admin): Stops Timed DKP if it is currently running for this raid.",
                 "**Set group** (leader/admin): Assign a raid member to a group (or ungroup them).",
-                "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Update Team** or have people **Join Raid** first).",
+                "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Sync Voice** or have people **Join Raid** first).",
                 "**End Auction** (leader/admin): Ends the current auction for this raid.",
                 "**Close Raid** (leader/admin): Closes out the raid when finished.",
                 "",
-                "**🔄 Update Team** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes/auctions.",
-                "**🔁 Sync Voice** (leader/admin): Syncs the raid roster with the configured voice channels. Use if people moved channels after the raid started.",
+                "**🔄 Sync Voice** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes/auctions.",
+                "**🔁 Add Voice Channel** (leader/admin): Links an additional voice channel and syncs the raid roster. Use if people are in a different channel.",
                 "**🎙️ Voice Roster**: Shows who is currently in the raid voice channels.",
                 "**Remove Raider** (leader/admin): Removes a member from the raid roster.",
                 "**Groups**: Shows the current raid groups (if your guild uses grouping features).",
