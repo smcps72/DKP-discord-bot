@@ -1218,6 +1218,8 @@ class RaidCog(commands.Cog):
                 grp = int(row["group_number"])
             except Exception:
                 continue
+            if grp == 0:
+                continue
             if grp < 1 or grp > int(group_count):
                 try:
                     await self.bot.db.set_raid_member_group(int(raid["id"]), user_id, None)
@@ -1605,8 +1607,39 @@ class RaidCog(commands.Cog):
             except Exception:
                 continue
 
+        # Members explicitly assigned to group 0 ("Not in Raid") are watchers
+        # and should not be touched by voice sync: don't re-add them via voice
+        # and don't remove them for being absent from voice.
+        group_zero_ids: set[int] = set()
+        try:
+            group_rows = await self.bot.db.get_raid_member_groups(raid_id)
+        except Exception:
+            group_rows = []
+        for gr in list(group_rows or []):
+            try:
+                uid = int(gr["user_id"])
+                grp = int(gr["group_number"])
+            except Exception:
+                continue
+            if grp == 0:
+                group_zero_ids.add(uid)
+
+        # Check if voice sync has been performed before for this raid.
+        # After the first sync, any newly joining members are automatically
+        # placed in group 0 ("Not in Raid") and must be manually promoted
+        # by the raid leader.
+        already_synced = False
+        try:
+            already_synced = bool(int(raid.get("voice_synced") or 0))
+        except Exception:
+            already_synced = False
+
         added = 0
+        added_as_not_in_raid = 0
         for member in list(voice_members_by_id.values()):
+            if int(member.id) in group_zero_ids:
+                continue
+
             try:
                 if await self.bot.db.is_raid_member_excluded(raid_id, int(member.id)):
                     continue
@@ -1626,11 +1659,29 @@ class RaidCog(commands.Cog):
                 inserted = False
             if inserted:
                 added += 1
+                if already_synced:
+                    try:
+                        await self.bot.db.set_raid_member_group(raid_id, int(member.id), 0)
+                        added_as_not_in_raid += 1
+                    except Exception:
+                        pass
+
+        # Mark that voice sync has been performed at least once.
+        if not already_synced:
+            try:
+                await self.bot.db.execute(
+                    "UPDATE raids SET voice_synced = 1 WHERE id = ?",
+                    (raid_id,),
+                )
+            except Exception:
+                pass
 
         missing_from_voice: list[int] = []
         if remove_missing:
             for uid in sorted(raid_member_ids):
                 if uid in voice_members_by_id:
+                    continue
+                if uid in group_zero_ids:
                     continue
                 # Don't auto-remove excluded users here; exclusion is for preventing
                 # re-add. If they're still present in raid_members, that's already
@@ -1663,7 +1714,12 @@ class RaidCog(commands.Cog):
 
         vc_mentions = ", ".join([v.mention for v in linked_vcs])
         summary_parts: list[str] = [f"Linked voice channels: {vc_mentions}"]
-        summary_parts.append(f"Added: **{added}**")
+        if added_as_not_in_raid and added_as_not_in_raid == added:
+            summary_parts.append(f"Added: **{added}** (all as **Not in Raid** — promote manually)")
+        elif added_as_not_in_raid:
+            summary_parts.append(f"Added: **{added}** ({added_as_not_in_raid} as **Not in Raid** — promote manually)")
+        else:
+            summary_parts.append(f"Added: **{added}**")
         if remove_missing:
             summary_parts.append(f"Removed: **{removed}**")
         await interaction.followup.send("Sync Voice complete. " + " | ".join(summary_parts))
@@ -1823,7 +1879,9 @@ class RaidCog(commands.Cog):
                 except Exception:
                     is_eligible = True
 
-            if not is_eligible:
+            if grp is not None and int(grp) == 0:
+                key = "Not in raid"
+            elif not is_eligible:
                 key = "Not in raid"
             elif grp is not None:
                 key = f"Group {int(grp)}"
@@ -2155,7 +2213,7 @@ class RaidCog(commands.Cog):
                 group_number = int(selected_value)
             except ValueError:
                 return await interaction.followup.send("Invalid group selection.", ephemeral=True)
-            if group_number < 1 or group_number > group_count:
+            if group_number != 0 and (group_number < 1 or group_number > group_count):
                 return await interaction.followup.send(f"Please select a group between 1 and {group_count}.", ephemeral=True)
 
         await self.bot.db.set_raid_member_group(raid_id, user_id, group_number)
@@ -2175,6 +2233,8 @@ class RaidCog(commands.Cog):
 
         if group_number is None:
             return await interaction.followup.send("You are **Ungrouped**.", ephemeral=True)
+        if group_number == 0:
+            return await interaction.followup.send("You are now **Not in Raid** (you will not receive DKP).", ephemeral=True)
         return await interaction.followup.send(f"You joined **Group {group_number}**.", ephemeral=True)
 
     async def update_team_list(self, interaction: discord.Interaction):
@@ -2632,26 +2692,24 @@ class RaidCog(commands.Cog):
                     targets_by_id[user_id] = gm
 
             member_to_group: dict[int, int] = {}
-            if group_number is not None or include_group_numbers or exclude_group_numbers:
-                try:
-                    group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
-                except Exception:
-                    group_rows = []
+            try:
+                group_rows = await self.bot.db.get_raid_member_groups(int(raid["id"]))
+            except Exception:
+                group_rows = []
 
-                for row in group_rows:
-                    try:
-                        uid = int(row["user_id"])
-                        grp = int(row["group_number"])
-                    except Exception:
-                        continue
-                    member_to_group[uid] = grp
+            for row in group_rows:
+                try:
+                    uid = int(row["user_id"])
+                    grp = int(row["group_number"])
+                except Exception:
+                    continue
+                member_to_group[uid] = grp
 
             # Exclude non-raid members (group 0) from mass awards by default.
-            if member_to_group:
-                for uid in list(targets_by_id.keys()):
-                    grp = member_to_group.get(int(uid))
-                    if grp is not None and int(grp) == 0:
-                        targets_by_id.pop(uid, None)
+            for uid in list(targets_by_id.keys()):
+                grp = member_to_group.get(int(uid))
+                if grp is not None and int(grp) == 0:
+                    targets_by_id.pop(uid, None)
 
             if exclude_member_ids:
                 for uid in list(targets_by_id.keys()):

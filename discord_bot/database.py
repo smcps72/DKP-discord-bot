@@ -205,6 +205,10 @@ class Database:
                 "auto_add_from_vc",
                 "ALTER TABLE raids ADD COLUMN auto_add_from_vc INTEGER DEFAULT 0",
             ),
+            (
+                "voice_synced",
+                "ALTER TABLE raids ADD COLUMN voice_synced INTEGER DEFAULT 0",
+            ),
         ]
 
         for col, sql in raid_migrations:

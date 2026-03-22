@@ -5550,23 +5550,24 @@ class RaidOpenPanelView(discord.ui.View):
 class RaidGroupSignupModalSelect(discord.ui.Select):
     def __init__(self, bot, group_count: int | None = None):
         self.bot = bot
-        max_groups = 25
+        max_groups = 24
         try:
             if group_count is not None:
-                max_groups = max(1, min(int(group_count), 25))
+                max_groups = max(1, min(int(group_count), 24))
         except Exception:
-            max_groups = 25
+            max_groups = 24
 
         options = [
             discord.SelectOption(label=f"Group {i}", value=str(i))
             for i in range(1, max_groups + 1)
         ]
+        options.append(discord.SelectOption(label="Not in Raid", value="0", description="Stay in raid but don't receive DKP"))
 
         super().__init__(
             placeholder="Select a group...",
             min_values=1,
             max_values=1,
-            options=options,
+            options=options[:25],
             custom_id="raid_group_modal_select",
             row=0,
         )
@@ -5932,12 +5933,12 @@ class RaidGroupSignupModalView(discord.ui.View):
 class RaidGroupSignupSelect(discord.ui.Select):
     def __init__(self, bot, group_count: int | None = None):
         self.bot = bot
-        max_groups = 25
+        max_groups = 23
         try:
             if group_count is not None:
-                max_groups = max(1, min(int(group_count), 25))
+                max_groups = max(1, min(int(group_count), 23))
         except Exception:
-            max_groups = 25
+            max_groups = 23
         options = [discord.SelectOption(label="Ungrouped", value="ungrouped")]
         options.extend(
             [
@@ -5945,11 +5946,12 @@ class RaidGroupSignupSelect(discord.ui.Select):
                 for i in range(1, max_groups + 1)
             ]
         )
+        options.append(discord.SelectOption(label="Not in Raid", value="0", description="Stay in raid but don't receive DKP"))
         super().__init__(
             placeholder="Select a group...",
             min_values=1,
             max_values=1,
-            options=options,
+            options=options[:25],
             custom_id="raid_group_select",
         )
 

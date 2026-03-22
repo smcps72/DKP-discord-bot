@@ -526,7 +526,25 @@ class TasksCog(commands.Cog):
                 except Exception:
                     continue
 
+            # Members in group 0 ("Not in Raid") are watchers — skip
+            # them from voice-absence tracking entirely.
+            group_zero_ids: set[int] = set()
+            try:
+                group_rows = await self.bot.db.get_raid_member_groups(raid_id)
+            except Exception:
+                group_rows = []
+            for gr in list(group_rows or []):
+                try:
+                    _uid = int(gr["user_id"])
+                    _grp = int(gr["group_number"])
+                except Exception:
+                    continue
+                if _grp == 0:
+                    group_zero_ids.add(_uid)
+
             for uid in list(raid_member_ids):
+                if uid in group_zero_ids:
+                    continue
                 try:
                     if await self.bot.db.is_raid_member_excluded(raid_id, int(uid)):
                         continue
