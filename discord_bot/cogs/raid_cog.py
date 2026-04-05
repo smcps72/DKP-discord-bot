@@ -500,6 +500,107 @@ class RaidCog(commands.Cog):
             ephemeral=True,
         )
 
+    async def undo_last_raid_dkp(
+        self,
+        interaction: discord.Interaction,
+        *,
+        confirm: str,
+        reason: str,
+    ):
+        if interaction.guild is None:
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                pass
+
+        if (confirm or "").strip().upper() != "CONFIRM":
+            return await interaction.followup.send("Confirmation text did not match.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        if not raid:
+            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.followup.send(
+                "You must be the raid leader or a bot admin to undo raid DKP.",
+                ephemeral=True,
+            )
+
+        raid_id = int(raid["id"])
+        guild_id = int(interaction.guild.id)
+
+        try:
+            batch = await self.bot.db.get_last_raid_dkp_award_batch(raid_id)
+        except Exception:
+            batch = []
+
+        if not batch:
+            return await interaction.followup.send("No DKP award batches were found to undo.", ephemeral=True)
+
+        batch_reason = batch[0]["reason"]
+
+        reversals: list[tuple[int, int]] = []
+        for row in batch:
+            try:
+                uid = int(row["user_id"])
+                amt = int(row["change"])
+            except Exception:
+                continue
+            if amt == 0:
+                continue
+            reversals.append((uid, -amt))
+
+        if not reversals:
+            return await interaction.followup.send("The last award batch has no net DKP to undo.", ephemeral=True)
+
+        applied = 0
+        for uid, delta in reversals:
+            try:
+                _member = interaction.guild.get_member(uid)
+                await self.bot.db.modify_user_dkp(uid, guild_id, delta, f"Undo Last DKP: {reason}", username=_member.display_name if _member else None)
+            except Exception:
+                continue
+            try:
+                await self.bot.db.record_raid_dkp_transaction(
+                    raid_id,
+                    guild_id,
+                    uid,
+                    delta,
+                    f"Undo Last DKP: {reason}",
+                    actor_id=int(interaction.user.id),
+                )
+            except Exception:
+                pass
+            applied += 1
+
+        if not applied:
+            return await interaction.followup.send(
+                "All undo operations failed. No DKP was changed.",
+                ephemeral=True,
+            )
+
+        short_reason = (reason or "").strip()
+        if len(short_reason) > 200:
+            short_reason = short_reason[:197] + "..."
+        public_line = (
+            f"{interaction.user.mention} undid the last DKP award (**{batch_reason}**) "
+            f"for **{applied}** participant(s). ({short_reason})"
+        )
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(public_line)
+        except Exception:
+            logging.exception("Failed to send public undo-DKP audit line")
+
+        return await interaction.followup.send(
+            f"Undid last DKP award (**{batch_reason}**) for **{applied}** participant(s).",
+            ephemeral=True,
+        )
+
     async def disable_timed_award(self, interaction: discord.Interaction):
         if not interaction.guild:
             return

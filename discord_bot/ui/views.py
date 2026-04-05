@@ -4,7 +4,7 @@ import re
 import random
 import subprocess
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, DefaultDKPAwardModal, GuildBankDepositModal, GuildBankWithdrawModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, RaidUndoLastDKPModal, DefaultDKPAwardModal, GuildBankDepositModal, GuildBankWithdrawModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import (
@@ -3360,11 +3360,14 @@ class RaidPopupView(discord.ui.View):
         if not can_manage:
             return await self._popup_notice(interaction, "You don't have permission to do that.", mode="main")
 
-        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
-        if not raid_cog:
-            return await self._popup_notice(interaction, "Raid module is currently offline.", mode="manage")
-        modal = RaidReverseDKPModal(raid_cog)
-        await interaction.response.send_modal(modal)
+        embed = create_info_embed("Reverse Raid DKP", "Choose an option:")
+        view = RaidReverseDKPChoiceView(
+            self.bot,
+            source="popup",
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Timed DKP", style=discord.ButtonStyle.primary, custom_id="raid_popup_timed_dkp", row=3)
     async def timed_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3684,6 +3687,56 @@ class RaidPopupDKPMemberSelect(Select):
             popup_message=getattr(interaction, "message", None),
         )
         await interaction.response.send_modal(modal)
+
+
+class RaidReverseDKPChoiceView(discord.ui.View):
+    def __init__(self, bot, *, source: str = "popup", can_manage: bool = False, can_rename_thread: bool = False):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.source = source
+        self.can_manage = bool(can_manage)
+        self.can_rename_thread = bool(can_rename_thread)
+
+    @discord.ui.button(label="Undo Last Award", style=discord.ButtonStyle.primary, custom_id="raid_reverse_choice_undo_last", row=0)
+    async def undo_last(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            if self.source == "popup":
+                embed = create_info_embed("Error", "Raid module is currently offline.")
+                return await interaction.response.edit_message(embed=embed, view=None)
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+        modal = RaidUndoLastDKPModal(raid_cog)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Remove All DKP", style=discord.ButtonStyle.danger, custom_id="raid_reverse_choice_remove_all", row=0)
+    async def remove_all(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            if self.source == "popup":
+                embed = create_info_embed("Error", "Raid module is currently offline.")
+                return await interaction.response.edit_message(embed=embed, view=None)
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+        modal = RaidReverseDKPModal(raid_cog)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_reverse_choice_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.source == "popup":
+            view = RaidPopupView(
+                self.bot,
+                mode=("manage" if self.can_manage else "main"),
+                can_manage=self.can_manage,
+                can_rename_thread=self.can_rename_thread,
+            )
+            embed = create_info_embed(
+                "DKP" if self.can_manage else "Raid Panel",
+                "Use the buttons below to manage DKP, auctions, and roster actions."
+                if self.can_manage
+                else "Use the buttons below to view your DKP and other raid info. This panel is only visible to you.",
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+        else:
+            await interaction.response.edit_message(view=None)
 
 
 class RaidPopupDKPSelectView(discord.ui.View):
@@ -4379,9 +4432,10 @@ class RaidControlView(discord.ui.View):
     async def reverse_raid_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
         if not raid_cog:
-            return await interaction.followup.send("Raid module is currently offline.", ephemeral=True)
-        modal = RaidReverseDKPModal(raid_cog)
-        await interaction.response.send_modal(modal)
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+        embed = create_info_embed("Reverse Raid DKP", "Choose an option:")
+        view = RaidReverseDKPChoiceView(self.bot, source="persistent")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="Start Auction 💎", style=discord.ButtonStyle.primary, custom_id="raid_start_auction", row=1)
     async def start_auction(self, interaction: discord.Interaction, button: discord.ui.Button):

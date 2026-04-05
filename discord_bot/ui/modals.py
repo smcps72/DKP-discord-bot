@@ -359,6 +359,39 @@ class RaidReverseDKPModal(Modal, title="Reverse Raid DKP"):
         )
 
 
+class RaidUndoLastDKPModal(Modal, title="Undo Last DKP Award"):
+    def __init__(self, raid_cog):
+        super().__init__()
+        self.raid_cog = raid_cog
+
+        self.confirm = TextInput(
+            label="Type CONFIRM to undo the last DKP award",
+            placeholder="CONFIRM",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=20,
+        )
+        self.reason = TextInput(
+            label="Reason",
+            placeholder="e.g., Wrong amount awarded, duplicate payout",
+            style=discord.TextStyle.long,
+            required=True,
+            max_length=300,
+        )
+
+        self.add_item(self.confirm)
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        confirm = (self.confirm.value or "").strip()
+        reason = (self.reason.value or "").strip()
+        await self.raid_cog.undo_last_raid_dkp(
+            interaction,
+            confirm=confirm,
+            reason=reason,
+        )
+
+
 class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
     def __init__(self, admin_cog, member: discord.Member):
         super().__init__()

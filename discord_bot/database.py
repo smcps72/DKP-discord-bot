@@ -1096,6 +1096,110 @@ class Database:
             (int(raid_id), int(guild_id), int(user_id), int(change), str(reason), int(actor_id) if actor_id is not None else None),
         )
 
+    async def get_last_raid_dkp_award_batch(self, raid_id: int):
+        """Return the most recent non-reversal DKP award batch for a raid.
+
+        A "batch" is the most recent *contiguous* run of transactions (by
+        row id) sharing the same reason and actor_id.  Using contiguous IDs
+        prevents collapsing two separate awards that happen to share the
+        same reason string into a single batch.
+
+        Returns a list of row dicts for the batch, or an empty list if no
+        awardable batch exists or if the batch has already been undone.
+        """
+        # 1. Find the single most recent non-undo/non-reverse transaction.
+        latest = await self.fetchone(
+            """
+            SELECT id, reason, actor_id
+            FROM raid_dkp_transactions
+            WHERE raid_id = ?
+              AND reason NOT LIKE 'Reverse Raid DKP:%'
+              AND reason NOT LIKE 'Undo Last DKP:%'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (int(raid_id),),
+        )
+        if not latest:
+            return []
+
+        reason = latest["reason"]
+        actor_id = latest["actor_id"]
+        latest_id = int(latest["id"])
+
+        # 2. Find the boundary: the highest id (of any transaction,
+        #    including undo/reverse rows) that has a *different*
+        #    (reason, actor_id) key and precedes the latest row.
+        #    Everything after the boundary with the matching key is
+        #    the batch.
+        if actor_id is not None:
+            boundary_row = await self.fetchone(
+                """
+                SELECT MAX(id) AS boundary_id
+                FROM raid_dkp_transactions
+                WHERE raid_id = ? AND id <= ?
+                  AND (reason != ? OR actor_id != ? OR actor_id IS NULL)
+                """,
+                (int(raid_id), latest_id, reason, int(actor_id)),
+            )
+        else:
+            boundary_row = await self.fetchone(
+                """
+                SELECT MAX(id) AS boundary_id
+                FROM raid_dkp_transactions
+                WHERE raid_id = ? AND id <= ?
+                  AND (reason != ? OR actor_id IS NOT NULL)
+                """,
+                (int(raid_id), latest_id, reason),
+            )
+
+        boundary_id = (
+            int(boundary_row["boundary_id"])
+            if boundary_row and boundary_row["boundary_id"] is not None
+            else 0
+        )
+
+        # 3. Fetch the contiguous batch rows.
+        if actor_id is not None:
+            rows = await self.fetchall(
+                """
+                SELECT id, user_id, change, reason, actor_id, timestamp
+                FROM raid_dkp_transactions
+                WHERE raid_id = ? AND reason = ? AND actor_id = ? AND id > ?
+                ORDER BY id ASC
+                """,
+                (int(raid_id), reason, int(actor_id), boundary_id),
+            )
+        else:
+            rows = await self.fetchall(
+                """
+                SELECT id, user_id, change, reason, actor_id, timestamp
+                FROM raid_dkp_transactions
+                WHERE raid_id = ? AND reason = ? AND actor_id IS NULL AND id > ?
+                ORDER BY id ASC
+                """,
+                (int(raid_id), reason, boundary_id),
+            )
+
+        if not rows:
+            return []
+
+        # 4. Idempotency guard: if any transaction was recorded after
+        #    the batch (e.g. an undo), it has already been acted upon.
+        max_batch_id = max(int(r["id"]) for r in rows)
+        already_acted = await self.fetchone(
+            """
+            SELECT 1 FROM raid_dkp_transactions
+            WHERE raid_id = ? AND id > ?
+            LIMIT 1
+            """,
+            (int(raid_id), max_batch_id),
+        )
+        if already_acted:
+            return []
+
+        return list(rows)
+
     async def get_raid_dkp_totals(self, raid_id: int):
         return await self.fetchall(
             """
