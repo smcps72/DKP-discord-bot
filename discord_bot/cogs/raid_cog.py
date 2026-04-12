@@ -476,6 +476,19 @@ class RaidCog(commands.Cog):
             except Exception:
                 pass
             applied += 1
+            if _member is not None:
+                new_total = None
+                try:
+                    new_total = await self.bot.db.get_user_dkp(uid, guild_id)
+                except Exception:
+                    pass
+                await send_dkp_change_dm(
+                    _member,
+                    interaction.guild,
+                    delta,
+                    f"Reverse Raid DKP: {reason}",
+                    new_total=new_total,
+                )
 
         if not applied:
             return await interaction.followup.send(
@@ -576,6 +589,19 @@ class RaidCog(commands.Cog):
             except Exception:
                 pass
             applied += 1
+            if _member is not None:
+                new_total = None
+                try:
+                    new_total = await self.bot.db.get_user_dkp(uid, guild_id)
+                except Exception:
+                    pass
+                await send_dkp_change_dm(
+                    _member,
+                    interaction.guild,
+                    delta,
+                    f"Undo Last DKP: {reason}",
+                    new_total=new_total,
+                )
 
         if not applied:
             return await interaction.followup.send(
