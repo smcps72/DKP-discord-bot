@@ -461,6 +461,11 @@ class RaidCog(commands.Cog):
         for uid, delta in reversals:
             try:
                 _member = interaction.guild.get_member(uid)
+                if _member is None:
+                    try:
+                        _member = await interaction.guild.fetch_member(uid)
+                    except Exception:
+                        pass
                 await self.bot.db.modify_user_dkp(uid, guild_id, delta, f"Reverse Raid DKP: {reason}", username=_member.display_name if _member else None)
             except Exception:
                 continue
@@ -574,6 +579,11 @@ class RaidCog(commands.Cog):
         for uid, delta in reversals:
             try:
                 _member = interaction.guild.get_member(uid)
+                if _member is None:
+                    try:
+                        _member = await interaction.guild.fetch_member(uid)
+                    except Exception:
+                        pass
                 await self.bot.db.modify_user_dkp(uid, guild_id, delta, f"Undo Last DKP: {reason}", username=_member.display_name if _member else None)
             except Exception:
                 continue
