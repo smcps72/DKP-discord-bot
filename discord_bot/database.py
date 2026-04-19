@@ -1060,6 +1060,9 @@ class Database:
             (thread_id,),
         )
 
+    async def get_raid_by_id_any_state(self, raid_id: int):
+        return await self.fetchone("SELECT * FROM raids WHERE id = ?", (int(raid_id),))
+
     async def get_raid_by_vc(self, vc_id):
         return await self.fetchone(
             """

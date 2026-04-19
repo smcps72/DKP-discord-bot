@@ -681,10 +681,15 @@ async def test_configure_timed_award_saves_to_db(raid_cog, mock_interaction, moc
 
 
 def test_parse_cutoff_datetime_input_supports_us_style(raid_cog):
+    from datetime import datetime, timedelta
+    sys_offset_h = datetime.now().astimezone().utcoffset().total_seconds() / 3600
+    expected_utc = datetime(2026, 4, 12, 19, 0, 0) - timedelta(hours=sys_offset_h)
+    expected_sql = expected_utc.strftime("%Y-%m-%d %H:%M:%S")
+
     parsed, sql_value = raid_cog._parse_cutoff_datetime_input("4/12/26 7:00 PM")
 
     assert parsed is not None
-    assert sql_value == "2026-04-12 19:00:00"
+    assert sql_value == expected_sql
 
 
 @pytest.mark.asyncio
@@ -709,7 +714,7 @@ async def test_preview_reverse_raid_dkp_from_cutoff_uses_closed_raid_lookup(raid
         await raid_cog.preview_reverse_raid_dkp_from_cutoff(
             mock_interaction,
             confirm="CONFIRM",
-            cutoff_text="4/12/26 7:00 PM",
+            cutoff_text="4/12/26 7:00 PM +0",
             reason="cleanup",
             timed_only=False,
         )

@@ -206,7 +206,7 @@ class RaidCog(commands.Cog):
                 mode=("manage" if can_manage else "main"),
                 can_manage=can_manage,
                 can_rename_thread=can_rename_thread,
-                raid_is_active=bool(int(raid["is_active"])) if raid and raid.get("is_active") is not None else True,
+                raid_is_active=bool(int(raid["is_active"])) if raid and raid["is_active"] is not None else True,
             )
 
             try:
@@ -411,20 +411,48 @@ class RaidCog(commands.Cog):
             return None
         return await self.bot.db.get_raid_by_thread_any_state(interaction.channel.id)
 
-    def _parse_cutoff_datetime_input(self, raw_value: str) -> tuple[datetime | None, str | None]:
+    def _parse_cutoff_datetime_input(
+        self, raw_value: str, *, reference_utc: datetime | None = None
+    ) -> tuple[datetime | None, str | None]:
+        import re as _re
+        from datetime import timezone, timedelta
         normalized = " ".join(str(raw_value or "").strip().split())
         if not normalized:
             return None, None
+        normalized = _re.sub(r'\s*\(UTC\)\s*$', '', normalized, flags=_re.IGNORECASE).strip()
 
-        formats = (
-            "%m/%d/%y %I:%M %p",
-            "%m/%d/%Y %I:%M %p",
-            "%m/%d/%y %I:%M%p",
-            "%m/%d/%Y %I:%M%p",
+        # Detect explicit UTC offset suffix e.g. "-5", "+5:30"
+        utc_offset_hours: float | None = None
+        offset_match = _re.search(r'\s([+-])(\d{1,2})(?::(\d{2}))?$', normalized)
+        if offset_match:
+            sign = 1 if offset_match.group(1) == '+' else -1
+            hours = int(offset_match.group(2))
+            minutes = int(offset_match.group(3) or 0)
+            utc_offset_hours = sign * (hours + minutes / 60)
+            normalized = normalized[:offset_match.start()].strip()
+        else:
+            # Fall back to the system's local UTC offset
+            local_now = datetime.now().astimezone()
+            utc_offset_hours = local_now.utcoffset().total_seconds() / 3600
+
+        today_utc = (reference_utc or datetime.now(timezone.utc)).replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
         )
-        for fmt in formats:
+        for fmt in ("%I:%M %p", "%I:%M%p", "%H:%M"):
+            try:
+                t = datetime.strptime(normalized.upper(), fmt)
+                parsed = today_utc.replace(hour=t.hour, minute=t.minute, second=0)
+                if utc_offset_hours is not None:
+                    parsed = parsed - timedelta(hours=utc_offset_hours)
+                return parsed, parsed.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+
+        for fmt in ("%m/%d/%y %I:%M %p", "%m/%d/%Y %I:%M %p", "%m/%d/%y %I:%M%p", "%m/%d/%Y %I:%M%p"):
             try:
                 parsed = datetime.strptime(normalized.upper(), fmt)
+                if utc_offset_hours is not None:
+                    parsed = parsed - timedelta(hours=utc_offset_hours)
                 return parsed, parsed.strftime("%Y-%m-%d %H:%M:%S")
             except ValueError:
                 continue
@@ -550,10 +578,12 @@ class RaidCog(commands.Cog):
                 ephemeral=True,
             )
 
-        parsed_cutoff, cutoff_sql = self._parse_cutoff_datetime_input(cutoff_text)
+        parsed_cutoff, cutoff_sql = self._parse_cutoff_datetime_input(
+            cutoff_text, reference_utc=getattr(interaction, "created_at", None)
+        )
         if parsed_cutoff is None or cutoff_sql is None:
             return await interaction.response.send_message(
-                "Invalid cutoff date/time. Use US-style text like `4/12/26 7:00 PM`.",
+                "Invalid cutoff time. Examples: `1:30 PM -5` (local, UTC-5), `1:30 PM` (UTC), `4/12/26 1:30 PM -5`.",
                 ephemeral=True,
             )
 
@@ -596,7 +626,7 @@ class RaidCog(commands.Cog):
             cutoff_sql=cutoff_sql,
             reason=reason.strip(),
             timed_only=bool(timed_only),
-            raid_is_active=bool(int(raid["is_active"])) if raid.get("is_active") is not None else True,
+            raid_is_active=bool(int(raid["is_active"])) if raid["is_active"] is not None else True,
         )
         return await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -608,11 +638,15 @@ class RaidCog(commands.Cog):
         cutoff_sql: str,
         reason: str,
         timed_only: bool,
+        raid_id_override: int | None = None,
     ):
         if interaction.guild is None:
             return
 
-        raid = await self._get_raid_for_reverse_actions(interaction)
+        if raid_id_override is not None:
+            raid = await self.bot.db.get_raid_by_id_any_state(raid_id_override)
+        else:
+            raid = await self._get_raid_for_reverse_actions(interaction)
         if not raid:
             return await interaction.response.edit_message(
                 embed=create_info_embed("Cutoff Reversal", "This channel is not associated with a raid."),
@@ -931,7 +965,7 @@ class RaidCog(commands.Cog):
                     mode="main",
                     can_manage=can_manage,
                     can_rename_thread=can_rename_thread,
-                    raid_is_active=bool(int(raid["is_active"])) if raid.get("is_active") is not None else True,
+                    raid_is_active=bool(int(raid["is_active"])) if raid["is_active"] is not None else True,
                 )
                 if not interaction.response.is_done():
                     await interaction.response.edit_message(embed=embed, view=view)
@@ -1137,7 +1171,7 @@ class RaidCog(commands.Cog):
             mode="main",
             can_manage=can_manage,
             can_rename_thread=can_rename_thread,
-            raid_is_active=bool(int(raid["is_active"])) if raid.get("is_active") is not None else True,
+            raid_is_active=bool(int(raid["is_active"])) if raid["is_active"] is not None else True,
         )
 
         try:
@@ -2206,6 +2240,100 @@ class RaidCog(commands.Cog):
         vc_mentions = "\n".join([f"- {vc.mention} (`{vc.id}`)" for vc in linked_vcs])
         embed = create_info_embed("Linked Raid Voice Channels", vc_mentions)
         return await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="raid_reverse_cutoff",
+        description="Reverse timed or all DKP awards from a cutoff time. Works on archived/closed raids.",
+    )
+    @app_commands.describe(
+        thread="The raid log thread to reverse DKP in.",
+        timed_only="True = timed awards only. False = all raid DKP awards.",
+    )
+    async def raid_reverse_cutoff_cmd(
+        self,
+        interaction: discord.Interaction,
+        thread: discord.Thread,
+        timed_only: bool = False,
+    ):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        raid = await self.bot.db.get_raid_by_thread_any_state(thread.id)
+        if not raid:
+            return await interaction.response.send_message(
+                f"{thread.mention} is not associated with any raid.",
+                ephemeral=True,
+            )
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.response.send_message(
+                "You must be the raid leader or a bot admin to reverse raid DKP.",
+                ephemeral=True,
+            )
+
+        from ..ui.modals import RaidReverseFromCutoffModal
+
+        class _ModalWithThread(RaidReverseFromCutoffModal):
+            async def on_submit(inner_self, modal_interaction: discord.Interaction):
+                confirm = (inner_self.confirm.value or "").strip()
+                cutoff_text = (inner_self.cutoff.value or "").strip()
+                reason = (inner_self.reason.value or "").strip()
+                if confirm.upper() != "CONFIRM":
+                    return await modal_interaction.response.send_message(
+                        "Confirmation text did not match.", ephemeral=True
+                    )
+                parsed_cutoff, cutoff_sql = self._parse_cutoff_datetime_input(
+                    cutoff_text, reference_utc=getattr(modal_interaction, "created_at", None)
+                )
+                if parsed_cutoff is None or cutoff_sql is None:
+                    return await modal_interaction.response.send_message(
+                        "Invalid cutoff time. Examples: `1:30 PM -5` (local, UTC-5), `1:30 PM` (UTC), `4/12/26 1:30 PM -5`.",
+                        ephemeral=True,
+                    )
+                try:
+                    rows = await self.bot.db.get_raid_dkp_transactions_from_cutoff(
+                        int(raid["id"]),
+                        cutoff_sql,
+                        timed_only=bool(timed_only),
+                    )
+                except Exception:
+                    rows = []
+
+                participant_count, transaction_count, net_delta = self._summarize_reversal_rows(list(rows or []))
+                if transaction_count <= 0:
+                    scope_text = "timed raid awards" if timed_only else "raid DKP transactions"
+                    return await modal_interaction.response.send_message(
+                        f"No matching unreversed {scope_text} were found from that cutoff onward.",
+                        ephemeral=True,
+                    )
+
+                from ..ui.views import RaidCutoffReverseConfirmView
+                scope_label = "Timed awards only" if timed_only else "All raid-linked DKP changes"
+                embed = create_info_embed(
+                    "Confirm Cutoff Reversal",
+                    "\n".join([
+                        f"**Raid thread:** {thread.mention}",
+                        f"**Scope:** {scope_label}",
+                        f"**Cutoff:** {cutoff_text}",
+                        f"**Affected participants:** {participant_count}",
+                        f"**Affected transactions:** {transaction_count}",
+                        f"**Net DKP change to apply:** {net_delta:+d}",
+                        f"**Reason:** {reason}",
+                    ]),
+                )
+                view = RaidCutoffReverseConfirmView(
+                    self.bot,
+                    cutoff_text=cutoff_text,
+                    cutoff_sql=cutoff_sql,
+                    reason=reason,
+                    timed_only=bool(timed_only),
+                    raid_is_active=bool(int(raid["is_active"])) if raid["is_active"] is not None else False,
+                    raid_id_override=int(raid["id"]),
+                )
+                await modal_interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+        await interaction.response.send_modal(_ModalWithThread(self, timed_only=timed_only))
 
     async def show_raid_groups(self, interaction: discord.Interaction):
         raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)

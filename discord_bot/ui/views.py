@@ -3287,7 +3287,7 @@ class RaidPopupView(discord.ui.View):
 
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
-        self.raid_is_active = bool(int(raid["is_active"])) if raid.get("is_active") is not None else True
+        self.raid_is_active = bool(int(raid["is_active"])) if raid["is_active"] is not None else True
 
         embed = self._manage_embed(interaction)
         await self._edit_to(interaction, mode="manage", embed=embed)
@@ -3821,7 +3821,7 @@ class RaidReverseDKPChoiceView(discord.ui.View):
 
 
 class RaidCutoffReverseConfirmView(discord.ui.View):
-    def __init__(self, bot, *, cutoff_text: str, cutoff_sql: str, reason: str, timed_only: bool, raid_is_active: bool):
+    def __init__(self, bot, *, cutoff_text: str, cutoff_sql: str, reason: str, timed_only: bool, raid_is_active: bool, raid_id_override: int | None = None):
         super().__init__(timeout=180)
         self.bot = bot
         self.cutoff_text = cutoff_text
@@ -3829,6 +3829,7 @@ class RaidCutoffReverseConfirmView(discord.ui.View):
         self.reason = reason
         self.timed_only = bool(timed_only)
         self.raid_is_active = bool(raid_is_active)
+        self.raid_id_override = raid_id_override
 
     @discord.ui.button(label="Confirm Reversal", style=discord.ButtonStyle.danger, custom_id="raid_cutoff_reverse_confirm", row=0)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3842,6 +3843,7 @@ class RaidCutoffReverseConfirmView(discord.ui.View):
             cutoff_sql=self.cutoff_sql,
             reason=self.reason,
             timed_only=self.timed_only,
+            raid_id_override=self.raid_id_override,
         )
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="raid_cutoff_reverse_cancel", row=0)

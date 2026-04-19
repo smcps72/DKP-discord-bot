@@ -406,8 +406,8 @@ class RaidReverseFromCutoffModal(Modal, title="Reverse Raid DKP From Cutoff"):
             max_length=20,
         )
         self.cutoff = TextInput(
-            label="Cutoff date/time",
-            placeholder="e.g., 4/12/26 7:00 PM",
+            label="Cutoff time (uses server local time)",
+            placeholder="e.g., 1:30 PM  or  1:30 PM -5 to override",
             style=discord.TextStyle.short,
             required=True,
             max_length=40,
