@@ -52,12 +52,12 @@ class RaidCog(commands.Cog):
 
         raid = None
         try:
-            raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+            raid = await self.bot.db.get_raid_by_thread_any_state(interaction.channel.id)
         except Exception:
             raid = None
 
         if not raid:
-            message = notice or "This is not an active raid thread."
+            message = notice or "This channel is not associated with a raid."
             return create_info_embed(title, message)
 
         try:
@@ -206,6 +206,7 @@ class RaidCog(commands.Cog):
                 mode=("manage" if can_manage else "main"),
                 can_manage=can_manage,
                 can_rename_thread=can_rename_thread,
+                raid_is_active=bool(int(raid["is_active"])) if raid and raid.get("is_active") is not None else True,
             )
 
             try:
@@ -321,9 +322,9 @@ class RaidCog(commands.Cog):
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 pass
 
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        raid = await self.bot.db.get_raid_by_thread_any_state(interaction.channel.id)
         if not raid:
-            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+            return await interaction.followup.send("This channel is not associated with a raid.", ephemeral=True)
 
         raid_id = int(raid["id"])
 
@@ -405,6 +406,289 @@ class RaidCog(commands.Cog):
         embed = create_info_embed(title, description)
         return await interaction.followup.send(embed=embed, ephemeral=True)
 
+    async def _get_raid_for_reverse_actions(self, interaction: discord.Interaction):
+        if interaction.guild is None or interaction.channel is None:
+            return None
+        return await self.bot.db.get_raid_by_thread_any_state(interaction.channel.id)
+
+    def _parse_cutoff_datetime_input(self, raw_value: str) -> tuple[datetime | None, str | None]:
+        normalized = " ".join(str(raw_value or "").strip().split())
+        if not normalized:
+            return None, None
+
+        formats = (
+            "%m/%d/%y %I:%M %p",
+            "%m/%d/%Y %I:%M %p",
+            "%m/%d/%y %I:%M%p",
+            "%m/%d/%Y %I:%M%p",
+        )
+        for fmt in formats:
+            try:
+                parsed = datetime.strptime(normalized.upper(), fmt)
+                return parsed, parsed.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+        return None, None
+
+    def _summarize_reversal_rows(self, rows: list[dict] | list[object]) -> tuple[int, int, int]:
+        participant_ids: set[int] = set()
+        transaction_count = 0
+        net_delta = 0
+        for row in list(rows or []):
+            try:
+                participant_ids.add(int(row["user_id"]))
+                transaction_count += 1
+                net_delta += -int(row["change"])
+            except Exception:
+                continue
+        return len(participant_ids), transaction_count, net_delta
+
+    async def _apply_raid_dkp_reversal_rows(
+        self,
+        interaction: discord.Interaction,
+        *,
+        raid: dict,
+        rows: list[dict] | list[object],
+        reversal_reason: str,
+    ) -> tuple[int, int]:
+        guild = interaction.guild
+        if guild is None:
+            return 0, 0
+
+        raid_id = int(raid["id"])
+        guild_id = int(guild.id)
+        actor_id = int(getattr(interaction.user, "id", 0)) if getattr(interaction, "user", None) else None
+
+        rows_by_user: dict[int, list[tuple[int, int]]] = {}
+        for row in list(rows or []):
+            try:
+                source_id = int(row["id"])
+                user_id = int(row["user_id"])
+                change = int(row["change"])
+            except Exception:
+                continue
+            if change == 0:
+                continue
+            rows_by_user.setdefault(user_id, []).append((source_id, change))
+
+        applied_users = 0
+        applied_transactions = 0
+        for user_id, user_rows in rows_by_user.items():
+            total_delta = -sum(change for _source_id, change in user_rows)
+            if total_delta == 0:
+                continue
+
+            member = guild.get_member(user_id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(user_id)
+                except Exception:
+                    member = None
+
+            try:
+                await self.bot.db.apply_raid_dkp_reversal_for_user(
+                    raid_id=raid_id,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    total_delta=total_delta,
+                    reversal_reason=reversal_reason,
+                    source_rows=list(user_rows),
+                    actor_id=actor_id,
+                    username=member.display_name if member else None,
+                )
+            except Exception:
+                logging.exception(
+                    "Failed atomic raid DKP reversal raid_id=%s user_id=%s tx_count=%s",
+                    raid_id,
+                    user_id,
+                    len(user_rows),
+                )
+                continue
+
+            applied_users += 1
+            applied_transactions += len(user_rows)
+
+            if member is not None:
+                new_total = None
+                try:
+                    new_total = await self.bot.db.get_user_dkp(user_id, guild_id)
+                except Exception:
+                    new_total = None
+                await send_dkp_change_dm(
+                    member,
+                    guild,
+                    total_delta,
+                    reversal_reason,
+                    new_total=new_total,
+                )
+
+        return applied_users, applied_transactions
+
+    async def preview_reverse_raid_dkp_from_cutoff(
+        self,
+        interaction: discord.Interaction,
+        *,
+        confirm: str,
+        cutoff_text: str,
+        reason: str,
+        timed_only: bool,
+    ):
+        if interaction.guild is None:
+            return
+
+        if (confirm or "").strip().upper() != "CONFIRM":
+            return await interaction.response.send_message("Confirmation text did not match.", ephemeral=True)
+
+        raid = await self._get_raid_for_reverse_actions(interaction)
+        if not raid:
+            return await interaction.response.send_message("This channel is not associated with a raid.", ephemeral=True)
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.response.send_message(
+                "You must be the raid leader or a bot admin to reverse raid DKP.",
+                ephemeral=True,
+            )
+
+        parsed_cutoff, cutoff_sql = self._parse_cutoff_datetime_input(cutoff_text)
+        if parsed_cutoff is None or cutoff_sql is None:
+            return await interaction.response.send_message(
+                "Invalid cutoff date/time. Use US-style text like `4/12/26 7:00 PM`.",
+                ephemeral=True,
+            )
+
+        try:
+            rows = await self.bot.db.get_raid_dkp_transactions_from_cutoff(
+                int(raid["id"]),
+                cutoff_sql,
+                timed_only=bool(timed_only),
+            )
+        except Exception:
+            rows = []
+
+        participant_count, transaction_count, net_delta = self._summarize_reversal_rows(list(rows or []))
+        if transaction_count <= 0:
+            scope_text = "timed raid awards" if timed_only else "raid DKP transactions"
+            return await interaction.response.send_message(
+                f"No matching unreversed {scope_text} were found from that cutoff onward.",
+                ephemeral=True,
+            )
+
+        from ..ui.views import RaidCutoffReverseConfirmView
+
+        scope_label = "Timed awards only" if timed_only else "All raid-linked DKP changes"
+        embed = create_info_embed(
+            "Confirm Cutoff Reversal",
+            "\n".join(
+                [
+                    f"**Scope:** {scope_label}",
+                    f"**Cutoff:** {cutoff_text.strip()}",
+                    f"**Affected participants:** {participant_count}",
+                    f"**Affected transactions:** {transaction_count}",
+                    f"**Net DKP change to apply:** {net_delta:+d}",
+                    f"**Reason:** {reason.strip()}",
+                ]
+            ),
+        )
+        view = RaidCutoffReverseConfirmView(
+            self.bot,
+            cutoff_text=cutoff_text.strip(),
+            cutoff_sql=cutoff_sql,
+            reason=reason.strip(),
+            timed_only=bool(timed_only),
+            raid_is_active=bool(int(raid["is_active"])) if raid.get("is_active") is not None else True,
+        )
+        return await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def apply_reverse_raid_dkp_from_cutoff(
+        self,
+        interaction: discord.Interaction,
+        *,
+        cutoff_text: str,
+        cutoff_sql: str,
+        reason: str,
+        timed_only: bool,
+    ):
+        if interaction.guild is None:
+            return
+
+        raid = await self._get_raid_for_reverse_actions(interaction)
+        if not raid:
+            return await interaction.response.edit_message(
+                embed=create_info_embed("Cutoff Reversal", "This channel is not associated with a raid."),
+                view=None,
+            )
+
+        admin_ok = await is_admin(interaction)
+        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+            return await interaction.response.edit_message(
+                embed=create_info_embed(
+                    "Cutoff Reversal",
+                    "You must be the raid leader or a bot admin to reverse raid DKP.",
+                ),
+                view=None,
+            )
+
+        try:
+            rows = await self.bot.db.get_raid_dkp_transactions_from_cutoff(
+                int(raid["id"]),
+                cutoff_sql,
+                timed_only=bool(timed_only),
+            )
+        except Exception:
+            rows = []
+
+        participant_count, transaction_count, net_delta = self._summarize_reversal_rows(list(rows or []))
+        if transaction_count <= 0:
+            return await interaction.response.edit_message(
+                embed=create_info_embed(
+                    "Cutoff Reversal",
+                    "No matching unreversed raid DKP transactions remain for that cutoff.",
+                ),
+                view=None,
+            )
+
+        reversal_reason = f"Reverse Raid DKP From Cutoff: {reason}"
+        applied_users, applied_transactions = await self._apply_raid_dkp_reversal_rows(
+            interaction,
+            raid=raid,
+            rows=list(rows or []),
+            reversal_reason=reversal_reason,
+        )
+        if applied_users <= 0:
+            return await interaction.response.edit_message(
+                embed=create_info_embed("Cutoff Reversal", "All reversals failed. No DKP was changed."),
+                view=None,
+            )
+
+        short_reason = (reason or "").strip()
+        if len(short_reason) > 200:
+            short_reason = short_reason[:197] + "..."
+        scope_text = "timed raid awards" if timed_only else "raid DKP changes"
+        public_line = (
+            f"{interaction.user.mention} reversed {scope_text} from **{cutoff_text}** onward "
+            f"for **{applied_users}** participant(s) across **{applied_transactions}** transaction(s). ({short_reason})"
+        )
+        try:
+            if isinstance(interaction.channel, discord.Thread):
+                await interaction.channel.send(public_line)
+        except Exception:
+            logging.exception("Failed to send public cutoff-reversal audit line")
+
+        result_embed = create_info_embed(
+            "Cutoff Reversal Complete",
+            "\n".join(
+                [
+                    f"**Scope:** {'Timed awards only' if timed_only else 'All raid-linked DKP changes'}",
+                    f"**Cutoff:** {cutoff_text}",
+                    f"**Participants updated:** {applied_users}",
+                    f"**Transactions reversed:** {applied_transactions}",
+                    f"**Net DKP change applied:** {net_delta:+d}",
+                ]
+            ),
+        )
+        return await interaction.response.edit_message(embed=result_embed, view=None)
+
     async def reverse_raid_dkp(
         self,
         interaction: discord.Interaction,
@@ -424,9 +708,9 @@ class RaidCog(commands.Cog):
         if (confirm or "").strip().upper() != "CONFIRM":
             return await interaction.followup.send("Confirmation text did not match.", ephemeral=True)
 
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        raid = await self._get_raid_for_reverse_actions(interaction)
         if not raid:
-            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+            return await interaction.followup.send("This channel is not associated with a raid.", ephemeral=True)
 
         admin_ok = await is_admin(interaction)
         if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
@@ -537,9 +821,9 @@ class RaidCog(commands.Cog):
         if (confirm or "").strip().upper() != "CONFIRM":
             return await interaction.followup.send("Confirmation text did not match.", ephemeral=True)
 
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        raid = await self._get_raid_for_reverse_actions(interaction)
         if not raid:
-            return await interaction.followup.send("This raid is not active.", ephemeral=True)
+            return await interaction.followup.send("This channel is not associated with a raid.", ephemeral=True)
 
         admin_ok = await is_admin(interaction)
         if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
@@ -561,59 +845,17 @@ class RaidCog(commands.Cog):
 
         batch_reason = batch[0]["reason"]
 
-        reversals: list[tuple[int, int]] = []
-        for row in batch:
-            try:
-                uid = int(row["user_id"])
-                amt = int(row["change"])
-            except Exception:
-                continue
-            if amt == 0:
-                continue
-            reversals.append((uid, -amt))
-
-        if not reversals:
+        if not list(batch or []):
             return await interaction.followup.send("The last award batch has no net DKP to undo.", ephemeral=True)
 
-        applied = 0
-        for uid, delta in reversals:
-            try:
-                _member = interaction.guild.get_member(uid)
-                if _member is None:
-                    try:
-                        _member = await interaction.guild.fetch_member(uid)
-                    except Exception:
-                        pass
-                await self.bot.db.modify_user_dkp(uid, guild_id, delta, f"Undo Last DKP: {reason}", username=_member.display_name if _member else None)
-            except Exception:
-                continue
-            try:
-                await self.bot.db.record_raid_dkp_transaction(
-                    raid_id,
-                    guild_id,
-                    uid,
-                    delta,
-                    f"Undo Last DKP: {reason}",
-                    actor_id=int(interaction.user.id),
-                )
-            except Exception:
-                pass
-            applied += 1
-            if _member is not None:
-                new_total = None
-                try:
-                    new_total = await self.bot.db.get_user_dkp(uid, guild_id)
-                except Exception:
-                    pass
-                await send_dkp_change_dm(
-                    _member,
-                    interaction.guild,
-                    delta,
-                    f"Undo Last DKP: {reason}",
-                    new_total=new_total,
-                )
+        applied_users, applied_transactions = await self._apply_raid_dkp_reversal_rows(
+            interaction,
+            raid=raid,
+            rows=list(batch or []),
+            reversal_reason=f"Undo Last DKP: {reason}",
+        )
 
-        if not applied:
+        if not applied_users:
             return await interaction.followup.send(
                 "All undo operations failed. No DKP was changed.",
                 ephemeral=True,
@@ -624,7 +866,7 @@ class RaidCog(commands.Cog):
             short_reason = short_reason[:197] + "..."
         public_line = (
             f"{interaction.user.mention} undid the last DKP award (**{batch_reason}**) "
-            f"for **{applied}** participant(s). ({short_reason})"
+            f"for **{applied_users}** participant(s) across **{applied_transactions}** transaction(s). ({short_reason})"
         )
         try:
             if isinstance(interaction.channel, discord.Thread):
@@ -633,7 +875,7 @@ class RaidCog(commands.Cog):
             logging.exception("Failed to send public undo-DKP audit line")
 
         return await interaction.followup.send(
-            f"Undid last DKP award (**{batch_reason}**) for **{applied}** participant(s).",
+            f"Undid last DKP award (**{batch_reason}**) for **{applied_users}** participant(s) across **{applied_transactions}** transaction(s).",
             ephemeral=True,
         )
 
@@ -689,6 +931,7 @@ class RaidCog(commands.Cog):
                     mode="main",
                     can_manage=can_manage,
                     can_rename_thread=can_rename_thread,
+                    raid_is_active=bool(int(raid["is_active"])) if raid.get("is_active") is not None else True,
                 )
                 if not interaction.response.is_done():
                     await interaction.response.edit_message(embed=embed, view=view)
@@ -864,17 +1107,17 @@ class RaidCog(commands.Cog):
         if not isinstance(interaction.user, discord.Member) or not interaction.guild:
             return
 
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
+        raid = await self.bot.db.get_raid_by_thread_any_state(interaction.channel.id)
         if not raid:
             try:
                 if not interaction.response.is_done():
                     await interaction.response.send_message(
-                        "This is not an active raid thread.",
+                        "This channel is not associated with a raid.",
                         ephemeral=True,
                     )
                 else:
                     await interaction.followup.send(
-                        "This is not an active raid thread.",
+                        "This channel is not associated with a raid.",
                         ephemeral=True,
                     )
             except discord.HTTPException:
@@ -894,6 +1137,7 @@ class RaidCog(commands.Cog):
             mode="main",
             can_manage=can_manage,
             can_rename_thread=can_rename_thread,
+            raid_is_active=bool(int(raid["is_active"])) if raid.get("is_active") is not None else True,
         )
 
         try:

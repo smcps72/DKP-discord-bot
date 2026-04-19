@@ -238,6 +238,25 @@ class Database:
             except aiosqlite.OperationalError:
                 continue
 
+        async with self.pool.execute("PRAGMA table_info(raid_dkp_transactions)") as cursor:
+            raid_dkp_rows = await cursor.fetchall()
+        raid_dkp_existing = {row[1] for row in raid_dkp_rows}
+
+        raid_dkp_migrations: list[tuple[str, str]] = [
+            (
+                "reference_transaction_id",
+                "ALTER TABLE raid_dkp_transactions ADD COLUMN reference_transaction_id INTEGER",
+            ),
+        ]
+
+        for col, sql in raid_dkp_migrations:
+            if col in raid_dkp_existing:
+                continue
+            try:
+                await self.pool.execute(sql)
+            except aiosqlite.OperationalError:
+                continue
+
         await self.pool.commit()
 
         async with self.pool.execute(
@@ -455,6 +474,7 @@ class Database:
                     change INTEGER NOT NULL,
                     reason TEXT,
                     actor_id INTEGER,
+                    reference_transaction_id INTEGER,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
@@ -921,6 +941,109 @@ class Database:
         )
         logging.info(f"Modified DKP for {user_id} by {amount} in {guild_id}. Reason: {reason}")
 
+    async def apply_raid_dkp_reversal_for_user(
+        self,
+        *,
+        raid_id: int,
+        guild_id: int,
+        user_id: int,
+        total_delta: int,
+        reversal_reason: str,
+        source_rows: list[tuple[int, int]],
+        actor_id: int | None = None,
+        username: str | None = None,
+    ):
+        attempts = 3
+        delay = 0.2
+        did_reconnect = False
+        for attempt in range(attempts):
+            try:
+                await self.pool.execute("BEGIN IMMEDIATE")
+                try:
+                    await self.pool.execute(
+                        "INSERT OR IGNORE INTO users (user_id, guild_id) VALUES (?, ?)",
+                        (int(user_id), int(guild_id)),
+                    )
+                    if username:
+                        await self.pool.execute(
+                            "UPDATE users SET username = ? WHERE user_id = ? AND guild_id = ? AND (username IS NULL OR username != ?)",
+                            (str(username), int(user_id), int(guild_id), str(username)),
+                        )
+                    await self.pool.execute(
+                        "UPDATE users SET dkp = dkp + ? WHERE user_id = ? AND guild_id = ?",
+                        (int(total_delta), int(user_id), int(guild_id)),
+                    )
+                    await self.pool.execute(
+                        "INSERT INTO transactions (guild_id, user_id, change, reason) VALUES (?, ?, ?, ?)",
+                        (int(guild_id), int(user_id), int(total_delta), str(reversal_reason)),
+                    )
+                    for source_id, source_change in list(source_rows or []):
+                        await self.pool.execute(
+                            """
+                            INSERT INTO raid_dkp_transactions (
+                                raid_id,
+                                guild_id,
+                                user_id,
+                                change,
+                                reason,
+                                actor_id,
+                                reference_transaction_id
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                int(raid_id),
+                                int(guild_id),
+                                int(user_id),
+                                -int(source_change),
+                                str(reversal_reason),
+                                int(actor_id) if actor_id is not None else None,
+                                int(source_id),
+                            ),
+                        )
+                except Exception:
+                    await self.pool.rollback()
+                    raise
+
+                await self.pool.commit()
+                logging.info(
+                    "Applied atomic raid DKP reversal for user_id=%s raid_id=%s tx_count=%s",
+                    user_id,
+                    raid_id,
+                    len(list(source_rows or [])),
+                )
+                return
+            except (aiosqlite.OperationalError, OSError) as e:
+                try:
+                    await self.pool.rollback()
+                except Exception:
+                    pass
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning("DB atomic reversal error suggests stale/readonly connection; reconnecting: %s", e)
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
+                if attempt == attempts - 1:
+                    logging.error("DB atomic reversal failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB atomic reversal error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
+            except Exception:
+                try:
+                    await self.pool.rollback()
+                except Exception:
+                    pass
+                raise
+
     async def get_user_transactions(self, guild_id: int, user_id: int, limit: int = 20):
         limit = max(1, min(int(limit), 100))
         return await self.fetchall(
@@ -930,6 +1053,12 @@ class Database:
     
     async def get_raid_by_thread(self, thread_id):
         return await self.fetchone("SELECT * FROM raids WHERE thread_id = ? AND is_active = 1", (thread_id,))
+
+    async def get_raid_by_thread_any_state(self, thread_id):
+        return await self.fetchone(
+            "SELECT * FROM raids WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            (thread_id,),
+        )
 
     async def get_raid_by_vc(self, vc_id):
         return await self.fetchone(
@@ -1087,13 +1216,30 @@ class Database:
         change: int,
         reason: str,
         actor_id: int | None = None,
+        reference_transaction_id: int | None = None,
     ):
         await self.execute(
             """
-            INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO raid_dkp_transactions (
+                raid_id,
+                guild_id,
+                user_id,
+                change,
+                reason,
+                actor_id,
+                reference_transaction_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (int(raid_id), int(guild_id), int(user_id), int(change), str(reason), int(actor_id) if actor_id is not None else None),
+            (
+                int(raid_id),
+                int(guild_id),
+                int(user_id),
+                int(change),
+                str(reason),
+                int(actor_id) if actor_id is not None else None,
+                int(reference_transaction_id) if reference_transaction_id is not None else None,
+            ),
         )
 
     async def get_last_raid_dkp_award_batch(self, raid_id: int):
@@ -1209,6 +1355,35 @@ class Database:
             GROUP BY user_id
             """,
             (int(raid_id),),
+        )
+
+    async def get_raid_dkp_transactions_from_cutoff(
+        self,
+        raid_id: int,
+        cutoff_timestamp: str,
+        *,
+        timed_only: bool = False,
+    ):
+        timed_clause = "AND reason LIKE 'Timed raid award (%'" if timed_only else ""
+        return await self.fetchall(
+            f"""
+            SELECT id, user_id, change, reason, actor_id, timestamp
+            FROM raid_dkp_transactions rdt
+            WHERE rdt.raid_id = ?
+              AND rdt.timestamp >= ?
+              AND rdt.change > 0
+              AND rdt.reason NOT LIKE 'Reverse Raid DKP:%'
+              AND rdt.reason NOT LIKE 'Undo Last DKP:%'
+              AND rdt.reason NOT LIKE 'Reverse Raid DKP From Cutoff:%'
+              {timed_clause}
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM raid_dkp_transactions applied
+                  WHERE applied.reference_transaction_id = rdt.id
+              )
+            ORDER BY rdt.timestamp ASC, rdt.id ASC
+            """,
+            (int(raid_id), str(cutoff_timestamp)),
         )
 
     async def get_raid_dkp_participant_user_ids(self, raid_id: int) -> list[int]:

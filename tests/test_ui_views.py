@@ -9,11 +9,13 @@ from discord_bot.ui.views import (
     DkpPanelView,
     RaidGroupSignupModalView,
     RaidPopupView,
+    RaidReverseDKPChoiceView,
     RaidPopupTimedDKPView,
     RaidPopupDKPSelectView,
     RaidSyncVoicePickerView,
     RaidSyncVoiceChannelSelect,
 )
+from discord_bot.ui.modals import RaidReverseFromCutoffModal
 
 # Mock objects for testing
 class MockGuild(MagicMock):
@@ -186,6 +188,7 @@ async def test_raid_popup_timed_dkp_opens_control_view(mock_is_admin, mock_is_of
 
     guild = MockGuild(id=123)
     user = MockUser(id=456)
+    user.display_name = "MockUser"
     interaction = MockInteraction(guild=guild, user=user)
     interaction.channel = MagicMock()
     interaction.channel.id = 789
@@ -529,7 +532,7 @@ class TestRaidControlView:
 
         # Assert: error message is sent and modal is not opened
         mock_raid_control_interaction.response.send_message.assert_called_once_with(
-            "No eligible raid members were found. If you are in a voice channel, click \"Update Team\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button. Cannot start auction.",
+            "No eligible raid members were found. If you are in a voice channel, click \"Sync Voice\" to add all members in your voice channel to the raid. Or each member can click the \"Join Raid\" button. Cannot start auction.",
             ephemeral=True,
         )
         mock_raid_control_interaction.response.send_modal.assert_not_called()
@@ -752,12 +755,79 @@ async def test_raid_open_panel_view_delegates_to_raid_cog(mock_ensure_allowed_gu
 
     mock_raid_cog = MagicMock()
     mock_raid_cog.send_ephemeral_raid_panel = AsyncMock()
+    mock_bot.db = MagicMock()
+    mock_bot.db.get_raid_by_thread_any_state = AsyncMock(return_value={"id": 1, "is_active": 0})
     mock_bot.get_cog.return_value = mock_raid_cog
+    mock_interaction.channel = MagicMock()
+    mock_interaction.channel.id = 789
 
     view = RaidOpenPanelView(bot=mock_bot)
     await view.open_panel.callback(mock_interaction)
 
+    mock_bot.db.get_raid_by_thread_any_state.assert_awaited_once_with(789)
     mock_raid_cog.send_ephemeral_raid_panel.assert_called_once_with(mock_interaction)
+
+
+@patch('discord_bot.ui.views.ensure_allowed_guild', new_callable=AsyncMock)
+@patch('discord_bot.ui.views.is_officer', new_callable=AsyncMock)
+@patch('discord_bot.ui.views.is_admin', new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_raid_popup_back_main_allows_closed_raid(mock_is_admin, mock_is_officer, mock_ensure_allowed_guild):
+    mock_ensure_allowed_guild.return_value = True
+    mock_is_admin.return_value = False
+    mock_is_officer.return_value = False
+
+    bot = MagicMock()
+    bot.db = MagicMock()
+    bot.db.get_raid_by_thread_any_state = AsyncMock(return_value={"id": 1, "leader_id": 456, "is_active": 0})
+
+    guild = MockGuild(id=123)
+    user = MockUser(id=456)
+    user.display_name = "MockUser"
+    interaction = MockInteraction(guild=guild, user=user)
+    interaction.channel = MagicMock()
+    interaction.channel.id = 789
+    interaction.response.edit_message = AsyncMock()
+
+    view = RaidPopupView(bot=bot, mode="help", can_manage=True, can_rename_thread=True, raid_is_active=False)
+    await view.back_main.callback(interaction)
+
+    bot.db.get_raid_by_thread_any_state.assert_awaited_once_with(789)
+    interaction.response.edit_message.assert_awaited_once()
+    _args, kwargs = interaction.response.edit_message.call_args
+    assert isinstance(kwargs.get("view"), RaidPopupView)
+    assert kwargs.get("view").mode == "main"
+    embed = kwargs.get("embed")
+    assert isinstance(embed, discord.Embed)
+    assert embed.title == "Raid Panel for MockUser"
+
+
+@pytest.mark.asyncio
+async def test_raid_reverse_choice_cutoff_all_opens_modal(mock_bot, mock_interaction):
+    mock_raid_cog = MagicMock()
+    mock_bot.get_cog.return_value = mock_raid_cog
+    view = RaidReverseDKPChoiceView(bot=mock_bot, source="persistent")
+
+    await view.cutoff_all.callback(mock_interaction)
+
+    mock_interaction.response.send_modal.assert_awaited_once()
+    modal = mock_interaction.response.send_modal.call_args.args[0]
+    assert isinstance(modal, RaidReverseFromCutoffModal)
+    assert modal.timed_only is False
+
+
+@pytest.mark.asyncio
+async def test_raid_reverse_choice_cutoff_timed_opens_modal(mock_bot, mock_interaction):
+    mock_raid_cog = MagicMock()
+    mock_bot.get_cog.return_value = mock_raid_cog
+    view = RaidReverseDKPChoiceView(bot=mock_bot, source="persistent")
+
+    await view.cutoff_timed.callback(mock_interaction)
+
+    mock_interaction.response.send_modal.assert_awaited_once()
+    modal = mock_interaction.response.send_modal.call_args.args[0]
+    assert isinstance(modal, RaidReverseFromCutoffModal)
+    assert modal.timed_only is True
 
 # Tests for AuctionBidView
 from discord_bot.ui.views import AuctionBidView

@@ -80,6 +80,132 @@ async def test_get_raid_by_thread():
         if db.pool:
             await db.pool.close()
 
+
+@pytest.mark.asyncio
+async def test_get_raid_by_thread_any_state_returns_inactive_raid():
+    db = Database(":memory:")
+    try:
+        await db.connect()
+        await db.execute(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 101, 1001, 0),
+        )
+
+        raid = await db.get_raid_by_thread_any_state(1001)
+
+        assert raid is not None
+        assert raid["thread_id"] == 1001
+        assert raid["is_active"] == 0
+    finally:
+        if db.pool:
+            await db.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_get_raid_dkp_transactions_from_cutoff_filters_scope_and_skips_referenced_rows():
+    db = Database(":memory:")
+    try:
+        await db.connect()
+        await db.execute(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 100, 2000, 0),
+        )
+        raid = await db.get_raid_by_thread_any_state(2000)
+        raid_id = int(raid["id"])
+
+        await db.execute(
+            "INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id, reference_transaction_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (raid_id, 1, 111, 5, "Award: Boss kill", 10, None, "2026-04-12 18:00:00"),
+        )
+        await db.execute(
+            "INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id, reference_transaction_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (raid_id, 1, 111, 3, "Timed raid award (+3 every 6m)", None, None, "2026-04-12 19:00:00"),
+        )
+        await db.execute(
+            "INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id, reference_transaction_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (raid_id, 1, 222, -2, "Deduct: Death", 10, None, "2026-04-12 19:30:00"),
+        )
+        await db.execute(
+            "INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id, reference_transaction_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (raid_id, 1, 111, -3, "Reverse Raid DKP From Cutoff: cleanup", 10, 2, "2026-04-12 19:35:00"),
+        )
+        await db.execute(
+            "INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id, reference_transaction_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (raid_id, 1, 333, 4, "Award: Late boss", 10, None, "2026-04-12 20:00:00"),
+        )
+
+        all_rows = await db.get_raid_dkp_transactions_from_cutoff(
+            raid_id,
+            "2026-04-12 18:30:00",
+            timed_only=False,
+        )
+        timed_rows = await db.get_raid_dkp_transactions_from_cutoff(
+            raid_id,
+            "2026-04-12 18:30:00",
+            timed_only=True,
+        )
+
+        assert [int(row["id"]) for row in all_rows] == [5]
+        assert timed_rows == []
+    finally:
+        if db.pool:
+            await db.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_apply_raid_dkp_reversal_for_user_rolls_back_on_reference_insert_failure():
+    db = Database(":memory:")
+    try:
+        await db.connect()
+        await db.execute(
+            "INSERT INTO users (user_id, guild_id, dkp) VALUES (?, ?, ?)",
+            (111, 1, 25),
+        )
+
+        await db.execute(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 100, 2001, 0),
+        )
+        raid = await db.get_raid_by_thread_any_state(2001)
+        raid_id = int(raid["id"])
+
+        await db.execute(
+            "INSERT INTO raid_dkp_transactions (raid_id, guild_id, user_id, change, reason, actor_id, reference_transaction_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (raid_id, 1, 111, 5, "Award: Boss kill", 10, None),
+        )
+
+        with pytest.raises(Exception):
+            await db.apply_raid_dkp_reversal_for_user(
+                raid_id=raid_id,
+                guild_id=1,
+                user_id=111,
+                total_delta=-5,
+                reversal_reason="Reverse Raid DKP From Cutoff: cleanup",
+                source_rows=[("bad-source-id", 5)],
+                actor_id=10,
+                username="RaiderOne",
+            )
+
+        user = await db.fetchone("SELECT dkp, username FROM users WHERE user_id = ? AND guild_id = ?", (111, 1))
+        tx_rows = await db.fetchall(
+            "SELECT change, reason FROM transactions WHERE guild_id = ? AND user_id = ? ORDER BY id ASC",
+            (1, 111),
+        )
+        raid_rows = await db.fetchall(
+            "SELECT change, reference_transaction_id FROM raid_dkp_transactions WHERE raid_id = ? ORDER BY id ASC",
+            (raid_id,),
+        )
+
+        assert int(user["dkp"]) == 25
+        assert user["username"] is None
+        assert tx_rows == []
+        assert len(raid_rows) == 1
+        assert int(raid_rows[0]["change"]) == 5
+        assert raid_rows[0]["reference_transaction_id"] is None
+    finally:
+        if db.pool:
+            await db.pool.close()
+
 @pytest.mark.asyncio
 async def test_get_raid_by_vc():
     db = Database(":memory:")

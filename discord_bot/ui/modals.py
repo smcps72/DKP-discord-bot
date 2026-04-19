@@ -392,6 +392,51 @@ class RaidUndoLastDKPModal(Modal, title="Undo Last DKP Award"):
         )
 
 
+class RaidReverseFromCutoffModal(Modal, title="Reverse Raid DKP From Cutoff"):
+    def __init__(self, raid_cog, *, timed_only: bool):
+        super().__init__()
+        self.raid_cog = raid_cog
+        self.timed_only = bool(timed_only)
+
+        self.confirm = TextInput(
+            label="Type CONFIRM to preview the reversal",
+            placeholder="CONFIRM",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=20,
+        )
+        self.cutoff = TextInput(
+            label="Cutoff date/time",
+            placeholder="e.g., 4/12/26 7:00 PM",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=40,
+        )
+        self.reason = TextInput(
+            label="Reason",
+            placeholder="e.g., Started timed DKP too early, need to remove later awards",
+            style=discord.TextStyle.long,
+            required=True,
+            max_length=300,
+        )
+
+        self.add_item(self.confirm)
+        self.add_item(self.cutoff)
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        confirm = (self.confirm.value or "").strip()
+        cutoff_text = (self.cutoff.value or "").strip()
+        reason = (self.reason.value or "").strip()
+        await self.raid_cog.preview_reverse_raid_dkp_from_cutoff(
+            interaction,
+            confirm=confirm,
+            cutoff_text=cutoff_text,
+            reason=reason,
+            timed_only=self.timed_only,
+        )
+
+
 class AdminDKPAdjustModal(Modal, title="Admin DKP Adjustment"):
     def __init__(self, admin_cog, member: discord.Member):
         super().__init__()

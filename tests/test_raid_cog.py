@@ -678,3 +678,151 @@ async def test_configure_timed_award_saves_to_db(raid_cog, mock_interaction, moc
         is_enabled=True,
     )
     mock_thread.send.assert_awaited()
+
+
+def test_parse_cutoff_datetime_input_supports_us_style(raid_cog):
+    parsed, sql_value = raid_cog._parse_cutoff_datetime_input("4/12/26 7:00 PM")
+
+    assert parsed is not None
+    assert sql_value == "2026-04-12 19:00:00"
+
+
+@pytest.mark.asyncio
+async def test_preview_reverse_raid_dkp_from_cutoff_uses_closed_raid_lookup(raid_cog, mock_interaction):
+    closed_raid = {
+        "id": 5,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "thread_id": mock_interaction.channel.id,
+        "is_active": 0,
+    }
+    raid_cog.bot.db.get_raid_by_thread_any_state = AsyncMock(return_value=closed_raid)
+    raid_cog.bot.db.get_raid_dkp_transactions_from_cutoff = AsyncMock(
+        return_value=[
+            {"id": 10, "user_id": 111, "change": 5, "reason": "Award: Boss kill"},
+            {"id": 11, "user_id": 222, "change": 3, "reason": "Award: Trash"},
+        ]
+    )
+
+    with patch("discord_bot.cogs.raid_cog.is_admin", new_callable=AsyncMock) as mock_is_admin:
+        mock_is_admin.return_value = False
+        await raid_cog.preview_reverse_raid_dkp_from_cutoff(
+            mock_interaction,
+            confirm="CONFIRM",
+            cutoff_text="4/12/26 7:00 PM",
+            reason="cleanup",
+            timed_only=False,
+        )
+
+    raid_cog.bot.db.get_raid_by_thread_any_state.assert_awaited_once_with(mock_interaction.channel.id)
+    raid_cog.bot.db.get_raid_dkp_transactions_from_cutoff.assert_awaited_once_with(
+        5,
+        "2026-04-12 19:00:00",
+        timed_only=False,
+    )
+    mock_interaction.response.send_message.assert_awaited_once()
+    _args, kwargs = mock_interaction.response.send_message.call_args
+    assert kwargs.get("ephemeral") is True
+    embed = kwargs.get("embed")
+    assert isinstance(embed, discord.Embed)
+    assert embed.title == "Confirm Cutoff Reversal"
+    assert "Affected transactions" in (embed.description or "")
+
+
+@pytest.mark.asyncio
+async def test_apply_reverse_raid_dkp_from_cutoff_records_reference_transactions(raid_cog, mock_interaction, mock_thread):
+    closed_raid = {
+        "id": 5,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "thread_id": mock_interaction.channel.id,
+        "is_active": 0,
+    }
+    member = MagicMock(spec=discord.Member)
+    member.display_name = "RaiderOne"
+    mock_interaction.guild.get_member.return_value = member
+    mock_interaction.response.edit_message = AsyncMock()
+    mock_thread.send = AsyncMock()
+
+    raid_cog.bot.db.get_raid_by_thread_any_state = AsyncMock(return_value=closed_raid)
+    raid_cog.bot.db.get_raid_dkp_transactions_from_cutoff = AsyncMock(
+        return_value=[
+            {"id": 10, "user_id": 111, "change": 5, "reason": "Timed raid award (+5 every 6m)"},
+        ]
+    )
+    raid_cog.bot.db.apply_raid_dkp_reversal_for_user = AsyncMock()
+    raid_cog.bot.db.get_user_dkp = AsyncMock(return_value=25)
+
+    with patch("discord_bot.cogs.raid_cog.is_admin", new_callable=AsyncMock) as mock_is_admin:
+        with patch("discord_bot.cogs.raid_cog.send_dkp_change_dm", new_callable=AsyncMock) as mock_send_dm:
+            mock_is_admin.return_value = False
+            await raid_cog.apply_reverse_raid_dkp_from_cutoff(
+                mock_interaction,
+                cutoff_text="4/12/26 7:00 PM",
+                cutoff_sql="2026-04-12 19:00:00",
+                reason="cleanup",
+                timed_only=True,
+            )
+
+    raid_cog.bot.db.apply_raid_dkp_reversal_for_user.assert_awaited_once_with(
+        raid_id=5,
+        guild_id=mock_interaction.guild.id,
+        user_id=111,
+        total_delta=-5,
+        reversal_reason="Reverse Raid DKP From Cutoff: cleanup",
+        source_rows=[(10, 5)],
+        actor_id=mock_interaction.user.id,
+        username="RaiderOne",
+    )
+    mock_send_dm.assert_awaited_once()
+    mock_thread.send.assert_awaited_once()
+    mock_interaction.response.edit_message.assert_awaited_once()
+    _args, kwargs = mock_interaction.response.edit_message.call_args
+    embed = kwargs.get("embed")
+    assert isinstance(embed, discord.Embed)
+    assert embed.title == "Cutoff Reversal Complete"
+
+
+@pytest.mark.asyncio
+async def test_apply_reverse_raid_dkp_from_cutoff_failed_atomic_reversal_reports_no_changes(raid_cog, mock_interaction, mock_thread):
+    closed_raid = {
+        "id": 5,
+        "guild_id": mock_interaction.guild.id,
+        "leader_id": mock_interaction.user.id,
+        "thread_id": mock_interaction.channel.id,
+        "is_active": 0,
+    }
+    member = MagicMock(spec=discord.Member)
+    member.display_name = "RaiderOne"
+    mock_interaction.guild.get_member.return_value = member
+    mock_interaction.response.edit_message = AsyncMock()
+    mock_thread.send = AsyncMock()
+
+    raid_cog.bot.db.get_raid_by_thread_any_state = AsyncMock(return_value=closed_raid)
+    raid_cog.bot.db.get_raid_dkp_transactions_from_cutoff = AsyncMock(
+        return_value=[
+            {"id": 10, "user_id": 111, "change": 5, "reason": "Timed raid award (+5 every 6m)"},
+        ]
+    )
+    raid_cog.bot.db.apply_raid_dkp_reversal_for_user = AsyncMock(side_effect=RuntimeError("write failed"))
+
+    with patch("discord_bot.cogs.raid_cog.is_admin", new_callable=AsyncMock) as mock_is_admin:
+        with patch("discord_bot.cogs.raid_cog.send_dkp_change_dm", new_callable=AsyncMock) as mock_send_dm:
+            mock_is_admin.return_value = False
+            await raid_cog.apply_reverse_raid_dkp_from_cutoff(
+                mock_interaction,
+                cutoff_text="4/12/26 7:00 PM",
+                cutoff_sql="2026-04-12 19:00:00",
+                reason="cleanup",
+                timed_only=True,
+            )
+
+    raid_cog.bot.db.apply_raid_dkp_reversal_for_user.assert_awaited_once()
+    mock_send_dm.assert_not_awaited()
+    mock_thread.send.assert_not_awaited()
+    mock_interaction.response.edit_message.assert_awaited_once()
+    _args, kwargs = mock_interaction.response.edit_message.call_args
+    embed = kwargs.get("embed")
+    assert isinstance(embed, discord.Embed)
+    assert embed.title == "Cutoff Reversal"
+    assert "All reversals failed" in (embed.description or "")

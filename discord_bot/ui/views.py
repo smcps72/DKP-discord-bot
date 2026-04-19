@@ -4,7 +4,7 @@ import re
 import random
 import subprocess
 from pathlib import Path
-from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, RaidUndoLastDKPModal, DefaultDKPAwardModal, GuildBankDepositModal, GuildBankWithdrawModal
+from .modals import DKPAdjustmentModal, AuctionStartModal, BidModal, RaidRulesModal, RaidGroupCountModal, RaidGroupSetupModal, RaidTimedAwardModal, RaidReverseDKPModal, RaidReverseFromCutoffModal, RaidUndoLastDKPModal, DefaultDKPAwardModal, GuildBankDepositModal, GuildBankWithdrawModal
 from discord.ui import UserSelect, Select
 from .. import __version__ as bot_version
 from ..utils import (
@@ -502,6 +502,7 @@ class RaidPointsOptionsView(discord.ui.View):
         return_to_popup: bool,
         popup_can_manage: bool = False,
         popup_can_rename_thread: bool = False,
+        popup_raid_is_active: bool = True,
     ):
         super().__init__(timeout=180)
         self.bot = bot
@@ -509,6 +510,7 @@ class RaidPointsOptionsView(discord.ui.View):
         self.return_to_popup = bool(return_to_popup)
         self.popup_can_manage = bool(popup_can_manage)
         self.popup_can_rename_thread = bool(popup_can_rename_thread)
+        self.popup_raid_is_active = bool(popup_raid_is_active)
 
         self.scope = "raid"
         self.sort = "dkp"
@@ -529,6 +531,7 @@ class RaidPointsOptionsView(discord.ui.View):
             mode="manage",
             can_manage=self.popup_can_manage,
             can_rename_thread=self.popup_can_rename_thread,
+            raid_is_active=self.popup_raid_is_active,
         )
         embed = view._manage_embed(interaction)
         await interaction.response.edit_message(embed=embed, view=view)
@@ -2765,12 +2768,14 @@ class RaidPopupView(discord.ui.View):
         mode: str = "main",
         can_manage: bool = False,
         can_rename_thread: bool = False,
+        raid_is_active: bool = True,
     ):
         super().__init__(timeout=None)
         self.bot = bot
         self.mode = mode
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
+        self.raid_is_active = bool(raid_is_active)
 
         hide_ids: set[str] = set()
 
@@ -2834,6 +2839,26 @@ class RaidPopupView(discord.ui.View):
 
         if self.mode == "main" and not self.can_rename_thread:
             hide_ids.add("raid_popup_rename_thread")
+
+        if not self.raid_is_active:
+            hide_ids |= {
+                "raid_popup_join_raid",
+                "raid_popup_leave_raid",
+                "raid_popup_my_dkp",
+                "raid_popup_voice_roster",
+                "raid_popup_show_groups",
+                "raid_popup_rename_thread",
+                "raid_popup_remove_raider",
+                "raid_popup_close_raid",
+                "raid_popup_update_team",
+                "raid_popup_sync_voice",
+                "raid_popup_award_dkp",
+                "raid_popup_deduct_dkp",
+                "raid_popup_timed_dkp",
+                "raid_popup_stop_timed_dkp",
+                "raid_popup_start_auction",
+                "raid_popup_end_auction",
+            }
 
         if hide_ids:
             to_remove: list[discord.ui.Item] = []
@@ -2905,6 +2930,29 @@ class RaidPopupView(discord.ui.View):
             return None
         return await self.bot.db.get_raid_by_thread(interaction.channel.id)
 
+    async def _ensure_raid_any_state(self, interaction: discord.Interaction):
+        if not await ensure_allowed_guild(interaction):
+            return None
+        if interaction.guild is None:
+            return None
+        if interaction.channel is None:
+            return None
+        return await self.bot.db.get_raid_by_thread_any_state(interaction.channel.id)
+
+    async def _resolve_reverse_permissions(self, interaction: discord.Interaction):
+        raid = await self._ensure_raid_any_state(interaction)
+        if not raid:
+            return None, False, False
+
+        admin_ok = await is_admin(interaction)
+        is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
+        can_manage = bool(is_leader or admin_ok)
+
+        officer_ok = await is_officer(interaction)
+        can_rename_thread = bool(can_manage or officer_ok)
+
+        return raid, can_manage, can_rename_thread
+
     async def _resolve_permissions(self, interaction: discord.Interaction):
         raid = await self._ensure_raid(interaction)
         if not raid:
@@ -2933,9 +2981,12 @@ class RaidPopupView(discord.ui.View):
     def _manage_embed(self, interaction: discord.Interaction) -> discord.Embed:
         user = interaction.user
         display_name = getattr(user, "display_name", None) or getattr(user, "name", None) or "User"
+        description = "Use the buttons below to manage DKP, auctions, and roster actions."
+        if not self.raid_is_active:
+            description = "This raid is closed. Only read-only and reversal actions are available."
         return create_info_embed(
             f"DKP for {display_name}",
-            "Use the buttons below to manage DKP, auctions, and roster actions.",
+            description,
         )
 
     def _help_embed(self) -> discord.Embed:
@@ -2979,6 +3030,7 @@ class RaidPopupView(discord.ui.View):
             mode=mode,
             can_manage=self.can_manage,
             can_rename_thread=self.can_rename_thread,
+            raid_is_active=self.raid_is_active,
         )
         try:
             if not interaction.response.is_done():
@@ -3222,9 +3274,9 @@ class RaidPopupView(discord.ui.View):
 
     @discord.ui.button(label="DKP", style=discord.ButtonStyle.primary, custom_id="raid_popup_open_manage", row=1)
     async def open_manage(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
+        raid, can_manage, can_rename_thread = await self._resolve_reverse_permissions(interaction)
         if raid is None:
-            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+            return await self._popup_notice(interaction, "This channel is not associated with a raid.", mode="main")
 
         if not can_manage:
             return await self._popup_notice(
@@ -3235,7 +3287,10 @@ class RaidPopupView(discord.ui.View):
 
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
-        await self._edit_to(interaction, mode="manage", embed=self._manage_embed(interaction))
+        self.raid_is_active = bool(int(raid["is_active"])) if raid.get("is_active") is not None else True
+
+        embed = self._manage_embed(interaction)
+        await self._edit_to(interaction, mode="manage", embed=embed)
 
     @discord.ui.button(label="❓ Help", style=discord.ButtonStyle.secondary, custom_id="raid_popup_open_help", row=0)
     async def open_help(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3333,9 +3388,9 @@ class RaidPopupView(discord.ui.View):
 
     @discord.ui.button(label="Raid Points", style=discord.ButtonStyle.secondary, custom_id="raid_popup_raid_points", row=2)
     async def raid_points(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid, can_manage, _can_rename_thread = await self._resolve_permissions(interaction)
+        raid, can_manage, _can_rename_thread = await self._resolve_reverse_permissions(interaction)
         if not raid:
-            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+            return await self._popup_notice(interaction, "This channel is not associated with a raid.", mode="main")
         if not can_manage:
             return await self._popup_notice(interaction, "You don't have permission to do that.", mode="main")
 
@@ -3349,14 +3404,15 @@ class RaidPopupView(discord.ui.View):
             return_to_popup=True,
             popup_can_manage=self.can_manage,
             popup_can_rename_thread=self.can_rename_thread,
+            popup_raid_is_active=self.raid_is_active,
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Reverse Raid DKP", style=discord.ButtonStyle.danger, custom_id="raid_popup_reverse_dkp", row=3)
     async def reverse_raid_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid, can_manage, _can_rename_thread = await self._resolve_permissions(interaction)
+        raid, can_manage, _can_rename_thread = await self._resolve_reverse_permissions(interaction)
         if not raid:
-            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+            return await self._popup_notice(interaction, "This channel is not associated with a raid.", mode="main")
         if not can_manage:
             return await self._popup_notice(interaction, "You don't have permission to do that.", mode="main")
 
@@ -3366,6 +3422,7 @@ class RaidPopupView(discord.ui.View):
             source="popup",
             can_manage=self.can_manage,
             can_rename_thread=self.can_rename_thread,
+            raid_is_active=self.raid_is_active,
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -3571,9 +3628,9 @@ class RaidPopupView(discord.ui.View):
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main", row=4)
     async def back_main(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
+        raid, can_manage, can_rename_thread = await self._resolve_reverse_permissions(interaction)
         if raid is None:
-            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+            return await self._popup_notice(interaction, "This channel is not associated with a raid.", mode="main")
 
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
@@ -3581,9 +3638,9 @@ class RaidPopupView(discord.ui.View):
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main_help", row=4)
     async def back_main_help(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
+        raid, can_manage, can_rename_thread = await self._resolve_reverse_permissions(interaction)
         if raid is None:
-            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+            return await self._popup_notice(interaction, "This channel is not associated with a raid.", mode="main")
 
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
@@ -3591,9 +3648,9 @@ class RaidPopupView(discord.ui.View):
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_popup_back_main_dkp", row=4)
     async def back_main_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        raid, can_manage, can_rename_thread = await self._resolve_permissions(interaction)
+        raid, can_manage, can_rename_thread = await self._resolve_reverse_permissions(interaction)
         if raid is None:
-            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+            return await self._popup_notice(interaction, "This channel is not associated with a raid.", mode="main")
 
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
@@ -3690,12 +3747,13 @@ class RaidPopupDKPMemberSelect(Select):
 
 
 class RaidReverseDKPChoiceView(discord.ui.View):
-    def __init__(self, bot, *, source: str = "popup", can_manage: bool = False, can_rename_thread: bool = False):
+    def __init__(self, bot, *, source: str = "popup", can_manage: bool = False, can_rename_thread: bool = False, raid_is_active: bool = True):
         super().__init__(timeout=None)
         self.bot = bot
         self.source = source
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
+        self.raid_is_active = bool(raid_is_active)
 
     @discord.ui.button(label="Undo Last Award", style=discord.ButtonStyle.primary, custom_id="raid_reverse_choice_undo_last", row=0)
     async def undo_last(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3719,7 +3777,29 @@ class RaidReverseDKPChoiceView(discord.ui.View):
         modal = RaidReverseDKPModal(raid_cog)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_reverse_choice_back", row=1)
+    @discord.ui.button(label="From Cutoff (All Awards)", style=discord.ButtonStyle.secondary, custom_id="raid_reverse_choice_cutoff_all", row=1)
+    async def cutoff_all(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            if self.source == "popup":
+                embed = create_info_embed("Error", "Raid module is currently offline.")
+                return await interaction.response.edit_message(embed=embed, view=None)
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+        modal = RaidReverseFromCutoffModal(raid_cog, timed_only=False)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="From Cutoff (Timed Only)", style=discord.ButtonStyle.secondary, custom_id="raid_reverse_choice_cutoff_timed", row=1)
+    async def cutoff_timed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            if self.source == "popup":
+                embed = create_info_embed("Error", "Raid module is currently offline.")
+                return await interaction.response.edit_message(embed=embed, view=None)
+            return await interaction.response.send_message("Raid module is currently offline.", ephemeral=True)
+        modal = RaidReverseFromCutoffModal(raid_cog, timed_only=True)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_reverse_choice_back", row=2)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.source == "popup":
             view = RaidPopupView(
@@ -3727,6 +3807,7 @@ class RaidReverseDKPChoiceView(discord.ui.View):
                 mode=("manage" if self.can_manage else "main"),
                 can_manage=self.can_manage,
                 can_rename_thread=self.can_rename_thread,
+                raid_is_active=self.raid_is_active,
             )
             embed = create_info_embed(
                 "DKP" if self.can_manage else "Raid Panel",
@@ -3739,6 +3820,40 @@ class RaidReverseDKPChoiceView(discord.ui.View):
             await interaction.response.edit_message(view=None)
 
 
+class RaidCutoffReverseConfirmView(discord.ui.View):
+    def __init__(self, bot, *, cutoff_text: str, cutoff_sql: str, reason: str, timed_only: bool, raid_is_active: bool):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.cutoff_text = cutoff_text
+        self.cutoff_sql = cutoff_sql
+        self.reason = reason
+        self.timed_only = bool(timed_only)
+        self.raid_is_active = bool(raid_is_active)
+
+    @discord.ui.button(label="Confirm Reversal", style=discord.ButtonStyle.danger, custom_id="raid_cutoff_reverse_confirm", row=0)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid_cog = self.bot.get_cog("RaidCog") if self.bot else None
+        if not raid_cog:
+            embed = create_info_embed("Cutoff Reversal", "Raid module is currently offline.")
+            return await interaction.response.edit_message(embed=embed, view=None)
+        await raid_cog.apply_reverse_raid_dkp_from_cutoff(
+            interaction,
+            cutoff_text=self.cutoff_text,
+            cutoff_sql=self.cutoff_sql,
+            reason=self.reason,
+            timed_only=self.timed_only,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="raid_cutoff_reverse_cancel", row=0)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        scope_label = "Timed awards only" if self.timed_only else "All raid-linked DKP changes"
+        embed = create_info_embed(
+            "Cutoff Reversal Cancelled",
+            f"Cancelled cutoff reversal for **{scope_label}** from **{self.cutoff_text}** onward.",
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
 class RaidPopupDKPSelectView(discord.ui.View):
     def __init__(
         self,
@@ -3748,6 +3863,7 @@ class RaidPopupDKPSelectView(discord.ui.View):
         members: list[discord.Member],
         can_manage: bool,
         can_rename_thread: bool,
+        raid_is_active: bool = True,
     ):
         super().__init__(timeout=None)
         self.bot = bot
@@ -3755,6 +3871,7 @@ class RaidPopupDKPSelectView(discord.ui.View):
         self._allowed_member_ids = {int(m.id) for m in members}
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
+        self.raid_is_active = bool(raid_is_active)
         self.add_item(RaidPopupDKPMemberSelect(bot, action=action, members=list(members)))
 
     @discord.ui.button(label="All/Some Raid members", style=discord.ButtonStyle.primary, custom_id="raid_popup_dkp_all", row=1)
@@ -3776,6 +3893,7 @@ class RaidPopupDKPSelectView(discord.ui.View):
             mode=("manage" if self.can_manage else "main"),
             can_manage=self.can_manage,
             can_rename_thread=self.can_rename_thread,
+            raid_is_active=self.raid_is_active,
         )
         embed = create_info_embed(
             "DKP" if self.can_manage else "Raid Panel",
@@ -3791,11 +3909,12 @@ class RaidPopupDKPSelectView(discord.ui.View):
 
 
 class RaidPopupTimedDKPView(discord.ui.View):
-    def __init__(self, bot, *, can_manage: bool, can_rename_thread: bool):
+    def __init__(self, bot, *, can_manage: bool, can_rename_thread: bool, raid_is_active: bool = True):
         super().__init__(timeout=None)
         self.bot = bot
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
+        self.raid_is_active = bool(raid_is_active)
 
     @discord.ui.button(
         label="Configure Timed DKP",
@@ -3871,6 +3990,7 @@ class RaidPopupTimedDKPView(discord.ui.View):
             mode=("manage" if self.can_manage else "main"),
             can_manage=self.can_manage,
             can_rename_thread=self.can_rename_thread,
+            raid_is_active=self.raid_is_active,
         )
         embed = create_info_embed(
             "DKP" if self.can_manage else "Raid Panel",
@@ -5584,6 +5704,15 @@ class RaidOpenPanelView(discord.ui.View):
                 pass
             return
         try:
+            if interaction.channel is not None:
+                raid = await self.bot.db.get_raid_by_thread_any_state(interaction.channel.id)
+            else:
+                raid = None
+            if raid is None:
+                return await interaction.followup.send(
+                    "This channel is not associated with a raid.",
+                    ephemeral=True,
+                )
             await raid_cog.send_ephemeral_raid_panel(interaction)
         except Exception:
             logging.exception(

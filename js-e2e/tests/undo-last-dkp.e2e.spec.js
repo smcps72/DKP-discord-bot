@@ -146,13 +146,19 @@ test('Reverse Raid DKP shows Undo Last Award choice view and modal works', async
     .filter({ hasText: /Undo Last Award/i }).last();
   const removeAllBtn = page.locator('button, [role="button"]')
     .filter({ hasText: /Remove All DKP/i }).last();
+  const cutoffAllBtn = page.locator('button, [role="button"]')
+    .filter({ hasText: /From Cutoff \(All Awards\)/i }).last();
+  const cutoffTimedBtn = page.locator('button, [role="button"]')
+    .filter({ hasText: /From Cutoff \(Timed Only\)/i }).last();
   const backBtn = page.locator('button, [role="button"]')
     .filter({ hasText: /^Back$/i }).last();
 
   await expect(undoBtn).toBeVisible({ timeout: 15_000 });
   await expect(removeAllBtn).toBeVisible({ timeout: 5_000 });
+  await expect(cutoffAllBtn).toBeVisible({ timeout: 5_000 });
+  await expect(cutoffTimedBtn).toBeVisible({ timeout: 5_000 });
   await expect(backBtn).toBeVisible({ timeout: 5_000 });
-  console.log('✅ Choice view: Undo Last Award, Remove All DKP, Back');
+  console.log('✅ Choice view includes undo, remove-all, cutoff-all, cutoff-timed, and back');
 
   // Click Undo Last Award → should open modal
   await undoBtn.click();
@@ -188,6 +194,60 @@ test('Reverse Raid DKP shows Undo Last Award choice view and modal works', async
   } else {
     console.log('ℹ️ Modal submitted - check bot logs for result');
   }
+});
+
+test('Reverse Raid DKP cutoff-all modal opens and submit reaches preview/no-op response', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await navigateToRaidThread(page);
+  const reverseBtn = await openRaidPanelAndGetReverseBtn(page);
+  await reverseBtn.click();
+  await page.waitForTimeout(3000);
+
+  const cutoffAllBtn = page.locator('button, [role="button"]')
+    .filter({ hasText: /From Cutoff \(All Awards\)/i }).last();
+  await expect(cutoffAllBtn).toBeVisible({ timeout: 15_000 });
+  await cutoffAllBtn.click();
+  await page.waitForTimeout(2000);
+
+  await expect(page.getByText('Reverse Raid DKP From Cutoff')).toBeVisible({ timeout: 10_000 });
+  await page.getByPlaceholder('CONFIRM').fill('CONFIRM');
+  await page.getByPlaceholder('e.g., 4/12/26 7:00 PM').fill('4/12/26 7:00 PM');
+  await page.getByPlaceholder(/Started timed DKP too early/i).fill('E2E test - cutoff all preview');
+  await page.getByRole('button', { name: /Submit/i }).click();
+  await page.waitForTimeout(3000);
+
+  const bodyText = await page.textContent('body').catch(() => '');
+  expect(bodyText).toMatch(/Confirm Cutoff Reversal|No matching unreversed/i);
+
+  const cancelBtn = page.locator('button, [role="button"]')
+    .filter({ hasText: /^Cancel$/i }).last();
+  if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await cancelBtn.click();
+    await page.waitForTimeout(1500);
+    const cancelledText = await page.textContent('body').catch(() => '');
+    expect(cancelledText).toMatch(/Cutoff Reversal Cancelled/i);
+  }
+});
+
+test('Reverse Raid DKP cutoff-timed modal opens', async ({ page }) => {
+  test.setTimeout(120_000);
+  ensureAuthState();
+
+  await navigateToRaidThread(page);
+  const reverseBtn = await openRaidPanelAndGetReverseBtn(page);
+  await reverseBtn.click();
+  await page.waitForTimeout(3000);
+
+  const cutoffTimedBtn = page.locator('button, [role="button"]')
+    .filter({ hasText: /From Cutoff \(Timed Only\)/i }).last();
+  await expect(cutoffTimedBtn).toBeVisible({ timeout: 15_000 });
+  await cutoffTimedBtn.click();
+  await page.waitForTimeout(2000);
+
+  await expect(page.getByText('Reverse Raid DKP From Cutoff')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByPlaceholder('e.g., 4/12/26 7:00 PM')).toBeVisible({ timeout: 5_000 });
 });
 
 test('Reverse Raid DKP choice view Back button works', async ({ page }) => {
