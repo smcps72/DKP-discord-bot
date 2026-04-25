@@ -219,8 +219,11 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="server_points", description="Show DKP for all members in this server.")
-    @app_commands.describe(member="(Optional) Show DKP for a single member in this server.")
-    async def server_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
+    @app_commands.describe(
+        member="(Optional) Show DKP for a single member in this server.",
+        ephemeral="(Optional) Send the response only visible to you. Default: False.",
+    )
+    async def server_points_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None, ephemeral: bool = False):
         # Ensure this command is used in a guild context
         if not interaction.guild:
             if not interaction.response.is_done():
@@ -235,17 +238,17 @@ class AdminCog(commands.Cog):
                 )
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=ephemeral)
 
         # If a specific member is requested, just show their DKP
         if member is not None:
             if member.bot:
-                return await interaction.followup.send("Bots do not have DKP.")
+                return await interaction.followup.send("Bots do not have DKP.", ephemeral=ephemeral)
 
             dkp = await self.bot.db.get_user_dkp(member.id, interaction.guild.id, username=member.display_name)
             description = f"{member.mention}  **{dkp} DKP**"
             embed = create_info_embed("Server DKP (Member)", description)
-            return await interaction.followup.send(embed=embed)
+            return await interaction.followup.send(embed=embed, ephemeral=ephemeral)
 
         # Otherwise, show DKP for all users with entries in this guild
         rows = await self.bot.db.fetchall(
@@ -254,7 +257,7 @@ class AdminCog(commands.Cog):
         )
 
         if not rows:
-            return await interaction.followup.send("No DKP data found for this server.")
+            return await interaction.followup.send("No DKP data found for this server.", ephemeral=ephemeral)
 
         lines = []
         backfill = []
@@ -281,7 +284,7 @@ class AdminCog(commands.Cog):
 
         description = "\n".join(lines)
         embed = create_info_embed("Server DKP", description)
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral)
 
     @app_commands.command(name="admin_adjust_dkp", description="Manually adjust a member's DKP (admin only).")
     @app_commands.check(is_admin)

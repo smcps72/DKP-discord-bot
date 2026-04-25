@@ -2840,6 +2840,11 @@ class RaidPopupView(discord.ui.View):
         if self.mode == "main" and not self.can_rename_thread:
             hide_ids.add("raid_popup_rename_thread")
 
+        # For raid leaders and admins in main mode: replace My DKP with Raid Points
+        if self.mode == "main" and self.can_manage:
+            hide_ids.add("raid_popup_my_dkp")
+            hide_ids.discard("raid_popup_raid_points")
+
         if not self.raid_is_active:
             hide_ids |= {
                 "raid_popup_join_raid",
