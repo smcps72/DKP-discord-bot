@@ -213,10 +213,16 @@ async def can_manage_raid(interaction: discord.Interaction, raid) -> bool:
     if admin_ok:
         return True
     user_id = int(getattr(interaction.user, "id", 0))
-    leader_id = int(raid["leader_id"]) if raid and raid.get("leader_id") else 0
+    try:
+        leader_id = int(raid["leader_id"]) if raid and raid["leader_id"] else 0
+    except (KeyError, TypeError):
+        leader_id = 0
     if user_id == leader_id:
         return True
-    raid_id = raid.get("id") if raid else None
+    try:
+        raid_id = raid["id"] if raid else None
+    except (KeyError, TypeError):
+        raid_id = None
     if raid_id is not None:
         try:
             return await interaction.client.db.is_raid_manager(int(raid_id), user_id)

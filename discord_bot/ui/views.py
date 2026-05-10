@@ -3422,7 +3422,10 @@ class RaidPopupView(discord.ui.View):
             return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
 
         user_id = int(getattr(interaction.user, "id", 0))
-        leader_id = int(raid["leader_id"]) if raid.get("leader_id") else 0
+        try:
+            leader_id = int(raid["leader_id"]) if raid["leader_id"] else 0
+        except (KeyError, TypeError):
+            leader_id = 0
         admin_ok = await is_admin(interaction)
         if user_id != leader_id and not admin_ok:
             return await self._popup_notice(
@@ -3751,7 +3754,10 @@ class RaidAddManagerView(discord.ui.View):
         if not raid:
             embed = create_info_embed("Add Raid Manager", "This raid is no longer active.")
             return await interaction.response.edit_message(embed=embed, view=None)
-        leader_id = int(raid["leader_id"]) if raid.get("leader_id") else 0
+        try:
+            leader_id = int(raid["leader_id"]) if raid["leader_id"] else 0
+        except (KeyError, TypeError):
+            leader_id = 0
         admin_ok = await is_admin(interaction)
         if user_id != leader_id and not admin_ok:
             embed = create_info_embed("Add Raid Manager", "Only the raid leader or a bot admin can add raid managers.")
