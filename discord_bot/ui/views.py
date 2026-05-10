@@ -2843,10 +2843,11 @@ class RaidPopupView(discord.ui.View):
         if self.mode == "main" and not self.can_rename_thread:
             hide_ids.add("raid_popup_rename_thread")
 
-        # For raid leaders and admins in main mode: replace My DKP with Raid Points
+        # For raid leaders and admins in main mode: replace My DKP with Raid Points + Add Manager
         if self.mode == "main" and self.can_manage:
             hide_ids.add("raid_popup_my_dkp")
             hide_ids.discard("raid_popup_raid_points")
+            hide_ids.discard("raid_popup_add_manager")
 
         if not self.raid_is_active:
             hide_ids |= {
@@ -2879,6 +2880,8 @@ class RaidPopupView(discord.ui.View):
 
         if self.mode == "main":
             main_row_overrides: dict[str, int] = {
+                "raid_popup_raid_points": 0,
+                "raid_popup_add_manager": 0,
                 "raid_popup_update_team": 2,
                 "raid_popup_sync_voice": 2,
                 "raid_popup_remove_raider": 3,
@@ -3393,7 +3396,7 @@ class RaidPopupView(discord.ui.View):
         embed = create_info_embed("Deduct DKP", "Who do you want to deduct DKP from?")
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Raid Points", style=discord.ButtonStyle.secondary, custom_id="raid_popup_raid_points", row=2)
+    @discord.ui.button(label="💰 Raid Points", style=discord.ButtonStyle.secondary, custom_id="raid_popup_raid_points", row=2)
     async def raid_points(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, _can_rename_thread = await self._resolve_reverse_permissions(interaction)
         if not raid:
