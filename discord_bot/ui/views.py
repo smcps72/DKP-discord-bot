@@ -10,6 +10,7 @@ from .. import __version__ as bot_version
 from ..utils import (
     is_admin,
     is_officer,
+    can_manage_raid,
     ensure_allowed_guild,
     create_info_embed,
 )
@@ -2802,6 +2803,7 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_stop_timed_dkp",
                 "raid_popup_raid_points",
                 "raid_popup_reverse_dkp",
+                "raid_popup_add_manager",
                 "raid_popup_back_main",
             }
 
@@ -2835,6 +2837,7 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_end_auction",
                 "raid_popup_remove_raider",
                 "raid_popup_close_raid",
+                "raid_popup_add_manager",
             }
 
         if self.mode == "main" and not self.can_rename_thread:
@@ -2863,6 +2866,7 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_stop_timed_dkp",
                 "raid_popup_start_auction",
                 "raid_popup_end_auction",
+                "raid_popup_add_manager",
             }
 
         if hide_ids:
@@ -2900,6 +2904,7 @@ class RaidPopupView(discord.ui.View):
                 "raid_popup_timed_dkp": 0,
                 "raid_popup_stop_timed_dkp": 0,
                 "raid_popup_raid_points": 1,
+                "raid_popup_add_manager": 1,
                 "raid_popup_reverse_dkp": 2,
                 "raid_popup_start_auction": 2,
                 "raid_popup_end_auction": 2,
@@ -2949,28 +2954,24 @@ class RaidPopupView(discord.ui.View):
         if not raid:
             return None, False, False
 
-        admin_ok = await is_admin(interaction)
-        is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
-        can_manage = bool(is_leader or admin_ok)
+        manage_ok = await can_manage_raid(interaction, raid)
 
         officer_ok = await is_officer(interaction)
-        can_rename_thread = bool(can_manage or officer_ok)
+        can_rename_thread = bool(manage_ok or officer_ok)
 
-        return raid, can_manage, can_rename_thread
+        return raid, manage_ok, can_rename_thread
 
     async def _resolve_permissions(self, interaction: discord.Interaction):
         raid = await self._ensure_raid(interaction)
         if not raid:
             return None, False, False
 
-        admin_ok = await is_admin(interaction)
-        is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
-        can_manage = bool(is_leader or admin_ok)
+        manage_ok = await can_manage_raid(interaction, raid)
 
         officer_ok = await is_officer(interaction)
-        can_rename_thread = bool(can_manage or officer_ok)
+        can_rename_thread = bool(manage_ok or officer_ok)
 
-        return raid, can_manage, can_rename_thread
+        return raid, manage_ok, can_rename_thread
 
     def _main_embed(self, interaction: discord.Interaction, *, can_manage: bool) -> discord.Embed:
         user = interaction.user
@@ -3007,6 +3008,7 @@ class RaidPopupView(discord.ui.View):
                 "**Award DKP / Deduct DKP** (leader/admin): Pick a raid member, then enter the DKP amount + reason.",
                 "**Timed DKP / Stop Timed DKP** (leader/admin): View/configure Timed DKP for this raid, or stop it if it's running.",
                 "**Raid Points** (leader/admin): View raid points for this raid (scoped/sorted).",
+                "**Add Raid Manager** (leader/admin): Assigns another player raid manager permissions so they can manage DKP, auctions, and roster for this raid.",
                 "**Reverse Raid DKP** (leader/admin): Reverse DKP changes for this raid.",
                 "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Sync Voice** or have people **Join Raid** first).",
                 "**End Auction** (leader/admin): Ends the current auction for this raid.",
@@ -3413,6 +3415,47 @@ class RaidPopupView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
+    @discord.ui.button(label="Add Raid Manager", style=discord.ButtonStyle.secondary, custom_id="raid_popup_add_manager", row=1)
+    async def add_manager(self, interaction: discord.Interaction, button: discord.ui.Button):
+        raid = await self._ensure_raid(interaction)
+        if not raid:
+            return await self._popup_notice(interaction, "This is not an active raid thread.", mode="main")
+
+        user_id = int(getattr(interaction.user, "id", 0))
+        leader_id = int(raid["leader_id"]) if raid.get("leader_id") else 0
+        admin_ok = await is_admin(interaction)
+        if user_id != leader_id and not admin_ok:
+            return await self._popup_notice(
+                interaction,
+                "Only the raid leader or a bot admin can add raid managers.",
+                mode="manage",
+            )
+
+        existing_managers = []
+        try:
+            existing_managers = await self.bot.db.get_raid_managers(int(raid["id"]))
+        except Exception:
+            pass
+
+        manager_lines: list[str] = []
+        if existing_managers:
+            for row in existing_managers:
+                manager_lines.append(f"<@{row['user_id']}>")
+
+        description = "Select a member to give them raid manager permissions for this raid."
+        if manager_lines:
+            description += f"\n\n**Current managers:** {', '.join(manager_lines)}"
+
+        embed = create_info_embed("Add Raid Manager", description)
+        view = RaidAddManagerView(
+            self.bot,
+            raid_id=int(raid["id"]),
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
+            raid_is_active=self.raid_is_active,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
     @discord.ui.button(label="Reverse Raid DKP", style=discord.ButtonStyle.danger, custom_id="raid_popup_reverse_dkp", row=3)
     async def reverse_raid_dkp(self, interaction: discord.Interaction, button: discord.ui.Button):
         raid, can_manage, _can_rename_thread = await self._resolve_reverse_permissions(interaction)
@@ -3685,6 +3728,79 @@ class RaidPopupInfoView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Close Panel", style=discord.ButtonStyle.secondary, custom_id="raid_popup_info_close", row=2)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=None)
+
+
+class RaidAddManagerView(discord.ui.View):
+    def __init__(self, bot, *, raid_id: int, can_manage: bool, can_rename_thread: bool, raid_is_active: bool = True):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.raid_id = int(raid_id)
+        self.can_manage = bool(can_manage)
+        self.can_rename_thread = bool(can_rename_thread)
+        self.raid_is_active = bool(raid_is_active)
+
+    @discord.ui.select(cls=UserSelect, placeholder="Select a member to add as raid manager...", min_values=1, max_values=1, row=0)
+    async def user_select(self, interaction: discord.Interaction, select: UserSelect):
+        if not select.values:
+            return
+
+        user_id = int(getattr(interaction.user, "id", 0))
+        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id) if interaction.channel else None
+        if not raid:
+            embed = create_info_embed("Add Raid Manager", "This raid is no longer active.")
+            return await interaction.response.edit_message(embed=embed, view=None)
+        leader_id = int(raid["leader_id"]) if raid.get("leader_id") else 0
+        admin_ok = await is_admin(interaction)
+        if user_id != leader_id and not admin_ok:
+            embed = create_info_embed("Add Raid Manager", "Only the raid leader or a bot admin can add raid managers.")
+            return await interaction.response.edit_message(embed=embed, view=None)
+
+        selected = select.values[0]
+        if not isinstance(selected, (discord.Member, discord.User)):
+            embed = create_info_embed("Add Raid Manager", "Invalid selection.")
+            return await interaction.response.edit_message(embed=embed, view=self)
+
+        target_id = int(selected.id)
+
+        if getattr(selected, "bot", False):
+            embed = create_info_embed("Add Raid Manager", "You cannot add a bot as a raid manager.")
+            return await interaction.response.edit_message(embed=embed, view=self)
+
+        try:
+            await self.bot.db.add_raid_manager(self.raid_id, target_id)
+        except Exception:
+            embed = create_info_embed("Add Raid Manager", "Failed to add raid manager. Please try again.")
+            return await interaction.response.edit_message(embed=embed, view=self)
+
+        display_name = getattr(selected, "display_name", None) or getattr(selected, "name", "User")
+        embed = create_info_embed(
+            "Raid Manager Added",
+            f"**{display_name}** (<@{target_id}>) now has raid manager permissions for this raid.",
+        )
+        view = RaidPopupView(
+            self.bot,
+            mode="manage",
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
+            raid_is_active=self.raid_is_active,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, custom_id="raid_add_manager_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = RaidPopupView(
+            self.bot,
+            mode="manage",
+            can_manage=self.can_manage,
+            can_rename_thread=self.can_rename_thread,
+            raid_is_active=self.raid_is_active,
+        )
+        embed = view._manage_embed(interaction)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Close Panel", style=discord.ButtonStyle.secondary, custom_id="raid_add_manager_close", row=1)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(view=None)
 

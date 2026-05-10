@@ -6,7 +6,7 @@ import logging
 import random
 import re
 import io
-from ..utils import create_info_embed, create_error_embed, create_success_embed, is_admin, is_officer, send_dkp_change_dm
+from ..utils import create_info_embed, create_error_embed, create_success_embed, is_admin, is_officer, can_manage_raid, send_dkp_change_dm
 from ..ui.views import RaidControlView, RaidPopupView, RaidOpenPanelView, RaidGroupSignupView
 from ..ui.modals import DKPAdjustmentModal, RaidCreateModal
 
@@ -191,9 +191,7 @@ class RaidCog(commands.Cog):
             can_rename_thread = False
             if raid:
                 try:
-                    admin_ok = await is_admin(interaction)
-                    is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
-                    can_manage = bool(is_leader or admin_ok)
+                    can_manage = await can_manage_raid(interaction, raid)
                     officer_ok = await is_officer(interaction)
                     can_rename_thread = bool(can_manage or officer_ok)
                 except Exception:
@@ -244,13 +242,12 @@ class RaidCog(commands.Cog):
                 return
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
-            await respond_popup("You must be the raid leader or a bot admin to configure timed DKP.", title="Error")
+        if not await can_manage_raid(interaction, raid):
+            await respond_popup("You must be the raid leader, a raid manager, or a bot admin to configure timed DKP.", title="Error")
             if source == "raid_popup":
                 return
             return await interaction.followup.send(
-                "You must be the raid leader or a bot admin to configure timed DKP.",
+                "You must be the raid leader, a raid manager, or a bot admin to configure timed DKP.",
                 ephemeral=True,
             )
 
@@ -571,10 +568,9 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.response.send_message("This channel is not associated with a raid.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.response.send_message(
-                "You must be the raid leader or a bot admin to reverse raid DKP.",
+                "You must be the raid leader, a raid manager, or a bot admin to reverse raid DKP.",
                 ephemeral=True,
             )
 
@@ -653,12 +649,11 @@ class RaidCog(commands.Cog):
                 view=None,
             )
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.response.edit_message(
                 embed=create_info_embed(
                     "Cutoff Reversal",
-                    "You must be the raid leader or a bot admin to reverse raid DKP.",
+                    "You must be the raid leader, a raid manager, or a bot admin to reverse raid DKP.",
                 ),
                 view=None,
             )
@@ -746,10 +741,9 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This channel is not associated with a raid.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.followup.send(
-                "You must be the raid leader or a bot admin to reverse raid DKP.",
+                "You must be the raid leader, a raid manager, or a bot admin to reverse raid DKP.",
                 ephemeral=True,
             )
 
@@ -859,10 +853,9 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This channel is not associated with a raid.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.followup.send(
-                "You must be the raid leader or a bot admin to undo raid DKP.",
+                "You must be the raid leader, a raid manager, or a bot admin to undo raid DKP.",
                 ephemeral=True,
             )
 
@@ -921,10 +914,9 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.followup.send(
-                "You must be the raid leader or a bot admin to disable timed DKP.",
+                "You must be the raid leader, a raid manager, or a bot admin to disable timed DKP.",
                 ephemeral=True,
             )
 
@@ -953,9 +945,7 @@ class RaidCog(commands.Cog):
 
         if self._interaction_message_is_ephemeral(interaction):
             try:
-                admin_ok = await is_admin(interaction)
-                is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
-                can_manage = bool(is_leader or admin_ok)
+                can_manage = await can_manage_raid(interaction, raid)
                 officer_ok = await is_officer(interaction)
                 can_rename_thread = bool(can_manage or officer_ok)
 
@@ -1158,9 +1148,7 @@ class RaidCog(commands.Cog):
                 pass
             return
 
-        is_leader = interaction.user.id == raid["leader_id"]
-        admin_ok = await is_admin(interaction)
-        can_manage = is_leader or admin_ok
+        can_manage = await can_manage_raid(interaction, raid)
 
         officer_ok = await is_officer(interaction)
         can_rename_thread = can_manage or officer_ok
@@ -1604,11 +1592,10 @@ class RaidCog(commands.Cog):
             except Exception:
                 return
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             try:
                 return await interaction.followup.send(
-                    "You must be the raid leader or a bot admin to configure groups.",
+                    "You must be the raid leader, a raid manager, or a bot admin to configure groups.",
                     ephemeral=True,
                 )
             except Exception:
@@ -1765,10 +1752,9 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.followup.send(
-                "You must be the raid leader or a bot admin to update the team.",
+                "You must be the raid leader, a raid manager, or a bot admin to update the team.",
                 ephemeral=True,
             )
 
@@ -1967,13 +1953,13 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        officer_ok = await is_officer(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
-            return await interaction.followup.send(
-                "You must be the raid leader, an officer, or a bot admin to sync raid members.",
-                ephemeral=True,
-            )
+        if not await can_manage_raid(interaction, raid):
+            officer_ok = await is_officer(interaction)
+            if not officer_ok:
+                return await interaction.followup.send(
+                    "You must be the raid leader, a raid manager, an officer, or a bot admin to sync raid members.",
+                    ephemeral=True,
+                )
 
         raid_id = int(raid["id"])
 
@@ -2169,13 +2155,13 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        officer_ok = await is_officer(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
-            return await interaction.response.send_message(
-                "You must be the raid leader, an officer, or a bot admin to link voice channels.",
-                ephemeral=True,
-            )
+        if not await can_manage_raid(interaction, raid):
+            officer_ok = await is_officer(interaction)
+            if not officer_ok:
+                return await interaction.response.send_message(
+                    "You must be the raid leader, a raid manager, an officer, or a bot admin to link voice channels.",
+                    ephemeral=True,
+                )
 
         raid_id = int(raid["id"])
         await self.bot.db.add_raid_voice_channel(raid_id, int(channel.id))
@@ -2201,13 +2187,13 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.response.send_message("This is not an active raid thread.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        officer_ok = await is_officer(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok and not officer_ok:
-            return await interaction.response.send_message(
-                "You must be the raid leader, an officer, or a bot admin to unlink voice channels.",
-                ephemeral=True,
-            )
+        if not await can_manage_raid(interaction, raid):
+            officer_ok = await is_officer(interaction)
+            if not officer_ok:
+                return await interaction.response.send_message(
+                    "You must be the raid leader, a raid manager, an officer, or a bot admin to unlink voice channels.",
+                    ephemeral=True,
+                )
 
         raid_id = int(raid["id"])
         await self.bot.db.remove_raid_voice_channel(raid_id, int(channel.id))
@@ -2265,10 +2251,9 @@ class RaidCog(commands.Cog):
                 ephemeral=True,
             )
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.response.send_message(
-                "You must be the raid leader or a bot admin to reverse raid DKP.",
+                "You must be the raid leader, a raid manager, or a bot admin to reverse raid DKP.",
                 ephemeral=True,
             )
 
@@ -2620,10 +2605,9 @@ class RaidCog(commands.Cog):
         if not raid:
             return await interaction.followup.send("This raid is not active.", ephemeral=True)
 
-        admin_ok = await is_admin(interaction)
-        if int(interaction.user.id) != int(raid["leader_id"]) and not admin_ok:
+        if not await can_manage_raid(interaction, raid):
             return await interaction.followup.send(
-                "You must be the raid leader or a bot admin to set up groups.",
+                "You must be the raid leader, a raid manager, or a bot admin to set up groups.",
                 ephemeral=True,
             )
 
@@ -2838,9 +2822,7 @@ class RaidCog(commands.Cog):
             can_rename_thread = False
             if raid_row:
                 try:
-                    admin_ok = await is_admin(interaction)
-                    is_leader = int(getattr(interaction.user, "id", 0)) == int(raid_row["leader_id"])
-                    can_manage = bool(is_leader or admin_ok)
+                    can_manage = await can_manage_raid(interaction, raid_row)
                     officer_ok = await is_officer(interaction)
                     can_rename_thread = bool(can_manage or officer_ok)
                 except Exception:
@@ -3442,9 +3424,7 @@ class RaidCog(commands.Cog):
 
         # In popup mode, keep the result inside the popup when possible.
         if source == "raid_popup":
-            admin_ok = await is_admin(interaction)
-            is_leader = int(getattr(interaction.user, "id", 0)) == int(raid["leader_id"])
-            can_manage = bool(is_leader or admin_ok)
+            can_manage = await can_manage_raid(interaction, raid)
             officer_ok = await is_officer(interaction)
             can_rename_thread = bool(can_manage or officer_ok)
 
@@ -3542,8 +3522,8 @@ class RaidCog(commands.Cog):
                 return
             return await interaction.followup.send("This raid is no longer active.", ephemeral=True)
 
-        # Authorization: raid leader, officer, or admin
-        if not await is_officer(interaction) and interaction.user.id != raid["leader_id"]:
+        # Authorization: raid leader, raid manager, officer, or admin
+        if not await can_manage_raid(interaction, raid) and not await is_officer(interaction):
             await respond_popup("You don't have permission to rename this thread.", title="Error")
             if source == "raid_popup":
                 return

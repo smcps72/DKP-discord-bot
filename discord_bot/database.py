@@ -519,6 +519,15 @@ class Database:
                     PRIMARY KEY (guild_id, item_id)
                 )
             """)
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raid_managers (
+                    raid_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (raid_id, user_id),
+                    FOREIGN KEY (raid_id) REFERENCES raids(id)
+                )
+            """)
             await self.pool.commit()
 
     # Generic execute/fetch methods
@@ -1616,4 +1625,31 @@ class Database:
             WHERE guild_id = ?
             """,
             (int(guild_id),),
+        )
+
+    # --- Raid Managers ---
+
+    async def add_raid_manager(self, raid_id: int, user_id: int):
+        await self.execute(
+            "INSERT INTO raid_managers (raid_id, user_id) VALUES (?, ?) ON CONFLICT(raid_id, user_id) DO NOTHING",
+            (int(raid_id), int(user_id)),
+        )
+
+    async def remove_raid_manager(self, raid_id: int, user_id: int):
+        await self.execute(
+            "DELETE FROM raid_managers WHERE raid_id = ? AND user_id = ?",
+            (int(raid_id), int(user_id)),
+        )
+
+    async def is_raid_manager(self, raid_id: int, user_id: int) -> bool:
+        row = await self.fetchone(
+            "SELECT 1 FROM raid_managers WHERE raid_id = ? AND user_id = ?",
+            (int(raid_id), int(user_id)),
+        )
+        return row is not None
+
+    async def get_raid_managers(self, raid_id: int) -> list:
+        return await self.fetchall(
+            "SELECT user_id, added_at FROM raid_managers WHERE raid_id = ?",
+            (int(raid_id),),
         )

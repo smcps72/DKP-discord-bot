@@ -207,6 +207,24 @@ async def is_raid_leader(interaction: discord.Interaction) -> bool:
     return False
 
 
+async def can_manage_raid(interaction: discord.Interaction, raid) -> bool:
+    """Return True if the user is the raid leader, a bot admin, or a raid manager for this raid."""
+    admin_ok = await is_admin(interaction)
+    if admin_ok:
+        return True
+    user_id = int(getattr(interaction.user, "id", 0))
+    leader_id = int(raid["leader_id"]) if raid and raid.get("leader_id") else 0
+    if user_id == leader_id:
+        return True
+    raid_id = raid.get("id") if raid else None
+    if raid_id is not None:
+        try:
+            return await interaction.client.db.is_raid_manager(int(raid_id), user_id)
+        except Exception:
+            logging.warning("Failed to check raid manager status for raid %s user %s", raid_id, user_id, exc_info=True)
+    return False
+
+
 async def is_allowed_guild(interaction: discord.Interaction) -> bool:
     guild = getattr(interaction, "guild", None)
     allowed = _get_allowed_guild_ids()

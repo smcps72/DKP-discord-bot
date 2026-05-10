@@ -414,3 +414,88 @@ async def test_guild_bank_deposit_reuses_gap_ids():
     finally:
         if db.pool:
             await db.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_raid_managers_add_and_check():
+    """Test adding a raid manager and verifying with is_raid_manager."""
+    db = Database(":memory:")
+    try:
+        await db.connect()
+
+        raid_id = await db.execute_insert(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 200, 3000, 1),
+        )
+
+        assert await db.is_raid_manager(raid_id, 42) is False
+
+        await db.add_raid_manager(raid_id, 42)
+        assert await db.is_raid_manager(raid_id, 42) is True
+
+        # Adding again is idempotent
+        await db.add_raid_manager(raid_id, 42)
+        assert await db.is_raid_manager(raid_id, 42) is True
+
+        managers = await db.get_raid_managers(raid_id)
+        assert len(managers) == 1
+        assert int(managers[0]["user_id"]) == 42
+
+    finally:
+        if db.pool:
+            await db.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_raid_managers_remove():
+    """Test removing a raid manager."""
+    db = Database(":memory:")
+    try:
+        await db.connect()
+
+        raid_id = await db.execute_insert(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 200, 3001, 1),
+        )
+
+        await db.add_raid_manager(raid_id, 50)
+        await db.add_raid_manager(raid_id, 60)
+        assert await db.is_raid_manager(raid_id, 50) is True
+        assert await db.is_raid_manager(raid_id, 60) is True
+
+        await db.remove_raid_manager(raid_id, 50)
+        assert await db.is_raid_manager(raid_id, 50) is False
+        assert await db.is_raid_manager(raid_id, 60) is True
+
+        managers = await db.get_raid_managers(raid_id)
+        assert len(managers) == 1
+        assert int(managers[0]["user_id"]) == 60
+
+    finally:
+        if db.pool:
+            await db.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_raid_managers_scoped_to_raid():
+    """Test that managers are scoped per raid."""
+    db = Database(":memory:")
+    try:
+        await db.connect()
+
+        raid1 = await db.execute_insert(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 200, 4000, 1),
+        )
+        raid2 = await db.execute_insert(
+            "INSERT INTO raids (guild_id, leader_id, vc_id, thread_id, is_active) VALUES (?, ?, ?, ?, ?)",
+            (1, 10, 201, 4001, 1),
+        )
+
+        await db.add_raid_manager(raid1, 99)
+        assert await db.is_raid_manager(raid1, 99) is True
+        assert await db.is_raid_manager(raid2, 99) is False
+
+    finally:
+        if db.pool:
+            await db.pool.close()
