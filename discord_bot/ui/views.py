@@ -785,6 +785,65 @@ class MemberSelect(Select):
         await interaction.response.send_modal(modal)
 
 
+class MemberUserSelect(UserSelect):
+    def __init__(
+        self,
+        bot,
+        action: str,
+        members: list[discord.Member],
+        *,
+        max_values: int = 1,
+    ):
+        self.bot = bot
+        self.action = action
+        self._allowed_member_ids = {m.id for m in members}
+
+        max_select = max(1, min(int(max_values), 25))
+        super().__init__(
+            placeholder=f"Select member(s) to {action.lower()} DKP...",
+            min_values=1,
+            max_values=max_select,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        raid_cog = self.bot.get_cog("RaidCog")
+
+        selected_members: list[discord.Member] = []
+        if interaction.guild:
+            for selected in list(self.values or []):
+                try:
+                    selected_id = int(selected.id)
+                except (AttributeError, ValueError, TypeError):
+                    continue
+                if selected_id not in self._allowed_member_ids:
+                    continue
+                if isinstance(selected, discord.Member):
+                    selected_members.append(selected)
+                    continue
+                member = interaction.guild.get_member(selected_id)
+                if member is not None:
+                    selected_members.append(member)
+
+        if not selected_members:
+            try:
+                await interaction.response.edit_message(
+                    content="That member is not an eligible raid member.",
+                    view=self.view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        modal = DKPAdjustmentModal(
+            action=self.action,
+            raid_cog=raid_cog,
+            members=selected_members,
+            source="raid_panel",
+        )
+        await interaction.response.send_modal(modal)
+
+
 class RaidMemberRemoveSelect(Select):
     def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
         self.bot = bot
@@ -1224,27 +1283,15 @@ class RaidMemberClearGroupView(discord.ui.View):
             self.add_item(back_btn)
 
 
-class RaidMemberAssignGroupMemberSelect(Select):
+class RaidMemberAssignGroupMemberSelect(UserSelect):
     def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
         self.bot = bot
         self._allowed_member_ids = {m.id for m in members}
 
-        members_sorted = list(members)
-        if str(member_list_order).strip().casefold() == "random":
-            random.shuffle(members_sorted)
-        else:
-            members_sorted.sort(key=_member_sort_key)
-
-        options = [
-            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
-            for m in members_sorted
-        ][:25]
-
         super().__init__(
-            placeholder="Select a member...",
+            placeholder="Search for a raid member...",
             min_values=1,
             max_values=1,
-            options=options,
             row=0,
         )
 
@@ -1272,8 +1319,18 @@ class RaidMemberAssignGroupMemberSelect(Select):
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 return
 
+        if view is None or not isinstance(view, RaidMemberAssignGroupView):
+            await respond_notice("Please try again.")
+            return
+
+        selected_member = None
         try:
-            selected_id = int(self.values[0])
+            selected_member = list(self.values or [])[0]
+        except Exception:
+            selected_member = None
+
+        try:
+            selected_id = int(getattr(selected_member, "id", None))
         except (ValueError, TypeError):
             await respond_notice("Invalid selection.")
             return
@@ -1282,12 +1339,11 @@ class RaidMemberAssignGroupMemberSelect(Select):
             await respond_notice("That member is not a raid member.")
             return
 
-        if view is None or not isinstance(view, RaidMemberAssignGroupView):
-            await respond_notice("Please try again.")
-            return
-
         view.selected_member_id = int(selected_id)
-        member = interaction.guild.get_member(selected_id) if interaction.guild else None
+
+        member = selected_member if isinstance(selected_member, discord.Member) else None
+        if member is None and interaction.guild is not None:
+            member = interaction.guild.get_member(selected_id)
         mention = member.mention if member else f"<@{selected_id}>"
 
         try:
@@ -1511,40 +1567,6 @@ class RaidMemberAssignGroupView(discord.ui.View):
         )
         self.add_item(RaidMemberAssignGroupNumberSelect(bot, group_count))
 
-        is_random = _is_random_member_order(self.member_list_order)
-        toggle_btn = discord.ui.Button(
-            label=("Sort A-Z" if is_random else "Shuffle"),
-            style=discord.ButtonStyle.secondary,
-            row=2,
-        )
-
-        async def _toggle_cb(interaction: discord.Interaction):
-            new_order = "name" if is_random else "random"
-            new_view = RaidMemberAssignGroupView(
-                self.bot,
-                self.raid_id,
-                self.members,
-                self.group_count,
-                member_list_order=new_order,
-                show_bulk_ungrouped=self.show_bulk_ungrouped,
-                return_to_popup=self.return_to_popup,
-                popup_can_manage=self.popup_can_manage,
-                popup_can_rename_thread=self.popup_can_rename_thread,
-                return_to_group_signup=self.return_to_group_signup,
-                group_signup_can_manage=self.group_signup_can_manage,
-                group_signup_return_to_popup=self.group_signup_return_to_popup,
-                group_signup_popup_can_manage=self.group_signup_popup_can_manage,
-                group_signup_popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
-            )
-            new_view.selected_member_id = self.selected_member_id
-            try:
-                await interaction.response.edit_message(view=new_view)
-            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-                return
-
-        toggle_btn.callback = _toggle_cb
-        self.add_item(toggle_btn)
-
         if self.return_to_group_signup:
             back_btn = discord.ui.Button(
                 label="Back",
@@ -1655,24 +1677,36 @@ class RaidMemberAssignGroupView(discord.ui.View):
 
 
 class RaidBulkAssignGroupMemberSelect(Select):
-    def __init__(self, bot, members: list[discord.Member], member_list_order: str = "name"):
+    def __init__(
+        self,
+        bot,
+        members: list[discord.Member],
+        member_list_order: str = "name",
+        *,
+        selected_member_ids: list[int] | None = None,
+        page_number: int = 1,
+        page_count: int = 1,
+    ):
         self.bot = bot
-        self._allowed_member_ids = {m.id for m in members}
-
-        members_sorted = list(members)
-        if str(member_list_order).strip().casefold() == "random":
-            random.shuffle(members_sorted)
-        else:
-            members_sorted.sort(key=_member_sort_key)
+        self._allowed_member_ids = {int(m.id) for m in members}
+        selected_ids = {int(member_id) for member_id in list(selected_member_ids or [])}
 
         options = [
-            discord.SelectOption(label=_safe_member_display_name(m)[:100], value=str(m.id))
-            for m in members_sorted
-        ][:25]
+            discord.SelectOption(
+                label=_safe_member_display_name(m)[:100],
+                value=str(m.id),
+                default=int(m.id) in selected_ids,
+            )
+            for m in list(members)
+        ]
+
+        placeholder = "Select members..."
+        if int(page_count) > 1:
+            placeholder = f"Select members... (Page {int(page_number)}/{int(page_count)})"
 
         super().__init__(
-            placeholder="Select members...",
-            min_values=1,
+            placeholder=placeholder,
+            min_values=0,
             max_values=min(len(options), 25),
             options=options,
             row=0,
@@ -1699,13 +1733,23 @@ class RaidBulkAssignGroupMemberSelect(Select):
             except (ValueError, TypeError):
                 continue
 
-        view.selected_member_ids = selected_ids
-        count = len(selected_ids)
+        combined_ids = [
+            member_id
+            for member_id in view.selected_member_ids
+            if member_id not in self._allowed_member_ids
+        ]
+        combined_ids.extend(selected_ids)
+
+        new_view = view.rebuild()
+        new_view.set_selected_member_ids(combined_ids)
+        count = len(new_view.selected_member_ids)
 
         try:
             await interaction.response.edit_message(
-                content=f"Selected **{count}** member(s). Now pick a group.",
-                view=view,
+                content=new_view.build_selection_content(
+                    f"Selected **{count}** member(s). Now pick a group or continue selecting."
+                ),
+                view=new_view,
             )
         except discord.HTTPException:
             return
@@ -1852,6 +1896,9 @@ class RaidBulkAssignGroupView(discord.ui.View):
         group_count: int,
         member_list_order: str = "name",
         *,
+        page_index: int = 0,
+        member_id_order: list[int] | None = None,
+        selected_member_ids: list[int] | None = None,
         return_to_group_signup: bool = False,
         group_signup_can_manage: bool = False,
         group_signup_return_to_popup: bool = False,
@@ -1864,18 +1911,27 @@ class RaidBulkAssignGroupView(discord.ui.View):
         self.members = list(members)
         self.group_count = int(group_count)
         self.member_list_order = str(member_list_order)
-        self.selected_member_ids: list[int] = []
+        self.page_size = 25
         self.return_to_group_signup = bool(return_to_group_signup)
         self.group_signup_can_manage = bool(group_signup_can_manage)
         self.group_signup_return_to_popup = bool(group_signup_return_to_popup)
         self.group_signup_popup_can_manage = bool(group_signup_popup_can_manage)
         self.group_signup_popup_can_rename_thread = bool(group_signup_popup_can_rename_thread)
+        self._member_lookup = {int(member.id): member for member in self.members}
+        self.member_id_order = self._resolve_member_id_order(member_id_order)
+        self.page_count = max(1, (len(self.member_id_order) + self.page_size - 1) // self.page_size)
+        self.page_index = max(0, min(int(page_index), self.page_count - 1))
+        self.selected_member_ids: list[int] = []
+        self.set_selected_member_ids(list(selected_member_ids or []))
 
         self.add_item(
             RaidBulkAssignGroupMemberSelect(
                 bot,
-                self.members,
+                self.get_page_members(),
                 member_list_order=self.member_list_order,
+                selected_member_ids=self.selected_member_ids,
+                page_number=self.page_index + 1,
+                page_count=self.page_count,
             )
         )
         self.add_item(RaidBulkAssignGroupNumberSelect(bot, group_count))
@@ -1889,33 +1945,85 @@ class RaidBulkAssignGroupView(discord.ui.View):
 
         async def _toggle_cb(interaction: discord.Interaction):
             new_order = "name" if is_random else "random"
-            new_view = RaidBulkAssignGroupView(
-                self.bot,
-                self.raid_id,
-                self.members,
-                self.group_count,
-                member_list_order=new_order,
-                return_to_group_signup=self.return_to_group_signup,
-                group_signup_can_manage=self.group_signup_can_manage,
-                group_signup_return_to_popup=self.group_signup_return_to_popup,
-                group_signup_popup_can_manage=self.group_signup_popup_can_manage,
-                group_signup_popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
-            )
-            new_view.selected_member_ids = self.selected_member_ids
+            new_view = self.rebuild(member_list_order=new_order, preserve_member_order=False)
             try:
-                await interaction.response.edit_message(view=new_view)
+                await interaction.response.edit_message(
+                    content=new_view.build_selection_content(),
+                    view=new_view,
+                )
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 return
 
         toggle_btn.callback = _toggle_cb
         self.add_item(toggle_btn)
 
+        if self.page_count > 1:
+            prev_btn = discord.ui.Button(
+                label="Previous",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                disabled=self.page_index <= 0,
+            )
+
+            async def _prev_cb(interaction: discord.Interaction):
+                new_view = self.rebuild(page_index=self.page_index - 1)
+                try:
+                    await interaction.response.edit_message(
+                        content=new_view.build_selection_content(),
+                        view=new_view,
+                    )
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    return
+
+            prev_btn.callback = _prev_cb
+            self.add_item(prev_btn)
+
+            next_btn = discord.ui.Button(
+                label="Next",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                disabled=self.page_index >= (self.page_count - 1),
+            )
+
+            async def _next_cb(interaction: discord.Interaction):
+                new_view = self.rebuild(page_index=self.page_index + 1)
+                try:
+                    await interaction.response.edit_message(
+                        content=new_view.build_selection_content(),
+                        view=new_view,
+                    )
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    return
+
+            next_btn.callback = _next_cb
+            self.add_item(next_btn)
+
+        clear_btn = discord.ui.Button(
+            label="Clear selected",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+            disabled=not self.selected_member_ids,
+        )
+
+        async def _clear_cb(interaction: discord.Interaction):
+            new_view = self.rebuild(selected_member_ids=[])
+            try:
+                await interaction.response.edit_message(
+                    content=new_view.build_selection_content("Cleared selected members."),
+                    view=new_view,
+                )
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+
+        clear_btn.callback = _clear_cb
+        self.add_item(clear_btn)
+
         if self.return_to_group_signup:
             back_btn = discord.ui.Button(
                 label="Back",
                 style=discord.ButtonStyle.secondary,
                 custom_id="raid_bulk_assign_back",
-                row=3,
+                row=4,
             )
 
             async def _back_cb(interaction: discord.Interaction):
@@ -1945,6 +2053,86 @@ class RaidBulkAssignGroupView(discord.ui.View):
 
             back_btn.callback = _back_cb
             self.add_item(back_btn)
+
+    def _resolve_member_id_order(self, member_id_order: list[int] | None) -> list[int]:
+        if member_id_order:
+            ordered_ids: list[int] = []
+            seen_ids: set[int] = set()
+            for raw_member_id in list(member_id_order):
+                try:
+                    member_id = int(raw_member_id)
+                except (TypeError, ValueError):
+                    continue
+                if member_id in self._member_lookup and member_id not in seen_ids:
+                    ordered_ids.append(member_id)
+                    seen_ids.add(member_id)
+            for member in self.members:
+                member_id = int(member.id)
+                if member_id not in seen_ids:
+                    ordered_ids.append(member_id)
+                    seen_ids.add(member_id)
+            return ordered_ids
+
+        members_sorted = list(self.members)
+        if _is_random_member_order(self.member_list_order):
+            random.shuffle(members_sorted)
+        else:
+            members_sorted.sort(key=_member_sort_key)
+        return [int(member.id) for member in members_sorted]
+
+    def get_page_members(self, page_index: int | None = None) -> list[discord.Member]:
+        current_page_index = self.page_index if page_index is None else int(page_index)
+        start = max(0, current_page_index) * self.page_size
+        end = start + self.page_size
+        page_member_ids = self.member_id_order[start:end]
+        return [self._member_lookup[member_id] for member_id in page_member_ids if member_id in self._member_lookup]
+
+    def set_selected_member_ids(self, member_ids: list[int]) -> None:
+        selected_lookup: set[int] = set()
+        for raw_member_id in list(member_ids or []):
+            try:
+                member_id = int(raw_member_id)
+            except (TypeError, ValueError):
+                continue
+            if member_id in self._member_lookup:
+                selected_lookup.add(member_id)
+        self.selected_member_ids = [
+            member_id
+            for member_id in self.member_id_order
+            if member_id in selected_lookup
+        ]
+
+    def build_selection_content(self, message: str | None = None) -> str:
+        base_message = message or f"Selected **{len(self.selected_member_ids)}** member(s)."
+        if self.page_count > 1:
+            return f"{base_message} Page **{self.page_index + 1}/{self.page_count}**."
+        return base_message
+
+    def rebuild(
+        self,
+        *,
+        page_index: int | None = None,
+        member_list_order: str | None = None,
+        selected_member_ids: list[int] | None = None,
+        preserve_member_order: bool = True,
+    ):
+        new_member_list_order = self.member_list_order if member_list_order is None else str(member_list_order)
+        order_ids = self.member_id_order if preserve_member_order and new_member_list_order == self.member_list_order else None
+        return RaidBulkAssignGroupView(
+            self.bot,
+            self.raid_id,
+            self.members,
+            self.group_count,
+            member_list_order=new_member_list_order,
+            page_index=(self.page_index if page_index is None else int(page_index)),
+            member_id_order=order_ids,
+            selected_member_ids=(self.selected_member_ids if selected_member_ids is None else list(selected_member_ids)),
+            return_to_group_signup=self.return_to_group_signup,
+            group_signup_can_manage=self.group_signup_can_manage,
+            group_signup_return_to_popup=self.group_signup_return_to_popup,
+            group_signup_popup_can_manage=self.group_signup_popup_can_manage,
+            group_signup_popup_can_rename_thread=self.group_signup_popup_can_rename_thread,
+        )
 
 
 class RaidVoiceChannelSelect(Select):
@@ -2266,15 +2454,27 @@ class DKPAdjustmentView(discord.ui.View):
         self.group_count = group_count
         self.member_list_order = str(member_list_order)
 
-        self.add_item(
-            MemberSelect(
-                bot,
-                action,
-                self.members,
-                member_list_order=self.member_list_order,
-                max_values=min(25, len(self.members)),
+        use_searchable_member_picker = len(self.members) > 25
+
+        if use_searchable_member_picker:
+            self.add_item(
+                MemberUserSelect(
+                    bot,
+                    action,
+                    self.members,
+                    max_values=min(25, len(self.members)),
+                )
             )
-        )
+        else:
+            self.add_item(
+                MemberSelect(
+                    bot,
+                    action,
+                    self.members,
+                    member_list_order=self.member_list_order,
+                    max_values=min(25, len(self.members)),
+                )
+            )
 
         max_groups = 0
         try:
@@ -2304,29 +2504,30 @@ class DKPAdjustmentView(discord.ui.View):
             btn.callback = _group_cb
             self.add_item(btn)
 
-        is_random = _is_random_member_order(self.member_list_order)
-        toggle_btn = discord.ui.Button(
-            label=("Sort A-Z" if is_random else "Shuffle"),
-            style=discord.ButtonStyle.secondary,
-            row=2,
-        )
-
-        async def _toggle_cb(interaction: discord.Interaction):
-            new_order = "name" if is_random else "random"
-            new_view = DKPAdjustmentView(
-                self.bot,
-                self.action,
-                self.members,
-                group_count=self.group_count,
-                member_list_order=new_order,
+        if not use_searchable_member_picker:
+            is_random = _is_random_member_order(self.member_list_order)
+            toggle_btn = discord.ui.Button(
+                label=("Sort A-Z" if is_random else "Shuffle"),
+                style=discord.ButtonStyle.secondary,
+                row=2,
             )
-            try:
-                await interaction.response.edit_message(view=new_view)
-            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-                return
 
-        toggle_btn.callback = _toggle_cb
-        self.add_item(toggle_btn)
+            async def _toggle_cb(interaction: discord.Interaction):
+                new_order = "name" if is_random else "random"
+                new_view = DKPAdjustmentView(
+                    self.bot,
+                    self.action,
+                    self.members,
+                    group_count=self.group_count,
+                    member_list_order=new_order,
+                )
+                try:
+                    await interaction.response.edit_message(view=new_view)
+                except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                    return
+
+            toggle_btn.callback = _toggle_cb
+            self.add_item(toggle_btn)
 
     @discord.ui.button(label="All/Some Raid members", style=discord.ButtonStyle.primary, row=1)
     async def all_in_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3876,6 +4077,62 @@ class RaidPopupDKPMemberSelect(Select):
         await interaction.response.send_modal(modal)
 
 
+class RaidPopupDKPUserSelect(UserSelect):
+    def __init__(self, bot, *, action: str, members: list[discord.Member]):
+        self.bot = bot
+        self.action = str(action)
+        self._allowed_member_ids = {int(m.id) for m in members}
+
+        max_select = max(1, min(len(self._allowed_member_ids), 25))
+        super().__init__(
+            placeholder=f"Select member(s) to {self.action.lower()} DKP...",
+            min_values=1,
+            max_values=max_select,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_members: list[discord.Member] = []
+        if interaction.guild:
+            for selected in list(self.values or []):
+                try:
+                    selected_id = int(selected.id)
+                except (AttributeError, ValueError, TypeError):
+                    continue
+                if selected_id not in self._allowed_member_ids:
+                    continue
+                if isinstance(selected, discord.Member):
+                    selected_members.append(selected)
+                    continue
+                member = interaction.guild.get_member(selected_id)
+                if member is not None:
+                    selected_members.append(member)
+
+        if not selected_members:
+            embed = create_info_embed("DKP Selection", "That member is not an eligible raid member.")
+            view = getattr(self, "view", None)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=embed, view=view)
+                else:
+                    msg = getattr(interaction, "message", None)
+                    if msg is not None:
+                        await msg.edit(embed=embed, view=view)
+            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+                return
+            return
+
+        raid_cog = self.bot.get_cog("RaidCog")
+        modal = DKPAdjustmentModal(
+            action=self.action,
+            raid_cog=raid_cog,
+            members=selected_members,
+            source="raid_popup",
+            popup_message=getattr(interaction, "message", None),
+        )
+        await interaction.response.send_modal(modal)
+
+
 class RaidReverseDKPChoiceView(discord.ui.View):
     def __init__(self, bot, *, source: str = "popup", can_manage: bool = False, can_rename_thread: bool = False, raid_is_active: bool = True):
         super().__init__(timeout=None)
@@ -4004,7 +4261,10 @@ class RaidPopupDKPSelectView(discord.ui.View):
         self.can_manage = bool(can_manage)
         self.can_rename_thread = bool(can_rename_thread)
         self.raid_is_active = bool(raid_is_active)
-        self.add_item(RaidPopupDKPMemberSelect(bot, action=action, members=list(members)))
+        if len(self._allowed_member_ids) > 25:
+            self.add_item(RaidPopupDKPUserSelect(bot, action=action, members=list(members)))
+        else:
+            self.add_item(RaidPopupDKPMemberSelect(bot, action=action, members=list(members)))
 
     @discord.ui.button(label="All/Some Raid members", style=discord.ButtonStyle.primary, custom_id="raid_popup_dkp_all", row=1)
     async def all_members(self, interaction: discord.Interaction, button: discord.ui.Button):

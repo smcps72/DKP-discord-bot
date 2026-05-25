@@ -248,6 +248,30 @@ async def test_raid_popup_dkp_picker_is_limited_to_raid_members():
 
 
 @pytest.mark.asyncio
+async def test_raid_popup_dkp_picker_uses_user_select_for_more_than_25_members():
+    bot = MagicMock()
+    members = []
+    for index in range(30):
+        member = MagicMock(spec=discord.Member)
+        member.id = 1000 + index
+        member.bot = False
+        member.display_name = f"Member {index:02d}"
+        members.append(member)
+
+    view = RaidPopupDKPSelectView(
+        bot=bot,
+        action="Award",
+        members=members,
+        can_manage=True,
+        can_rename_thread=True,
+    )
+
+    picker = next(c for c in view.children if isinstance(c, discord.ui.UserSelect))
+    assert picker.max_values == 25
+    assert getattr(picker, "_allowed_member_ids", set()) == {member.id for member in members}
+
+
+@pytest.mark.asyncio
 async def test_sync_voice_channel_select_resolves_selected_channel_id_to_voice_channel(mock_bot):
     view = RaidSyncVoicePickerView(bot=mock_bot)
     select = next(c for c in view.children if isinstance(c, RaidSyncVoiceChannelSelect))
@@ -303,7 +327,7 @@ from discord_bot.ui.views import RaidControlView, DKPAdjustmentView
 from discord_bot.ui.modals import DKPAdjustmentModal, AuctionStartModal
 from discord_bot.ui.views import RaidOpenPanelView
 from discord_bot.ui.modals import RaidGroupSetupModal
-from discord_bot.ui.views import RaidMemberClearGroupView, RaidMemberAssignGroupView
+from discord_bot.ui.views import RaidMemberClearGroupView, RaidMemberAssignGroupView, RaidBulkAssignGroupView
 
 @pytest.fixture
 def mock_raid_control_interaction(mock_interaction): # Use the existing mock_interaction
@@ -402,6 +426,35 @@ class TestRaidControlView:
         ]
         assert len(new_toggle_btns) == 1
 
+    async def test_dkp_adjustment_view_uses_user_select_for_more_than_25_members(self):
+        bot = MagicMock()
+        members = []
+        for index in range(30):
+            member = MagicMock()
+            member.id = 2000 + index
+            member.bot = False
+            member.display_name = f"Member {index:02d}"
+            members.append(member)
+
+        view = DKPAdjustmentView(
+            bot,
+            action="award",
+            members=members,
+            group_count=2,
+            member_list_order="name",
+        )
+
+        picker = next(c for c in view.children if isinstance(c, discord.ui.UserSelect))
+        assert picker.max_values == 25
+        assert getattr(picker, "_allowed_member_ids", set()) == {member.id for member in members}
+        toggle_labels = {
+            getattr(c, "label", None)
+            for c in view.children
+            if isinstance(c, discord.ui.Button)
+        }
+        assert "Shuffle" not in toggle_labels
+        assert "Sort A-Z" not in toggle_labels
+
     async def test_deduct_dkp_button(self, mock_bot, mock_raid_control_interaction):
         """Tests that the 'Deduct DKP' button shows the DKPAdjustmentView for raid members."""
         # Arrange
@@ -482,6 +535,169 @@ class TestRaidControlView:
         mock_raid_control_interaction.response.edit_message.assert_awaited_once()
         _args, kwargs = mock_raid_control_interaction.response.edit_message.call_args
         assert isinstance(kwargs.get("view"), RaidMemberAssignGroupView)
+
+    async def test_group_signup_modal_set_group_uses_searchable_user_select(self, mock_bot, mock_raid_control_interaction):
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id, "group_count": 3})
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
+        mock_bot.db.get_raid_member_groups = AsyncMock(return_value=[])
+
+        member1 = MagicMock()
+        member1.bot = False
+        member1.id = 1
+        member2 = MagicMock()
+        member2.bot = False
+        member2.id = 2
+        mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member1 if uid == 1 else (member2 if uid == 2 else None)
+
+        mock_raid_control_interaction.response.edit_message = AsyncMock()
+
+        modal_view = RaidGroupSignupModalView(mock_bot, group_count=3, can_manage=True)
+        await modal_view.set_group.callback(mock_raid_control_interaction)
+
+        _args, kwargs = mock_raid_control_interaction.response.edit_message.call_args
+        assign_view = kwargs.get("view")
+        picker = next(c for c in assign_view.children if isinstance(c, discord.ui.UserSelect))
+        assert picker.max_values == 1
+        assert getattr(picker, "_allowed_member_ids", set()) == {1, 2}
+        assert not any(
+            isinstance(c, discord.ui.Select) and not isinstance(c, discord.ui.UserSelect)
+            and getattr(c, "placeholder", None) == "Select a member..."
+            for c in assign_view.children
+        )
+
+    async def test_group_signup_modal_bulk_set_group_keeps_picker(self, mock_bot, mock_raid_control_interaction):
+        mock_bot.db = MagicMock()
+        mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
+        mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id, "group_count": 3})
+        mock_bot.db.get_raid_members = AsyncMock(return_value=[{"user_id": 1}, {"user_id": 2}])
+
+        member1 = MagicMock()
+        member1.bot = False
+        member1.id = 1
+        member1.display_name = "Alpha"
+        member2 = MagicMock()
+        member2.bot = False
+        member2.id = 2
+        member2.display_name = "Bravo"
+        mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member1 if uid == 1 else (member2 if uid == 2 else None)
+
+        mock_raid_control_interaction.response.edit_message = AsyncMock()
+
+        modal_view = RaidGroupSignupModalView(mock_bot, group_count=3, can_manage=True)
+        await modal_view.bulk_set_group.callback(mock_raid_control_interaction)
+
+        _args, kwargs = mock_raid_control_interaction.response.edit_message.call_args
+        bulk_view = kwargs.get("view")
+        assert not any(isinstance(c, discord.ui.UserSelect) for c in bulk_view.children)
+        picker = next(
+            c for c in bulk_view.children
+            if isinstance(c, discord.ui.Select) and getattr(c, "placeholder", None) == "Select members..."
+        )
+        option_values = {option.value for option in picker.options}
+        assert option_values == {"1", "2"}
+
+    async def test_bulk_assign_group_view_paginates_members(self):
+        bot = MagicMock()
+        members = []
+        for index in range(30):
+            member = MagicMock()
+            member.id = 1000 + index
+            member.bot = False
+            member.display_name = f"Member {index:02d}"
+            members.append(member)
+
+        view = RaidBulkAssignGroupView(bot, raid_id=1, members=members, group_count=3, member_list_order="name")
+
+        picker = next(
+            c for c in view.children
+            if isinstance(c, discord.ui.Select) and getattr(c, "placeholder", "").startswith("Select members...")
+        )
+        assert len(picker.options) == 25
+        assert picker.placeholder == "Select members... (Page 1/2)"
+
+        prev_button = next(c for c in view.children if isinstance(c, discord.ui.Button) and getattr(c, "label", None) == "Previous")
+        next_button = next(c for c in view.children if isinstance(c, discord.ui.Button) and getattr(c, "label", None) == "Next")
+        assert prev_button.disabled is True
+        assert next_button.disabled is False
+
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.edit_message = AsyncMock()
+
+        await next_button.callback(interaction)
+
+        interaction.response.edit_message.assert_awaited_once()
+        _args, kwargs = interaction.response.edit_message.call_args
+        new_view = kwargs.get("view")
+        assert isinstance(new_view, RaidBulkAssignGroupView)
+        assert getattr(new_view, "page_index", None) == 1
+
+        new_picker = next(
+            c for c in new_view.children
+            if isinstance(c, discord.ui.Select) and getattr(c, "placeholder", "").startswith("Select members...")
+        )
+        assert len(new_picker.options) == 5
+        assert new_picker.placeholder == "Select members... (Page 2/2)"
+        assert {option.value for option in new_picker.options} == {str(1000 + index) for index in range(25, 30)}
+
+    async def test_bulk_assign_group_view_preserves_selection_across_pages(self):
+        bot = MagicMock()
+        members = []
+        for index in range(30):
+            member = MagicMock()
+            member.id = 2000 + index
+            member.bot = False
+            member.display_name = f"Member {index:02d}"
+            members.append(member)
+
+        view = RaidBulkAssignGroupView(bot, raid_id=1, members=members, group_count=3, member_list_order="name")
+        picker = next(
+            c for c in view.children
+            if isinstance(c, discord.ui.Select) and getattr(c, "placeholder", "").startswith("Select members...")
+        )
+
+        interaction_select_page_1 = MagicMock()
+        interaction_select_page_1.response = MagicMock()
+        interaction_select_page_1.response.edit_message = AsyncMock()
+
+        with patch.object(type(picker), "values", new_callable=PropertyMock, return_value=["2000", "2001"]):
+            await picker.callback(interaction_select_page_1)
+
+        _args, kwargs = interaction_select_page_1.response.edit_message.call_args
+        page_one_selected_view = kwargs.get("view")
+        assert getattr(page_one_selected_view, "selected_member_ids", None) == [2000, 2001]
+
+        next_button = next(
+            c for c in page_one_selected_view.children
+            if isinstance(c, discord.ui.Button) and getattr(c, "label", None) == "Next"
+        )
+        interaction_next = MagicMock()
+        interaction_next.response = MagicMock()
+        interaction_next.response.edit_message = AsyncMock()
+
+        await next_button.callback(interaction_next)
+
+        _args, kwargs = interaction_next.response.edit_message.call_args
+        page_two_view = kwargs.get("view")
+        assert getattr(page_two_view, "selected_member_ids", None) == [2000, 2001]
+
+        page_two_picker = next(
+            c for c in page_two_view.children
+            if isinstance(c, discord.ui.Select) and getattr(c, "placeholder", "").startswith("Select members...")
+        )
+        interaction_select_page_2 = MagicMock()
+        interaction_select_page_2.response = MagicMock()
+        interaction_select_page_2.response.edit_message = AsyncMock()
+
+        with patch.object(type(page_two_picker), "values", new_callable=PropertyMock, return_value=["2025"]):
+            await page_two_picker.callback(interaction_select_page_2)
+
+        _args, kwargs = interaction_select_page_2.response.edit_message.call_args
+        combined_view = kwargs.get("view")
+        assert getattr(combined_view, "selected_member_ids", None) == [2000, 2001, 2025]
+        assert kwargs.get("content") == "Selected **3** member(s). Now pick a group or continue selecting. Page **2/2**."
 
     async def test_start_auction_button(self, mock_bot, mock_raid_control_interaction):
         """Tests that the 'Start Auction' button opens the item-name modal when preconditions are met."""
