@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from ..ui.views import WelcomeView, GuildBankPanelView, AuctionControlPanelView
+from ..ui.views import WelcomeView, GuildBankPanelView, AuctionControlPanelView, DkpSystemCombinedView
 from ..utils import create_info_embed, is_admin
 import logging
 
@@ -10,7 +10,7 @@ class SetupCog(commands.Cog):
         self.bot = bot
 
     async def _ensure_auction_channels(self, guild: discord.Guild, config, archive_category, dkp_channel) -> bool:
-        """Ensure completed-auctions channel and auction panel message exist."""
+        """Ensure completed-auctions, active-auctions channels and auction panel message exist."""
         changed = False
 
         def _is_category_channel(ch) -> bool:
@@ -47,6 +47,38 @@ class SetupCog(commands.Cog):
                 )
                 changed = True
 
+        active_auctions_channel_id = _cfg("active_auctions_channel_id")
+        active_auctions_channel = guild.get_channel(active_auctions_channel_id) if active_auctions_channel_id else None
+        if not _is_text_channel(active_auctions_channel):
+            active_auctions_channel = None
+            raids_category = None
+            dkp_category_id = _cfg("dkp_category_id")
+            if dkp_category_id:
+                raids_category = guild.get_channel(dkp_category_id)
+                if not _is_category_channel(raids_category):
+                    raids_category = None
+            if raids_category is None:
+                for cat in guild.categories:
+                    if (cat.name or "").lower() == "dkp-active-raids":
+                        raids_category = cat
+                        break
+            if _is_category_channel(raids_category):
+                for ch in raids_category.text_channels:
+                    if (ch.name or "").lower() == "active-auctions":
+                        active_auctions_channel = ch
+                        break
+                if not _is_text_channel(active_auctions_channel):
+                    active_auctions_channel = await raids_category.create_text_channel("active-auctions")
+                    changed = True
+
+        if _is_text_channel(active_auctions_channel):
+            if _cfg("active_auctions_channel_id") != active_auctions_channel.id:
+                await self.bot.db.execute(
+                    "UPDATE guilds SET active_auctions_channel_id = ? WHERE guild_id = ?",
+                    (active_auctions_channel.id, guild.id),
+                )
+                changed = True
+
         if _is_text_channel(dkp_channel):
             auction_panel_message_id = _cfg("auction_panel_message_id")
             existing_msg = None
@@ -56,21 +88,26 @@ class SetupCog(commands.Cog):
                 except Exception:
                     existing_msg = None
             if existing_msg is None:
-                embed = create_info_embed(
-                    "💎 Community Auctions",
-                    "Click the button below to open the Auction Panel. "
-                    "Officers can start and end auctions; all guild members can place bids.",
+                dkp_embed = create_info_embed(
+                    "Welcome to the DKP Bot!",
+                    "Manage DKP, raids, and roster actions.\n"
+                    "Click **Open DKP Panel** for all guild actions.",
                 )
-                view = AuctionControlPanelView(self.bot)
+                auction_embed = create_info_embed(
+                    "💎 Community Auctions",
+                    "Officers can start and end auctions; all members can bid.\n"
+                    "Click **Open Auction Panel 💎** to participate.",
+                )
+                view = DkpSystemCombinedView(self.bot)
                 try:
-                    auction_msg = await dkp_channel.send(embed=embed, view=view)
+                    panel_msg = await dkp_channel.send(embeds=[dkp_embed, auction_embed], view=view)
                     await self.bot.db.execute(
                         "UPDATE guilds SET auction_panel_message_id = ? WHERE guild_id = ?",
-                        (auction_msg.id, guild.id),
+                        (panel_msg.id, guild.id),
                     )
                     changed = True
                 except Exception:
-                    logging.exception("Failed to send auction panel message")
+                    logging.exception("Failed to send combined DKP+Auction panel message")
 
         return changed
 
@@ -511,16 +548,21 @@ class SetupCog(commands.Cog):
             # Create text channels
             dkp_channel = None
             raid_channel = None
+            active_auctions_channel = None
             for channel in category.text_channels:
                 if (channel.name or "").lower() == "dkp-system":
                     dkp_channel = channel
                 elif (channel.name or "").lower() == "active-raids":
                     raid_channel = channel
+                elif (channel.name or "").lower() == "active-auctions":
+                    active_auctions_channel = channel
 
             if dkp_channel is None:
                 dkp_channel = await category.create_text_channel("dkp-system")
             if raid_channel is None:
                 raid_channel = await category.create_text_channel("active-raids")
+            if active_auctions_channel is None:
+                active_auctions_channel = await category.create_text_channel("active-auctions")
 
             archive_category = None
             for ch in guild.categories:
@@ -625,7 +667,7 @@ class SetupCog(commands.Cog):
 
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, completed_auctions_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, guild_bank_category_id, guild_bank_channel_id, guild_bank_inventory_channel_id, guild_bank_transactions_channel_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, completed_auctions_channel_id, active_auctions_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, guild_bank_category_id, guild_bank_channel_id, guild_bank_inventory_channel_id, guild_bank_transactions_channel_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     guild.id,
                     category.id,
@@ -634,6 +676,7 @@ class SetupCog(commands.Cog):
                     raid_channel.id,
                     completed_raid_channel.id,
                     completed_auctions_channel.id,
+                    active_auctions_channel.id,
                     vc_template_id,
                     admin_role.id,
                     officer_role.id,
@@ -646,31 +689,24 @@ class SetupCog(commands.Cog):
                     self.bot.license_key,
                 )
             )
-            # Send welcome panel
-            embed = create_info_embed(
+            # Send combined DKP + Auction panel (two embeds side by side, two buttons)
+            dkp_embed = create_info_embed(
                 "Welcome to the DKP Bot!",
-                "This bot helps you manage your guild's Dragon Kill Points system right here in Discord.\n\n"
-                "**Button:**\n"
-                "\t **Open DKP Panel:** Opens a private (ephemeral) control panel with the actions you have access to."
+                "Manage DKP, raids, and roster actions.\n"
+                "Click **Open DKP Panel** for all guild actions.",
             )
-            view = WelcomeView(self.bot)
-            message = await dkp_channel.send(embed=embed, view=view)
-            await message.pin()
-
             auction_embed = create_info_embed(
                 "💎 Community Auctions",
-                "Click the button below to open the Auction Panel. "
-                "Officers can start and end auctions; all guild members can place bids.",
+                "Officers can start and end auctions; all members can bid.\n"
+                "Click **Open Auction Panel 💎** to participate.",
             )
-            auction_view = AuctionControlPanelView(self.bot)
-            try:
-                auction_msg = await dkp_channel.send(embed=auction_embed, view=auction_view)
-                await self.bot.db.execute(
-                    "UPDATE guilds SET auction_panel_message_id = ? WHERE guild_id = ?",
-                    (auction_msg.id, guild.id),
-                )
-            except Exception:
-                logging.exception("Failed to send auction panel message during setup")
+            combined_view = DkpSystemCombinedView(self.bot)
+            message = await dkp_channel.send(embeds=[dkp_embed, auction_embed], view=combined_view)
+            await message.pin()
+            await self.bot.db.execute(
+                "UPDATE guilds SET auction_panel_message_id = ? WHERE guild_id = ?",
+                (message.id, guild.id),
+            )
 
             await self._ensure_guild_bank_panel_message(
                 guild_bank_channel,

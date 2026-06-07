@@ -166,6 +166,10 @@ class Database:
                 "auction_panel_message_id",
                 "ALTER TABLE guilds ADD COLUMN auction_panel_message_id INTEGER",
             ),
+            (
+                "active_auctions_channel_id",
+                "ALTER TABLE guilds ADD COLUMN active_auctions_channel_id INTEGER",
+            ),
         ]
 
         for col, sql in migrations:
@@ -258,6 +262,10 @@ class Database:
             (
                 "ended_at",
                 "ALTER TABLE auctions ADD COLUMN ended_at TIMESTAMP",
+            ),
+            (
+                "thread_id",
+                "ALTER TABLE auctions ADD COLUMN thread_id INTEGER",
             ),
         ]
 

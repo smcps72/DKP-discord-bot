@@ -3,10 +3,11 @@ import logging
 import uuid
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from ..ui.views import AuctionBidView, AuctionOpenPanelView, RaidPopupView
-from ..utils import create_info_embed, create_error_embed, create_success_embed, send_dkp_change_dm
+from ..utils import create_info_embed, create_error_embed, create_success_embed, send_dkp_change_dm, is_admin
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,49 @@ class AuctionCog(commands.Cog):
                 (resolved_guild_id, item_name),
             )
             self._log_step(interaction, trace_id, "auction_start.created_standalone", auction_id=auction_id, guild_id=resolved_guild_id)
+
+            guild_config = await self.bot.db.get_guild_config(resolved_guild_id)
+            active_auctions_channel = None
+            if guild_config:
+                try:
+                    ch_id = guild_config["active_auctions_channel_id"]
+                except (KeyError, TypeError):
+                    ch_id = None
+                if ch_id and interaction.guild:
+                    active_auctions_channel = interaction.guild.get_channel(int(ch_id))
+
+            if active_auctions_channel is not None:
+                try:
+                    announce_msg = await active_auctions_channel.send(
+                        f"💎 **Auction opened: {item_name}** — Bids are sealed until the auction closes."
+                    )
+                    thread = await announce_msg.create_thread(name=f"💎 {item_name}")
+                    bid_embed = create_info_embed(
+                        f"💎 Auction: {item_name}",
+                        "Bidding is now open!\n\n"
+                        "Click **Open Bid Panel** below to place your secret bid.",
+                    )
+                    panel_view = AuctionOpenPanelView(self.bot)
+                    panel_msg = await thread.send(embed=bid_embed, view=panel_view)
+                    self._log_step(interaction, trace_id, "auction_start.thread_created", auction_id=auction_id, thread_id=thread.id)
+                    await self.bot.db.execute(
+                        "UPDATE auctions SET message_id = ?, thread_id = ? WHERE id = ?",
+                        (panel_msg.id, thread.id, auction_id),
+                    )
+                    await interaction.followup.send(
+                        embed=create_success_embed(
+                            "Auction Started",
+                            f"Auction for **{item_name}** is now open in {thread.mention}!",
+                        ),
+                        ephemeral=True,
+                    )
+                except Exception:
+                    logging.exception("Failed to create auction thread in active-auctions")
+                    await interaction.followup.send(
+                        embed=create_error_embed("Error", "Could not create the auction thread. Check my permissions."),
+                        ephemeral=True,
+                    )
+                return
         else:
             channel = getattr(interaction, "channel", None)
             raid = await self.bot.db.get_raid_by_thread(channel.id) if channel else None
@@ -421,6 +465,20 @@ class AuctionCog(commands.Cog):
             self._log_step(interaction, trace_id, "end_auction.no_active_auction")
             return await send_error("There is no active auction to end.")
 
+        auction_thread = None
+        try:
+            thread_id = auction["thread_id"]
+        except (KeyError, TypeError):
+            thread_id = None
+        if thread_id and interaction.guild:
+            try:
+                auction_thread = interaction.guild.get_channel_or_thread(int(thread_id))
+                if auction_thread is None:
+                    auction_thread = await interaction.guild.fetch_channel(int(thread_id))
+            except Exception:
+                auction_thread = None
+        post_channel = auction_thread if auction_thread is not None else channel
+
         rows_affected = await self.bot.db.execute_rowcount(
             "UPDATE auctions SET is_active = 0, ended_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1",
             (auction['id'],),
@@ -437,9 +495,14 @@ class AuctionCog(commands.Cog):
         if not bids:
             self._log_step(interaction, trace_id, "end_auction.no_bids", auction_id=auction["id"])
             no_bids_msg = f"The auction for **{auction['item_name']}** has ended with no bids."
-            if channel is not None:
+            if post_channel is not None:
                 try:
-                    await channel.send(embed=create_info_embed("Auction Ended", no_bids_msg))
+                    await post_channel.send(embed=create_info_embed("Auction Ended", no_bids_msg))
+                except Exception:
+                    pass
+            if auction_thread is not None:
+                try:
+                    await auction_thread.edit(archived=True, locked=True)
                 except Exception:
                     pass
             if source in ("raid_popup",):
@@ -495,9 +558,14 @@ class AuctionCog(commands.Cog):
             f"Auction Concluded: {auction['item_name']}",
             f"Congratulations to {winner_name} for winning with a bid of **{winning_amount} DKP**!",
         )
-        if channel is not None:
+        if post_channel is not None:
             try:
-                await channel.send(embed=result_embed)
+                await post_channel.send(embed=result_embed)
+            except Exception:
+                pass
+        if auction_thread is not None:
+            try:
+                await auction_thread.edit(archived=True, locked=True)
             except Exception:
                 pass
         self._log_step(interaction, trace_id, "end_auction.completed", auction_id=auction["id"])
@@ -523,6 +591,59 @@ class AuctionCog(commands.Cog):
             await self._post_completed_auction_archive(
                 guild, dict(auction), winner_name, winning_amount, len(bids)
             )
+
+
+    @app_commands.command(name="cancel_auction", description="Force-cancel the active auction without awarding DKP. Admins only.")
+    @app_commands.check(is_admin)
+    async def cancel_auction_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.NotFound, discord.HTTPException):
+            return
+
+        guild_id = interaction.guild.id
+        auction = await self.bot.db.get_active_guild_auction(guild_id)
+        if not auction:
+            return await interaction.followup.send(
+                embed=create_error_embed("No Active Auction", "There is no active auction to cancel."),
+                ephemeral=True,
+            )
+
+        await self.bot.db.execute(
+            "UPDATE auctions SET is_active = 0, ended_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1",
+            (auction["id"],),
+        )
+
+        thread_id = None
+        try:
+            thread_id = auction["thread_id"]
+        except (KeyError, TypeError):
+            pass
+        if thread_id:
+            try:
+                thread = interaction.guild.get_channel_or_thread(int(thread_id))
+                if thread is None:
+                    thread = await interaction.guild.fetch_channel(int(thread_id))
+                if thread is not None:
+                    await thread.send(
+                        embed=create_info_embed(
+                            "Auction Cancelled",
+                            f"The auction for **{auction['item_name']}** was cancelled by an admin. No DKP was deducted.",
+                        )
+                    )
+                    await thread.edit(archived=True, locked=True)
+            except Exception:
+                logging.exception("Failed to notify/archive auction thread during cancel")
+
+        await interaction.followup.send(
+            embed=create_success_embed(
+                "Auction Cancelled",
+                f"Auction for **{auction['item_name']}** has been cancelled. No DKP was deducted.",
+            ),
+            ephemeral=True,
+        )
 
 
 async def setup(bot):

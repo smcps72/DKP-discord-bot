@@ -624,15 +624,6 @@ class WelcomeLegacyView(discord.ui.View):
         else:
             await interaction.followup.send("User module is currently offline.", ephemeral=True)
 
-    @discord.ui.button(label="Auction Help ❓", style=discord.ButtonStyle.primary, custom_id="welcome_auction_help")
-    async def auction_help(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        user_cog = self.bot.get_cog("UserCog")
-        if user_cog:
-            await user_cog.show_auction_help(interaction)
-        else:
-            await interaction.followup.send("User module is currently offline.", ephemeral=True)
-
     @discord.ui.button(label="Bot Status 📈", style=discord.ButtonStyle.secondary, custom_id="welcome_bot_status")
     async def bot_status(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
@@ -2663,27 +2654,6 @@ class DkpPanelView(discord.ui.View):
         except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
             return
 
-    @discord.ui.button(label="Auction Help ❓", style=discord.ButtonStyle.primary, custom_id="dkp_panel_auction_help")
-    async def auction_help(self, interaction: discord.Interaction, button: discord.ui.Button):
-        help_text = (
-            "1. **Starting:** The Raid Leader starts an auction for an item.\n"
-            "2. **Bidding:** You will receive a private message (or a hidden message in the raid thread) to bid.\n"
-            "3. **Placing Bids:** Click 'Bid', enter your amount, and submit. You must have enough DKP.\n"
-            "4. **Outbidding:** If someone bids higher, you'll be notified (if your DMs are open).\n"
-            "5. **Winning:** The Raid Leader ends the auction. The highest bidder wins and the DKP is automatically deducted."
-        )
-        embed = create_info_embed("❓ Auction Help", help_text)
-        view = DkpPanelDetailView(self.bot, admin_ok=self.admin_ok, officer_ok=self.officer_ok)
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.edit_message(embed=embed, view=view)
-            else:
-                msg = getattr(interaction, "message", None)
-                if msg is not None:
-                    await msg.edit(embed=embed, view=view)
-        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-            return
-
     @discord.ui.button(label="Bot Status 📈", style=discord.ButtonStyle.secondary, custom_id="dkp_panel_bot_status")
     async def bot_status(self, interaction: discord.Interaction, button: discord.ui.Button):
         admin_cog = self.bot.get_cog("AdminCog")
@@ -2981,7 +2951,7 @@ class RaidPopupView(discord.ui.View):
         self.can_rename_thread = bool(can_rename_thread)
         self.raid_is_active = bool(raid_is_active)
 
-        hide_ids: set[str] = set()
+        hide_ids: set[str] = {"raid_popup_start_auction", "raid_popup_end_auction"}
 
         if self.mode != "main":
             hide_ids |= {
@@ -3216,11 +3186,9 @@ class RaidPopupView(discord.ui.View):
                 "**Raid Points** (leader/admin): View raid points for this raid (scoped/sorted).",
                 "**Add Raid Manager** (leader/admin): Assigns another player raid manager permissions so they can manage DKP, auctions, and roster for this raid.",
                 "**Reverse Raid DKP** (leader/admin): Reverse DKP changes for this raid.",
-                "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Sync Voice** or have people **Join Raid** first).",
-                "**End Auction** (leader/admin): Ends the current auction for this raid.",
                 "**Close Raid** (leader/admin): Closes out the raid when finished.",
                 "",
-                "**🔄 Sync Voice** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes/auctions.",
+                "**🔄 Sync Voice** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes.",
                 "**🔁 Add Voice Channel** (leader/admin): Links an additional voice channel and syncs the raid roster. Use if people are in a different channel.",
                 "**🎙️ Voice Roster**: Shows who is currently in the raid voice channels.",
                 "**Remove Raider** (leader/admin): Removes a member from the raid roster.",
@@ -5693,11 +5661,9 @@ class RaidControlView(discord.ui.View):
                 "**Reverse Raid DKP** (leader/admin): Reverse DKP changes for this raid.",
                 "**Stop Timed DKP** (leader/admin): Stops Timed DKP if it is currently running for this raid.",
                 "**Set group** (leader/admin): Assign a raid member to a group (or ungroup them).",
-                "**Start Auction 💎** (leader/admin): Opens the auction start form. Requires at least one raid member (use **Sync Voice** or have people **Join Raid** first).",
-                "**End Auction** (leader/admin): Ends the current auction for this raid.",
                 "**Close Raid** (leader/admin): Closes out the raid when finished.",
                 "",
-                "**🔄 Sync Voice** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes/auctions.",
+                "**🔄 Sync Voice** (leader/admin): Pulls members from the raid voice channel into the raid member list. This is usually the first step before DKP changes.",
                 "**🔁 Add Voice Channel** (leader/admin): Links an additional voice channel and syncs the raid roster. Use if people are in a different channel.",
                 "**🎙️ Voice Roster**: Shows who is currently in the raid voice channels.",
                 "**Remove Raider** (leader/admin): Removes a member from the raid roster.",
@@ -6681,7 +6647,7 @@ class AuctionManagePanelView(discord.ui.View):
         if not can_manage:
             hide_ids |= {"auction_manage_start", "auction_manage_end"}
         if not has_active:
-            hide_ids |= {"auction_manage_end", "auction_manage_bid"}
+            hide_ids.add("auction_manage_end")
 
         if hide_ids:
             to_remove = [
@@ -6769,47 +6735,102 @@ class AuctionManagePanelView(discord.ui.View):
         await auction_cog.end_auction_from_button(interaction, source="auction_panel", guild_id=guild_id)
 
     @discord.ui.button(
-        label="Open Bid Panel 💰",
+        label="Auction Help ❓",
         style=discord.ButtonStyle.secondary,
-        custom_id="auction_manage_bid",
+        custom_id="auction_manage_help",
         row=1,
     )
-    async def bid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await ensure_allowed_guild(interaction):
+    async def auction_help_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        help_text = (
+            "1. **Starting:** An officer starts an auction for an item from the Auction Panel.\n"
+            "2. **Bidding:** All guild members can go to the auction thread in **#active-auctions** to place a secret bid.\n"
+            "3. **Placing Bids:** Click **Bid**, enter your DKP amount, and submit. You must have enough DKP; only your first bid counts.\n"
+            "4. **Sealed Bids:** No one can see others' bids until the auction closes.\n"
+            "5. **Winning:** An officer ends the auction. The highest bidder wins and the DKP is automatically deducted."
+        )
+        embed = create_info_embed("❓ Auction Help", help_text)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.HTTPException:
+            pass
+
+
+class DkpSystemCombinedView(discord.ui.View):
+    """Persistent combined panel for dkp-system channel. Both buttons sit side-by-side on the same row."""
+
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await ensure_allowed_guild(interaction)
+
+    @discord.ui.button(
+        label="Open DKP Panel",
+        style=discord.ButtonStyle.primary,
+        custom_id="dkp_system_combined_open_panel",
+        row=0,
+    )
+    async def open_dkp_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
+            pass
+        if not isinstance(interaction.user, discord.Member):
+            try:
+                return await interaction.followup.send("This panel can only be used in a server.", ephemeral=True)
+            except discord.HTTPException:
+                return
+        admin_ok = await is_admin(interaction)
+        officer_ok = await is_officer(interaction)
+        embed = create_info_embed(
+            f"DKP Panel for {interaction.user.display_name}",
+            "Use the buttons below to access DKP bot features. This panel is only visible to you.",
+        )
+        view = DkpPanelView(self.bot, admin_ok=admin_ok, officer_ok=officer_ok)
+        try:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
             return
+
+    @discord.ui.button(
+        label="Open Auction Panel 💎",
+        style=discord.ButtonStyle.primary,
+        custom_id="dkp_system_combined_open_auction",
+        row=0,
+    )
+    async def open_auction_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except discord.HTTPException:
+                pass
         if interaction.guild is None:
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("Must be used in a server.", ephemeral=True)
-                else:
-                    await interaction.followup.send("Must be used in a server.", ephemeral=True)
-            except discord.HTTPException:
-                pass
-            return
-
-        active = await self.bot.db.get_active_guild_auction(interaction.guild.id)
-        if not active:
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("There is no active auction right now.", ephemeral=True)
-                else:
-                    await interaction.followup.send("There is no active auction right now.", ephemeral=True)
-            except discord.HTTPException:
-                pass
-            return
-
-        auction_cog = self.bot.get_cog("AuctionCog")
-        if not auction_cog:
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("Auction module is currently offline.", ephemeral=True)
-                else:
-                    await interaction.followup.send("Auction module is currently offline.", ephemeral=True)
-            except discord.HTTPException:
-                pass
-            return
-
-        await auction_cog.send_bid_panel(interaction, active['id'])
+            return await interaction.followup.send("This button can only be used in a server.", ephemeral=True)
+        guild_id = interaction.guild.id
+        officer_ok = await is_officer(interaction)
+        admin_ok = await is_admin(interaction)
+        can_manage = officer_ok or admin_ok
+        active_auction = await self.bot.db.get_active_guild_auction(guild_id)
+        has_active = active_auction is not None
+        if has_active:
+            desc = (
+                f"**Current Auction:** {active_auction['item_name']}\n"
+                "Bids are **sealed** until the auction closes — no one can see others' bids.\n\n"
+                "Go to the auction thread in **#active-auctions** to place your bid."
+            )
+            embed = create_info_embed("💎 Auction In Progress", desc)
+        else:
+            desc = "No auction is currently active."
+            if can_manage:
+                desc += "\n\nClick **Start Auction 💎** to begin one."
+            embed = create_info_embed("💎 Auction Panel", desc)
+        view = AuctionManagePanelView(self.bot, can_manage=can_manage, has_active=has_active)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 class AuctionControlPanelView(discord.ui.View):
@@ -6849,7 +6870,7 @@ class AuctionControlPanelView(discord.ui.View):
             desc = (
                 f"**Current Auction:** {active_auction['item_name']}\n"
                 "Bids are **sealed** until the auction closes — no one can see others' bids.\n\n"
-                "Click **Open Bid Panel 💰** to place your secret bid."
+                "Go to the auction thread in **#active-auctions** to place your bid."
             )
             embed = create_info_embed("💎 Auction In Progress", desc)
         else:
