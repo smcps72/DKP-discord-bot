@@ -1643,6 +1643,13 @@ class Database:
             (int(item_id), int(guild_id)),
         )
 
+    async def guild_bank_find_by_name(self, guild_id: int, item_name: str):
+        """Find a guild bank item by name (case-insensitive). Returns first match with quantity > 0."""
+        return await self.fetchone(
+            "SELECT * FROM guild_bank_items WHERE guild_id = ? AND LOWER(item_name) = LOWER(?) AND quantity > 0 ORDER BY quantity DESC, id ASC",
+            (int(guild_id), item_name),
+        )
+
     async def guild_bank_get_transactions(self, guild_id: int, limit: int = 25):
         limit = max(1, min(int(limit), 100))
         return await self.fetchall(

@@ -410,6 +410,19 @@ class AuctionCog(commands.Cog):
         except Exception:
             logging.exception("Failed to post completed auction to archive")
 
+        if winning_amount > 0:
+            try:
+                bank_cog = self.bot.get_cog("GuildBankCog")
+                if bank_cog is not None:
+                    await bank_cog.auction_auto_withdraw(
+                        guild,
+                        item_name=auction["item_name"],
+                        winner_name=winner_name,
+                        winning_amount=winning_amount,
+                    )
+            except Exception:
+                logging.exception("Failed to auto-withdraw auction item from guild bank")
+
     async def end_auction_from_button(
         self,
         interaction: discord.Interaction,

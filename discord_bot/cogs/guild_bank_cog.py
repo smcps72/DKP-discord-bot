@@ -680,6 +680,74 @@ class GuildBankCog(commands.Cog):
         except Exception:
             logging.exception("Failed to send guild bank transaction notification")
 
+    async def auction_auto_withdraw(
+        self,
+        guild: discord.Guild,
+        item_name: str,
+        winner_name: str,
+        winning_amount: int,
+    ) -> bool:
+        """Called when an auction ends with a winner. Withdraws 1 of the item from the guild bank
+        (case-insensitive name match), posts the transaction, and refreshes the bank panel.
+        Returns True if an item was found and withdrawn, False otherwise."""
+        try:
+            item = await self.bot.db.guild_bank_find_by_name(guild.id, item_name)
+        except Exception:
+            logging.exception("auction_auto_withdraw: DB lookup failed for item=%s", item_name)
+            return False
+
+        if not item:
+            logging.info(
+                "auction_auto_withdraw: item %r not found in guild bank %s, skipping",
+                item_name,
+                guild.id,
+            )
+            return False
+
+        if self.bot.user is None:
+            logging.warning("auction_auto_withdraw: bot.user is None, cannot record actor")
+            return False
+        bot_id = self.bot.user.id
+        note = f"Auction won by {winner_name} for {winning_amount} DKP"
+
+        try:
+            success = await self.bot.db.guild_bank_withdraw(
+                guild_id=guild.id,
+                item_id=item["id"],
+                quantity=1,
+                actor_id=bot_id,
+                note=note,
+            )
+        except Exception:
+            logging.exception("auction_auto_withdraw: withdraw failed for item_id=%s", item["id"])
+            return False
+
+        if not success:
+            return False
+
+        try:
+            await self._post_transaction_notification(
+                guild,
+                action="withdraw",
+                item_id=item["id"],
+                item_name=item["item_name"],
+                quantity=1,
+                category=item["category"] or "other",
+                location=item["location"] or "",
+                held_by_user_id=item["held_by_user_id"],
+                actor_id=bot_id,
+                note=note,
+            )
+        except Exception:
+            logging.exception("auction_auto_withdraw: transaction notification failed")
+
+        try:
+            await self._update_bank_panel(guild)
+        except Exception:
+            logging.exception("auction_auto_withdraw: bank panel update failed")
+
+        return True
+
     async def _sync_inventory_channel(self, guild: discord.Guild):
         guild_id = int(guild.id)
         lock = self._inventory_sync_locks.setdefault(guild_id, asyncio.Lock())
