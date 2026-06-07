@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..ui.views import AuctionBidView, AuctionOpenPanelView, RaidPopupView
+from ..ui.views import AuctionBidView, AuctionManagePanelView, AuctionOpenPanelView, RaidPopupView
 from ..utils import create_info_embed, create_error_embed, create_success_embed, send_dkp_change_dm, is_admin
 
 logger = logging.getLogger(__name__)
@@ -148,6 +148,19 @@ class AuctionCog(commands.Cog):
                         embed=create_error_embed("Error", "Could not create the auction thread. Check my permissions."),
                         ephemeral=True,
                     )
+                    return
+                if source == "auction_panel":
+                    panel_desc = (
+                        f"**Current Auction:** {item_name}\n"
+                        "Bids are **sealed** until the auction closes — no one can see others' bids.\n\n"
+                        "Go to the auction thread in **#active-auctions** to place your bid."
+                    )
+                    panel_embed = create_info_embed("💎 Auction In Progress", panel_desc)
+                    panel_view = AuctionManagePanelView(self.bot, can_manage=True, has_active=True)
+                    try:
+                        await interaction.followup.send(embed=panel_embed, view=panel_view, ephemeral=True)
+                    except Exception:
+                        logging.exception("Failed to send auction manage panel followup")
                 return
         else:
             channel = getattr(interaction, "channel", None)
@@ -207,6 +220,18 @@ class AuctionCog(commands.Cog):
 
         if source in ("raid_popup",):
             await respond_popup("Auction started.", title="Start Auction")
+        elif source == "auction_panel":
+            panel_desc = (
+                f"**Current Auction:** {item_name}\n"
+                "Bids are **sealed** until the auction closes — no one can see others' bids.\n\n"
+                "Go to the auction thread in **#active-auctions** to place your bid."
+            )
+            panel_embed = create_info_embed("💎 Auction In Progress", panel_desc)
+            panel_view = AuctionManagePanelView(self.bot, can_manage=True, has_active=True)
+            try:
+                await interaction.followup.send(embed=panel_embed, view=panel_view, ephemeral=True)
+            except Exception:
+                logging.exception("Failed to send auction manage panel followup")
         else:
             try:
                 await interaction.followup.send(
