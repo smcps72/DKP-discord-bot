@@ -13,6 +13,8 @@ from ..utils import (
     can_manage_raid,
     ensure_allowed_guild,
     create_info_embed,
+    create_error_embed,
+    create_success_embed,
 )
 
 
@@ -6664,4 +6666,198 @@ class GuildBankPanelView(discord.ui.View):
             return
 
         await interaction.response.send_modal(GuildBankWithdrawModal(bank_cog))
+
+
+class AuctionManagePanelView(discord.ui.View):
+    """Ephemeral panel shown after clicking 'Open Auction Panel'. Buttons are hidden based on permissions and active auction state."""
+
+    def __init__(self, bot, *, can_manage: bool, has_active: bool):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.can_manage = bool(can_manage)
+        self.has_active = bool(has_active)
+
+        hide_ids: set[str] = set()
+        if not can_manage:
+            hide_ids |= {"auction_manage_start", "auction_manage_end"}
+        if not has_active:
+            hide_ids |= {"auction_manage_end", "auction_manage_bid"}
+
+        if hide_ids:
+            to_remove = [
+                c for c in self.children
+                if isinstance(c, discord.ui.Button) and c.custom_id in hide_ids
+            ]
+            for item in to_remove:
+                self.remove_item(item)
+
+    @discord.ui.button(
+        label="Start Auction 💎",
+        style=discord.ButtonStyle.primary,
+        custom_id="auction_manage_start",
+        row=0,
+    )
+    async def start_auction_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
+        officer_ok = await is_officer(interaction)
+        admin_ok = await is_admin(interaction)
+        if not (officer_ok or admin_ok):
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("You don't have permission to start auctions.", ephemeral=True)
+                else:
+                    await interaction.followup.send("You don't have permission to start auctions.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        auction_cog = self.bot.get_cog("AuctionCog")
+        if not auction_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Auction module is currently offline.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Auction module is currently offline.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        if interaction.guild is None:
+            return
+
+        from .modals import AuctionStartModal as _AuctionStartModal
+        modal = _AuctionStartModal(
+            auction_cog=auction_cog,
+            source="auction_panel",
+            guild_id=interaction.guild.id,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="End Auction ⛔",
+        style=discord.ButtonStyle.danger,
+        custom_id="auction_manage_end",
+        row=0,
+    )
+    async def end_auction_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
+        officer_ok = await is_officer(interaction)
+        admin_ok = await is_admin(interaction)
+        if not (officer_ok or admin_ok):
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("You don't have permission to end auctions.", ephemeral=True)
+                else:
+                    await interaction.followup.send("You don't have permission to end auctions.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except discord.HTTPException:
+                pass
+
+        auction_cog = self.bot.get_cog("AuctionCog")
+        if not auction_cog:
+            return await interaction.followup.send("Auction module is currently offline.", ephemeral=True)
+
+        guild_id = interaction.guild.id if interaction.guild else None
+        await auction_cog.end_auction_from_button(interaction, source="auction_panel", guild_id=guild_id)
+
+    @discord.ui.button(
+        label="Open Bid Panel 💰",
+        style=discord.ButtonStyle.secondary,
+        custom_id="auction_manage_bid",
+        row=1,
+    )
+    async def bid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await ensure_allowed_guild(interaction):
+            return
+        if interaction.guild is None:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Must be used in a server.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Must be used in a server.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        active = await self.bot.db.get_active_guild_auction(interaction.guild.id)
+        if not active:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("There is no active auction right now.", ephemeral=True)
+                else:
+                    await interaction.followup.send("There is no active auction right now.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        auction_cog = self.bot.get_cog("AuctionCog")
+        if not auction_cog:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Auction module is currently offline.", ephemeral=True)
+                else:
+                    await interaction.followup.send("Auction module is currently offline.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+            return
+
+        await auction_cog.send_bid_panel(interaction, active['id'])
+
+
+class AuctionControlPanelView(discord.ui.View):
+    """Persistent panel pinned in the dkp-system channel. Clicking the button opens an ephemeral AuctionManagePanelView."""
+
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await ensure_allowed_guild(interaction)
+
+    @discord.ui.button(
+        label="Open Auction Panel 💎",
+        style=discord.ButtonStyle.primary,
+        custom_id="auction_control_panel_open",
+    )
+    async def open_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except discord.HTTPException:
+                pass
+
+        if interaction.guild is None:
+            return await interaction.followup.send("This button can only be used in a server.", ephemeral=True)
+
+        guild_id = interaction.guild.id
+        officer_ok = await is_officer(interaction)
+        admin_ok = await is_admin(interaction)
+        can_manage = officer_ok or admin_ok
+
+        active_auction = await self.bot.db.get_active_guild_auction(guild_id)
+        has_active = active_auction is not None
+
+        if has_active:
+            desc = (
+                f"**Current Auction:** {active_auction['item_name']}\n"
+                "Bids are **sealed** until the auction closes — no one can see others' bids.\n\n"
+                "Click **Open Bid Panel 💰** to place your secret bid."
+            )
+            embed = create_info_embed("💎 Auction In Progress", desc)
+        else:
+            desc = "No auction is currently active."
+            if can_manage:
+                desc += "\n\nClick **Start Auction 💎** to begin one."
+            embed = create_info_embed("💎 Auction Panel", desc)
+
+        view = AuctionManagePanelView(self.bot, can_manage=can_manage, has_active=has_active)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 

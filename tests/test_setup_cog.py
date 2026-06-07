@@ -93,6 +93,8 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     mock_raid_channel.id = 112
     mock_completed_raid_channel = AsyncMock(spec=discord.TextChannel)
     mock_completed_raid_channel.id = 113
+    mock_completed_auctions_channel = AsyncMock(spec=discord.TextChannel)
+    mock_completed_auctions_channel.id = 117
     mock_bank_panel_channel = AsyncMock(spec=discord.TextChannel)
     mock_bank_panel_channel.id = 114
     mock_bank_inventory_channel = AsyncMock(spec=discord.TextChannel)
@@ -103,7 +105,7 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     # Ensure create_text_channel returns dkp-system + active-raids in active category,
     # and completed-raids in archive category.
     mock_active_category.create_text_channel.side_effect = [mock_dkp_channel, mock_raid_channel]
-    mock_archive_category.create_text_channel.side_effect = [mock_completed_raid_channel]
+    mock_archive_category.create_text_channel.side_effect = [mock_completed_raid_channel, mock_completed_auctions_channel]
     mock_bank_category.create_text_channel.side_effect = [
         mock_bank_panel_channel,
         mock_bank_inventory_channel,
@@ -145,8 +147,9 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     assert active_calls[0][0][0] == expected_dkp_channel_name
     assert active_calls[1][0][0] == expected_raid_channel_name
     archive_calls = mock_archive_category.create_text_channel.call_args_list
-    assert len(archive_calls) == 1
+    assert len(archive_calls) == 2
     assert archive_calls[0][0][0] == expected_completed_channel_name
+    assert archive_calls[1][0][0] == "completed-auctions"
 
     bank_calls = mock_bank_category.create_text_channel.call_args_list
     assert len(bank_calls) == 3
@@ -166,18 +169,18 @@ async def test_run_setup_fresh_guild(setup_cog: SetupCog, mock_bot: MagicMock, m
     assert params[3] == mock_dkp_channel.id
     assert params[4] == mock_raid_channel.id
     assert params[5] == mock_completed_raid_channel.id
-    assert params[6] is None
-    assert params[11] == mock_bank_category.id
-    assert params[12] == mock_bank_panel_channel.id
-    assert params[13] == mock_bank_inventory_channel.id
-    assert params[14] == mock_bank_transactions_channel.id
+    assert params[6] == mock_completed_auctions_channel.id
+    assert params[7] is None
+    assert params[12] == mock_bank_category.id
+    assert params[13] == mock_bank_panel_channel.id
+    assert params[14] == mock_bank_inventory_channel.id
+    assert params[15] == mock_bank_transactions_channel.id
 
-    # 5. Verify welcome message sent to dkp_channel and pinned
-    mock_dkp_channel.send.assert_called_once()
-    args, kwargs = mock_dkp_channel.send.call_args
-    assert "embed" in kwargs
-    assert isinstance(kwargs["view"], WelcomeView)
-
+    # 5. Verify welcome message sent to dkp_channel and pinned, plus auction panel
+    assert mock_dkp_channel.send.call_count == 2
+    welcome_call = mock_dkp_channel.send.call_args_list[0]
+    assert "embed" in welcome_call[1]
+    assert isinstance(welcome_call[1]["view"], WelcomeView)
     mock_dkp_channel.send.return_value.pin.assert_called_once()
 
     # 6. Verify interaction followup

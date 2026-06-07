@@ -615,6 +615,7 @@ class AuctionStartModal(Modal, title="Start New Auction"):
         auction_cog,
         *,
         source: str | None = None,
+        guild_id: int | None = None,
         popup_can_manage: bool = False,
         popup_can_rename_thread: bool = False,
         popup_message: discord.Message | None = None,
@@ -622,6 +623,7 @@ class AuctionStartModal(Modal, title="Start New Auction"):
         super().__init__()
         self.auction_cog = auction_cog
         self.source = source
+        self.guild_id = guild_id
         self.popup_can_manage = bool(popup_can_manage)
         self.popup_can_rename_thread = bool(popup_can_rename_thread)
         self.popup_message = popup_message
@@ -644,6 +646,7 @@ class AuctionStartModal(Modal, title="Start New Auction"):
             interaction,
             item_name,
             source=self.source,
+            guild_id=self.guild_id,
             popup_can_manage=self.popup_can_manage,
             popup_can_rename_thread=self.popup_can_rename_thread,
             popup_message=self.popup_message,

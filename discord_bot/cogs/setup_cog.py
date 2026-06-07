@@ -1,13 +1,78 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from ..ui.views import WelcomeView, GuildBankPanelView
+from ..ui.views import WelcomeView, GuildBankPanelView, AuctionControlPanelView
 from ..utils import create_info_embed, is_admin
 import logging
 
 class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def _ensure_auction_channels(self, guild: discord.Guild, config, archive_category, dkp_channel) -> bool:
+        """Ensure completed-auctions channel and auction panel message exist."""
+        changed = False
+
+        def _is_category_channel(ch) -> bool:
+            return isinstance(ch, discord.CategoryChannel) or (
+                ch is not None and hasattr(ch, "create_text_channel") and hasattr(ch, "text_channels")
+            )
+
+        def _is_text_channel(ch) -> bool:
+            return isinstance(ch, discord.TextChannel) or (ch is not None and hasattr(ch, "send"))
+
+        keys = set(getattr(config, "keys", lambda: [])()) if config else set()
+
+        def _cfg(key: str):
+            return config[key] if config and key in keys else None
+
+        completed_auctions_channel_id = _cfg("completed_auctions_channel_id")
+        completed_auctions_channel = guild.get_channel(completed_auctions_channel_id) if completed_auctions_channel_id else None
+        if not _is_text_channel(completed_auctions_channel):
+            completed_auctions_channel = None
+            if _is_category_channel(archive_category):
+                for ch in archive_category.text_channels:
+                    if (ch.name or "").lower() == "completed-auctions":
+                        completed_auctions_channel = ch
+                        break
+            if not _is_text_channel(completed_auctions_channel) and _is_category_channel(archive_category):
+                completed_auctions_channel = await archive_category.create_text_channel("completed-auctions")
+                changed = True
+
+        if _is_text_channel(completed_auctions_channel):
+            if _cfg("completed_auctions_channel_id") != completed_auctions_channel.id:
+                await self.bot.db.execute(
+                    "UPDATE guilds SET completed_auctions_channel_id = ? WHERE guild_id = ?",
+                    (completed_auctions_channel.id, guild.id),
+                )
+                changed = True
+
+        if _is_text_channel(dkp_channel):
+            auction_panel_message_id = _cfg("auction_panel_message_id")
+            existing_msg = None
+            if auction_panel_message_id:
+                try:
+                    existing_msg = await dkp_channel.fetch_message(auction_panel_message_id)
+                except Exception:
+                    existing_msg = None
+            if existing_msg is None:
+                embed = create_info_embed(
+                    "💎 Community Auctions",
+                    "Click the button below to open the Auction Panel. "
+                    "Officers can start and end auctions; all guild members can place bids.",
+                )
+                view = AuctionControlPanelView(self.bot)
+                try:
+                    auction_msg = await dkp_channel.send(embed=embed, view=view)
+                    await self.bot.db.execute(
+                        "UPDATE guilds SET auction_panel_message_id = ? WHERE guild_id = ?",
+                        (auction_msg.id, guild.id),
+                    )
+                    changed = True
+                except Exception:
+                    logging.exception("Failed to send auction panel message")
+
+        return changed
 
     async def _ensure_guild_bank_channels(
         self,
@@ -367,6 +432,12 @@ class SetupCog(commands.Cog):
                     )
                     changed = True
 
+                dkp_channel_id = config['dkp_channel_id'] if 'dkp_channel_id' in config.keys() else None
+                dkp_channel_obj = guild.get_channel(dkp_channel_id) if dkp_channel_id else None
+                auction_changed = await self._ensure_auction_channels(guild, config, archive_category, dkp_channel_obj)
+                if auction_changed:
+                    changed = True
+
                 (
                     _bank_category,
                     guild_bank_channel,
@@ -477,12 +548,16 @@ class SetupCog(commands.Cog):
                     pass
 
             completed_raid_channel = None
+            completed_auctions_channel = None
             for channel in archive_category.text_channels:
                 if (channel.name or "").lower() == "completed-raids":
                     completed_raid_channel = channel
-                    break
+                elif (channel.name or "").lower() == "completed-auctions":
+                    completed_auctions_channel = channel
             if completed_raid_channel is None:
                 completed_raid_channel = await archive_category.create_text_channel("completed-raids")
+            if completed_auctions_channel is None:
+                completed_auctions_channel = await archive_category.create_text_channel("completed-auctions")
 
             # Explicitly clean up any legacy "Raid-Template" voice channel under this category.
             # Older versions of the bot created a template VC; the current design does not use it.
@@ -550,7 +625,7 @@ class SetupCog(commands.Cog):
 
             # Save to DB
             await self.bot.db.execute(
-                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, guild_bank_category_id, guild_bank_channel_id, guild_bank_inventory_channel_id, guild_bank_transactions_channel_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO guilds (guild_id, dkp_category_id, archive_category_id, dkp_channel_id, raid_channel_id, completed_raid_channel_id, completed_auctions_channel_id, raid_vc_template_id, admin_role_id, officer_role_id, raider_role_id, raid_leader_role_id, guild_bank_category_id, guild_bank_channel_id, guild_bank_inventory_channel_id, guild_bank_transactions_channel_id, license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     guild.id,
                     category.id,
@@ -558,6 +633,7 @@ class SetupCog(commands.Cog):
                     dkp_channel.id,
                     raid_channel.id,
                     completed_raid_channel.id,
+                    completed_auctions_channel.id,
                     vc_template_id,
                     admin_role.id,
                     officer_role.id,
@@ -580,6 +656,21 @@ class SetupCog(commands.Cog):
             view = WelcomeView(self.bot)
             message = await dkp_channel.send(embed=embed, view=view)
             await message.pin()
+
+            auction_embed = create_info_embed(
+                "💎 Community Auctions",
+                "Click the button below to open the Auction Panel. "
+                "Officers can start and end auctions; all guild members can place bids.",
+            )
+            auction_view = AuctionControlPanelView(self.bot)
+            try:
+                auction_msg = await dkp_channel.send(embed=auction_embed, view=auction_view)
+                await self.bot.db.execute(
+                    "UPDATE guilds SET auction_panel_message_id = ? WHERE guild_id = ?",
+                    (auction_msg.id, guild.id),
+                )
+            except Exception:
+                logging.exception("Failed to send auction panel message during setup")
 
             await self._ensure_guild_bank_panel_message(
                 guild_bank_channel,
@@ -720,6 +811,50 @@ class SetupCog(commands.Cog):
             f"Welcome panel refreshed: {getattr(msg, 'jump_url', '')}",
             ephemeral=True,
         )
+
+    @app_commands.command(
+        name="refresh_auction_panel",
+        description="Re-post or repair the Auction Panel message in dkp-system. Admins only.",
+    )
+    @app_commands.check(is_admin)
+    async def refresh_auction_panel(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("This command cannot be used in DMs.", ephemeral=True)
+
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.NotFound, discord.HTTPException):
+            return
+
+        config = await self.bot.db.get_guild_config(interaction.guild.id)
+        dkp_channel_id = config["dkp_channel_id"] if config and "dkp_channel_id" in getattr(config, "keys", lambda: [])() else None
+
+        if not dkp_channel_id:
+            return await interaction.followup.send(
+                "DKP system is not set up yet. Run `/setup_dkp` first.", ephemeral=True
+            )
+
+        channel = interaction.guild.get_channel(int(dkp_channel_id))
+        if channel is None:
+            try:
+                channel = await interaction.guild.fetch_channel(int(dkp_channel_id))
+            except Exception:
+                channel = None
+
+        if channel is None or not hasattr(channel, "send"):
+            return await interaction.followup.send(
+                "Couldn't find the DKP system channel. Try re-running `/setup_dkp`.", ephemeral=True
+            )
+
+        archive_category_id = config["archive_category_id"] if config and "archive_category_id" in getattr(config, "keys", lambda: [])() else None
+        archive_category = interaction.guild.get_channel(archive_category_id) if archive_category_id else None
+
+        auction_changed = await self._ensure_auction_channels(interaction.guild, config, archive_category, channel)
+        await interaction.followup.send(
+            "Auction panel refreshed." if auction_changed else "Auction panel is already up to date.",
+            ephemeral=True,
+        )
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(SetupCog(bot))

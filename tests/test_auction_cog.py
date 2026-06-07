@@ -25,6 +25,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.interaction.guild = MagicMock()
         self.interaction.channel = AsyncMock()
         self.interaction.user = MagicMock()
+        self.interaction.response.is_done = MagicMock(return_value=False)
 
         # Mock voice channel and members
         self.mock_vc = MagicMock()
@@ -57,14 +58,17 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
 
         # Verify interaction response
         self.interaction.response.defer.assert_called_once()
-        self.interaction.followup.send.assert_called_once_with("Auction started.", ephemeral=True)
+        self.interaction.followup.send.assert_called_once()
+        args_start, kwargs_start = self.interaction.followup.send.call_args
+        self.assertIn("Auction Started", kwargs_start['embed'].title)
+        self.assertTrue(kwargs_start['ephemeral'])
 
         # Verify DB calls
         self.bot.db.get_raid_by_thread.assert_called_once_with(self.interaction.channel.id)
         self.bot.db.get_active_auction.assert_called_once_with(1) # raid_id
         self.bot.db.execute_insert.assert_called_once_with(
-            "INSERT INTO auctions (raid_id, item_name) VALUES (?, ?)",
-            (1, item_name),
+            "INSERT INTO auctions (guild_id, raid_id, item_name) VALUES (?, ?, ?)",
+            (67890, 1, item_name),
         )
 
         # Verify a public auction message with an Open Bid Panel view was sent
@@ -99,7 +103,9 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         item_name = "Test Item"
         await self.cog.process_auction_start(self.interaction, item_name)
         self.interaction.response.defer.assert_called_once()
-        self.interaction.followup.send.assert_called_with("Raid voice channel is empty. Cannot start auction.", ephemeral=True)
+        self.interaction.followup.send.assert_called_once()
+        _args_empty, kwargs_empty = self.interaction.followup.send.call_args
+        self.assertIn("No raid participants found", kwargs_empty['embed'].description)
         self.interaction.guild.get_channel.assert_called_once_with(12345)
 
     async def test_process_auction_start_no_dm_required(self):
@@ -205,6 +211,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.bot.db.get_raid_by_thread.return_value = {'id': 1, 'guild_id': guild_id_value}
         auction_data = {'id': 1, 'item_name': 'Shiny Sword', 'is_active': 1}
         self.bot.db.get_active_auction.return_value = auction_data
+        self.bot.db.execute_rowcount = AsyncMock(return_value=1)
 
         # One winning bid recorded for member1
         self.bot.db.fetchall.return_value = [
@@ -220,7 +227,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.bot.db.get_active_auction.assert_called_once_with(1) # raid_id
 
         # Verify auction deactivation
-        self.bot.db.execute.assert_any_call("UPDATE auctions SET is_active = 0 WHERE id = ?", (auction_data['id'],))
+        self.bot.db.execute_rowcount.assert_called_once_with("UPDATE auctions SET is_active = 0, ended_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1", (auction_data['id'],))
 
         # Verify DKP deduction
         self.bot.db.modify_user_dkp.assert_called_once_with(
@@ -243,11 +250,12 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         self.bot.db.get_raid_by_thread.return_value = {'id': 1}
         auction_data_no_bids = {'id': 1, 'item_name': 'Dusty Shield', 'is_active': 1}
         self.bot.db.get_active_auction.return_value = auction_data_no_bids
+        self.bot.db.execute_rowcount = AsyncMock(return_value=1)
         self.bot.db.fetchall.return_value = []
 
         await self.cog.end_auction_from_button(self.interaction)
 
-        self.bot.db.execute.assert_called_once_with("UPDATE auctions SET is_active = 0 WHERE id = ?", (auction_data_no_bids['id'],))
+        self.bot.db.execute_rowcount.assert_called_once_with("UPDATE auctions SET is_active = 0, ended_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1", (auction_data_no_bids['id'],))
         self.bot.db.modify_user_dkp.assert_not_called()  # No DKP change
 
         self.interaction.followup.send.assert_called_once()
@@ -258,19 +266,31 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
 
     async def test_end_auction_from_button_no_raid(self):
         self.bot.db.get_raid_by_thread.return_value = None
-        await self.cog.end_auction_from_button(self.interaction)
-        self.interaction.followup.send.assert_called_once()
-        embed = self.interaction.followup.send.call_args[1]['embed']
-        self.assertIn("This is not a raid thread", embed.description)
-        self.bot.db.get_active_auction.assert_not_called()
-
-    async def test_end_auction_from_button_no_active_auction(self):
-        self.bot.db.get_raid_by_thread.return_value = {'id': 1}
-        self.bot.db.get_active_auction.return_value = None # No active auction
+        self.bot.db.get_active_guild_auction.return_value = None
         await self.cog.end_auction_from_button(self.interaction)
         self.interaction.followup.send.assert_called_once()
         embed = self.interaction.followup.send.call_args[1]['embed']
         self.assertIn("There is no active auction to end", embed.description)
+        self.bot.db.get_active_auction.assert_not_called()
+
+    async def test_end_auction_from_button_no_active_auction(self):
+        self.bot.db.get_raid_by_thread.return_value = {'id': 1}
+        self.bot.db.get_active_auction.return_value = None
+        self.bot.db.get_active_guild_auction.return_value = None
+        await self.cog.end_auction_from_button(self.interaction)
+        self.interaction.followup.send.assert_called_once()
+        embed = self.interaction.followup.send.call_args[1]['embed']
+        self.assertIn("There is no active auction to end", embed.description)
+
+    async def test_end_auction_from_button_race_condition(self):
+        self.bot.db.get_raid_by_thread.return_value = {'id': 1}
+        self.bot.db.get_active_auction.return_value = {'id': 1, 'item_name': 'Contested Gem', 'is_active': 1}
+        self.bot.db.execute_rowcount = AsyncMock(return_value=0)  # Simulate race: already ended
+        await self.cog.end_auction_from_button(self.interaction)
+        self.bot.db.modify_user_dkp.assert_not_called()
+        self.interaction.followup.send.assert_called_once()
+        embed = self.interaction.followup.send.call_args[1]['embed']
+        self.assertIn("just ended by someone else", embed.description)
 
     async def test_end_auction_from_button_winner_not_in_guild(self):
         # This tests the scenario where the winner might have left the server
@@ -280,6 +300,7 @@ class TestAuctionCog(unittest.IsolatedAsyncioTestCase):
         winner_id_left_guild = 999
         auction_data = {'id': 1, 'item_name': 'Vanished Relic', 'is_active': 1}
         self.bot.db.get_active_auction.return_value = auction_data
+        self.bot.db.execute_rowcount = AsyncMock(return_value=1)
 
         # Winner has the only bid but is no longer in the guild
         self.bot.db.fetchall.return_value = [

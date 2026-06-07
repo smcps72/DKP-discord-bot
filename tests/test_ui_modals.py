@@ -165,6 +165,7 @@ class TestAuctionStartModal:
             mock_interaction,
             "Test Item",
             source=None,
+            guild_id=None,
             popup_can_manage=False,
             popup_can_rename_thread=False,
             popup_message=None,

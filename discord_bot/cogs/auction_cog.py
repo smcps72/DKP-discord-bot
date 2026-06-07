@@ -1,10 +1,12 @@
-import discord
-from discord.ext import commands
-import asyncio
+import datetime
 import logging
 import uuid
-from ..utils import create_info_embed, create_error_embed, create_success_embed, send_dkp_change_dm
+
+import discord
+from discord.ext import commands
+
 from ..ui.views import AuctionBidView, AuctionOpenPanelView, RaidPopupView
+from ..utils import create_info_embed, create_error_embed, create_success_embed, send_dkp_change_dm
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,7 @@ class AuctionCog(commands.Cog):
         trace_id: str | None = None,
         *,
         source: str | None = None,
+        guild_id: int | None = None,
         popup_can_manage: bool = False,
         popup_can_rename_thread: bool = False,
         popup_message: discord.Message | None = None,
@@ -55,13 +58,23 @@ class AuctionCog(commands.Cog):
                 can_rename_thread=popup_can_rename_thread,
             )
             try:
-                target_msg = popup_message or getattr(interaction, "message", None)
-                if target_msg is not None:
-                    await target_msg.edit(embed=embed, view=popup_view)
-                    return
                 await interaction.edit_original_response(embed=embed, view=popup_view)
             except Exception:
-                return
+                try:
+                    await interaction.followup.send(embed=embed, view=popup_view, ephemeral=True)
+                except Exception:
+                    pass
+
+        async def send_error(message: str):
+            if source in ("raid_popup",):
+                await respond_popup(message, title="Error")
+            else:
+                try:
+                    await interaction.followup.send(
+                        embed=create_error_embed("Error", message), ephemeral=True
+                    )
+                except Exception:
+                    pass
 
         item_name = (item_name or "").strip()
         if not item_name:
@@ -70,72 +83,68 @@ class AuctionCog(commands.Cog):
             item_name = item_name[:100]
         if trace_id is None:
             trace_id = str(uuid.uuid4())
-        self._log_step(interaction, trace_id, "auction_start.begin", item_name=item_name)
-        if source == "raid_popup":
-            if not interaction.response.is_done():
-                try:
-                    await interaction.response.edit_message(
-                        embed=create_info_embed("Working...", "Starting auction..."),
-                        view=None,
-                    )
-                except Exception:
-                    try:
-                        await interaction.response.defer(ephemeral=False)
-                    except Exception:
-                        pass
-            await respond_popup("Starting auction...", title="Working...")
-        else:
-            await interaction.response.defer()
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        if not raid:
-            self._log_step(interaction, trace_id, "auction_start.raid_missing")
-            if source == "raid_popup":
-                await respond_popup("This is not an active raid thread.", title="Error")
-                return
-            return await interaction.followup.send(embed=create_error_embed("Error", "This is not an active raid thread."), ephemeral=True)
-        active_auction = await self.bot.db.get_active_auction(raid['id'])
-        if active_auction:
-            existing_id = active_auction.get("id") if isinstance(active_auction, dict) else None
-            self._log_step(interaction, trace_id, "auction_start.already_active", auction_id=existing_id, raid_id=raid['id'])
-            if source == "raid_popup":
-                await respond_popup("An auction is already in progress for this raid.", title="Error")
-                return
-            return await interaction.followup.send(embed=create_error_embed("Error", "An auction is already in progress for this raid."), ephemeral=True)
-        # Determine whether there are any eligible raid participants either
-        # currently in the raid voice channel or recorded in the raid_members
-        # table. This allows auctions to proceed even if the VC has been
-        # cleaned up, as long as the raid still has participants.
-        participant_ids: set[int] = set()
+        self._log_step(interaction, trace_id, "auction_start.begin", item_name=item_name, source=source)
 
-        vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
-        for m in getattr(vc, "members", []):
-            if not getattr(m, "bot", False):
-                participant_ids.add(m.id)
-
-        try:
-            member_rows = await self.bot.db.get_raid_members(raid['id'])
-        except Exception:
-            member_rows = []
-
-        for row in member_rows:
+        if not interaction.response.is_done():
             try:
-                uid = int(row["user_id"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            participant_ids.add(uid)
+                await interaction.response.defer(ephemeral=True)
+            except Exception:
+                pass
 
-        if not participant_ids:
-            self._log_step(interaction, trace_id, "auction_start.vc_empty", vc_id=getattr(vc, "id", None))
-            if source == "raid_popup":
-                await respond_popup("Raid voice channel is empty. Cannot start auction.")
-                return
-            return await interaction.followup.send("Raid voice channel is empty. Cannot start auction.", ephemeral=True)
-        # Create auction in DB
-        auction_id = await self.bot.db.execute_insert(
-            "INSERT INTO auctions (raid_id, item_name) VALUES (?, ?)",
-            (raid['id'], item_name),
-        )
-        self._log_step(interaction, trace_id, "auction_start.created", auction_id=auction_id, raid_id=raid['id'])
+        resolved_guild_id = guild_id
+        standalone = resolved_guild_id is not None and source not in ("raid_popup",)
+
+        if standalone:
+            active_auction = await self.bot.db.get_active_guild_auction(resolved_guild_id)
+            if active_auction:
+                self._log_step(interaction, trace_id, "auction_start.already_active", guild_id=resolved_guild_id)
+                return await send_error("An auction is already in progress.")
+
+            auction_id = await self.bot.db.execute_insert(
+                "INSERT INTO auctions (guild_id, item_name) VALUES (?, ?)",
+                (resolved_guild_id, item_name),
+            )
+            self._log_step(interaction, trace_id, "auction_start.created_standalone", auction_id=auction_id, guild_id=resolved_guild_id)
+        else:
+            channel = getattr(interaction, "channel", None)
+            raid = await self.bot.db.get_raid_by_thread(channel.id) if channel else None
+            if not raid:
+                self._log_step(interaction, trace_id, "auction_start.raid_missing")
+                return await send_error("This is not an active raid thread.")
+
+            resolved_guild_id = raid.get("guild_id") if isinstance(raid, dict) else getattr(raid, "guild_id", None)
+
+            active_auction = await self.bot.db.get_active_auction(raid['id'])
+            if active_auction:
+                existing_id = active_auction.get("id") if isinstance(active_auction, dict) else None
+                self._log_step(interaction, trace_id, "auction_start.already_active", auction_id=existing_id, raid_id=raid['id'])
+                return await send_error("An auction is already in progress for this raid.")
+
+            participant_ids: set[int] = set()
+            vc = interaction.guild.get_channel(raid['vc_id']) if interaction.guild else None
+            for m in getattr(vc, "members", []):
+                if not getattr(m, "bot", False):
+                    participant_ids.add(m.id)
+            try:
+                member_rows = await self.bot.db.get_raid_members(raid['id'])
+            except Exception:
+                member_rows = []
+            for row in member_rows:
+                try:
+                    uid = int(row["user_id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                participant_ids.add(uid)
+
+            if not participant_ids:
+                self._log_step(interaction, trace_id, "auction_start.vc_empty")
+                return await send_error("No raid participants found. Cannot start auction.")
+
+            auction_id = await self.bot.db.execute_insert(
+                "INSERT INTO auctions (guild_id, raid_id, item_name) VALUES (?, ?, ?)",
+                (resolved_guild_id, raid['id'], item_name),
+            )
+            self._log_step(interaction, trace_id, "auction_start.created", auction_id=auction_id, raid_id=raid['id'])
 
         embed = create_info_embed(
             f"💎 Auction Started: {item_name}",
@@ -143,47 +152,44 @@ class AuctionCog(commands.Cog):
             "Click **Open Bid Panel** below to get a private (ephemeral) bidding panel."
         )
         panel_view = AuctionOpenPanelView(self.bot)
-        msg = await interaction.channel.send(embed=embed, view=panel_view)
-        self._log_step(interaction, trace_id, "auction_start.panel_sent", message_id=msg.id)
+        channel = getattr(interaction, "channel", None)
+        msg = None
+        if channel is not None:
+            try:
+                msg = await channel.send(embed=embed, view=panel_view)
+                self._log_step(interaction, trace_id, "auction_start.panel_sent", message_id=msg.id)
+            except Exception:
+                logging.exception("Failed to send auction panel message")
 
-        if source == "raid_popup":
+        if source in ("raid_popup",):
             await respond_popup("Auction started.", title="Start Auction")
         else:
-            # Always close out the deferred interaction with an ephemeral confirmation.
             try:
-                await interaction.followup.send("Auction started.", ephemeral=True)
+                await interaction.followup.send(
+                    embed=create_success_embed("Auction Started", f"Auction for **{item_name}** is now open!"),
+                    ephemeral=True,
+                )
             except Exception:
                 logging.exception("Failed to send followup in auction start")
 
-        # Store the message id so future enhancements (like updating the embed)
-        # can locate the canonical auction message.
-        try:
-            await self.bot.db.execute(
-                "UPDATE auctions SET message_id = ? WHERE id = ?",
-                (msg.id, auction_id),
-            )
-        except Exception:
-            logging.exception("Failed to store auction message_id")
-
-        # Re-show raid control panel to the leader/admin so "End Auction" is
-        # easy to reach without scrolling.
-        if source != "raid_popup":
-            raid_cog = self.bot.get_cog("RaidCog")
-            if raid_cog:
-                try:
-                    await raid_cog.maybe_send_control_panel_ephemeral(interaction, raid=raid)
-                except Exception:
-                    logging.exception("Failed to re-show raid control panel after auction start")
+        if msg is not None:
+            try:
+                await self.bot.db.execute(
+                    "UPDATE auctions SET message_id = ? WHERE id = ?",
+                    (msg.id, auction_id),
+                )
+            except Exception:
+                logging.exception("Failed to store auction message_id")
 
     async def send_bid_panel(self, interaction: discord.Interaction, auction_id: int, trace_id: str | None = None):
         if trace_id is None:
             trace_id = str(uuid.uuid4())
         self._log_step(interaction, trace_id, "send_bid_panel.begin", auction_id=auction_id)
-        # Get auction details and the associated guild_id (bids may come from DMs)
+        # LEFT JOIN raids so standalone auctions (raid_id IS NULL) still work.
         auction_details_query = """
-            SELECT a.*, r.guild_id, r.thread_id
+            SELECT a.*, COALESCE(r.guild_id, a.guild_id) AS guild_id, r.thread_id
             FROM auctions a
-            JOIN raids r ON a.raid_id = r.id
+            LEFT JOIN raids r ON a.raid_id = r.id
             WHERE a.id = ? AND a.is_active = 1
         """
         auction = await self.bot.db.fetchone(auction_details_query, (auction_id,))
@@ -233,11 +239,11 @@ class AuctionCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        # Get auction details and the associated guild_id to handle bids from DMs
+        # LEFT JOIN raids so standalone auctions (raid_id IS NULL) still work.
         auction_details_query = """
-            SELECT a.*, r.guild_id, r.thread_id
+            SELECT a.*, COALESCE(r.guild_id, a.guild_id) AS guild_id, r.thread_id
             FROM auctions a
-            JOIN raids r ON a.raid_id = r.id
+            LEFT JOIN raids r ON a.raid_id = r.id
             WHERE a.id = ? AND a.is_active = 1
         """
         auction = await self.bot.db.fetchone(auction_details_query, (auction_id,))
@@ -306,11 +312,66 @@ class AuctionCog(commands.Cog):
             except Exception:
                 logging.exception("Failed to re-show control panel after auction end")
 
+    async def _post_completed_auction_archive(self, guild: discord.Guild, auction: dict, winner_name: str, winning_amount: int, total_bids: int):
+        """Post a result message to the completed-auctions channel and update the pinned index."""
+        try:
+            guild_config = await self.bot.db.get_guild_config(guild.id)
+            if not guild_config:
+                return
+            try:
+                channel_id = guild_config["completed_auctions_channel_id"]
+            except (KeyError, TypeError, IndexError):
+                channel_id = None
+            if not channel_id:
+                return
+            channel = guild.get_channel(channel_id)
+            if channel is None:
+                return
+
+            now = datetime.datetime.now(datetime.timezone.utc)
+            timestamp_str = discord.utils.format_dt(now, style="f")
+
+            result_embed = create_success_embed(
+                f"Auction Completed: {auction['item_name']}",
+                f"**Winner:** {winner_name}\n"
+                f"**Winning Bid:** {winning_amount} DKP\n"
+                f"**Total Bids:** {total_bids}\n"
+                f"**Ended:** {timestamp_str}",
+            )
+            await channel.send(embed=result_embed)
+
+            pinned = await channel.pins()
+            index_msg = None
+            for p in pinned:
+                if guild.me and p.author.id == guild.me.id and p.embeds and "Auction History" in (p.embeds[0].title or ""):
+                    index_msg = p
+                    break
+
+            entry_line = f"`{now.strftime('%Y-%m-%d')}` — **{auction['item_name']}** → {winner_name} ({winning_amount} DKP)"
+
+            if index_msg is not None:
+                existing = index_msg.embeds[0].description or ""
+                lines = [l for l in existing.split("\n") if l.strip()][-19:]
+                lines.append(entry_line)
+                updated_desc = "\n".join(lines)
+                updated_embed = create_info_embed("📜 Auction History", updated_desc)
+                await index_msg.edit(embed=updated_embed)
+            else:
+                index_embed = create_info_embed("📜 Auction History", entry_line)
+                new_index = await channel.send(embed=index_embed)
+                try:
+                    await new_index.pin()
+                except Exception:
+                    pass
+        except Exception:
+            logging.exception("Failed to post completed auction to archive")
+
     async def end_auction_from_button(
         self,
         interaction: discord.Interaction,
         *,
         source: str | None = None,
+        guild_id: int | None = None,
         popup_can_manage: bool = False,
         popup_can_rename_thread: bool = False,
         popup_message: discord.Message | None = None,
@@ -324,34 +385,50 @@ class AuctionCog(commands.Cog):
                 can_rename_thread=popup_can_rename_thread,
             )
             try:
-                target_msg = popup_message or getattr(interaction, "message", None)
-                if target_msg is not None:
-                    await target_msg.edit(embed=embed, view=popup_view)
+                await interaction.edit_original_response(embed=embed, view=popup_view)
             except Exception:
-                return
+                try:
+                    await interaction.followup.send(embed=embed, view=popup_view, ephemeral=True)
+                except Exception:
+                    pass
+
+        async def send_error(message: str):
+            if source in ("raid_popup",):
+                await respond_popup(message, title="Error")
+            else:
+                try:
+                    await interaction.followup.send(
+                        embed=create_error_embed("Error", message), ephemeral=True
+                    )
+                except Exception:
+                    pass
 
         trace_id = str(uuid.uuid4())
-        self._log_step(interaction, trace_id, "end_auction.begin")
-        raid = await self.bot.db.get_raid_by_thread(interaction.channel.id)
-        if not raid:
-            self._log_step(interaction, trace_id, "end_auction.raid_missing")
-            if source == "raid_popup":
-                await respond_popup("This is not a raid thread.", title="Error")
-                return
-            return await interaction.followup.send(embed=create_error_embed("Error", "This is not a raid thread."), ephemeral=True)
+        self._log_step(interaction, trace_id, "end_auction.begin", source=source)
 
-        auction = await self.bot.db.get_active_auction(raid['id'])
+        resolved_guild_id = guild_id or (interaction.guild.id if interaction.guild else None)
+
+        channel = getattr(interaction, "channel", None)
+        auction = None
+        if channel is not None:
+            raid = await self.bot.db.get_raid_by_thread(channel.id)
+            if raid:
+                auction = await self.bot.db.get_active_auction(raid['id'])
+        if auction is None and resolved_guild_id:
+            auction = await self.bot.db.get_active_guild_auction(resolved_guild_id)
+
         if not auction:
-            self._log_step(interaction, trace_id, "end_auction.no_active_auction", raid_id=raid['id'])
-            if source == "raid_popup":
-                await respond_popup("There is no active auction to end.", title="Error")
-                return
-            return await interaction.followup.send(embed=create_error_embed("Error", "There is no active auction to end."), ephemeral=True)
+            self._log_step(interaction, trace_id, "end_auction.no_active_auction")
+            return await send_error("There is no active auction to end.")
 
-        # Deactivate auction
-        await self.bot.db.execute("UPDATE auctions SET is_active = 0 WHERE id = ?", (auction['id'],))
-        # Determine the winner based on recorded bids instead of a mutable
-        # highest_bid field on the auction itself.
+        rows_affected = await self.bot.db.execute_rowcount(
+            "UPDATE auctions SET is_active = 0, ended_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1",
+            (auction['id'],),
+        )
+        if rows_affected == 0:
+            self._log_step(interaction, trace_id, "end_auction.race_lost", auction_id=auction['id'])
+            return await send_error("The auction was just ended by someone else.")
+
         bids = await self.bot.db.fetchall(
             "SELECT user_id, amount, created_at FROM auction_bids WHERE auction_id = ?",
             (auction["id"],),
@@ -359,17 +436,23 @@ class AuctionCog(commands.Cog):
 
         if not bids:
             self._log_step(interaction, trace_id, "end_auction.no_bids", auction_id=auction["id"])
-            embed = create_info_embed(
-                "Auction Ended",
-                f"The auction for **{auction['item_name']}** has ended with no bids.",
-            )
-            if source == "raid_popup":
-                await respond_popup(f"The auction for **{auction['item_name']}** has ended with no bids.", title="Auction Ended")
-                return
-            return await interaction.followup.send(embed=embed)
+            no_bids_msg = f"The auction for **{auction['item_name']}** has ended with no bids."
+            if channel is not None:
+                try:
+                    await channel.send(embed=create_info_embed("Auction Ended", no_bids_msg))
+                except Exception:
+                    pass
+            if source in ("raid_popup",):
+                await respond_popup(no_bids_msg, title="Auction Ended")
+            else:
+                try:
+                    await interaction.followup.send(
+                        embed=create_info_embed("Auction Ended", no_bids_msg), ephemeral=True
+                    )
+                except Exception:
+                    pass
+            return
 
-        # Pick the highest bid; if there is a tie on amount, the earliest
-        # created_at wins.
         bids_sorted = sorted(
             bids,
             key=lambda row: (-int(row["amount"]), row["created_at"]),
@@ -379,44 +462,66 @@ class AuctionCog(commands.Cog):
         winning_amount = int(winning_bid["amount"])
         self._log_step(interaction, trace_id, "end_auction.winner_selected", auction_id=auction["id"], winning_user_id=winning_user_id, winning_amount=winning_amount)
 
-        winner = interaction.guild.get_member(winning_user_id)
+        guild = interaction.guild
+        winner = guild.get_member(winning_user_id) if guild else None
         winner_name = winner.mention if winner else f"User ID: {winning_user_id}"
 
-        # Deduct DKP from the winner.
+        if resolved_guild_id is None and guild:
+            resolved_guild_id = guild.id
+
         await self.bot.db.modify_user_dkp(
             winning_user_id,
-            interaction.guild.id,
+            resolved_guild_id,
             -winning_amount,
             f"Won auction for {auction['item_name']}",
             username=winner.display_name if winner else None,
         )
 
-        if winner is not None and interaction.guild is not None:
+        if winner is not None and guild is not None:
             new_total = None
             try:
-                new_total = await self.bot.db.get_user_dkp(winning_user_id, interaction.guild.id)
+                new_total = await self.bot.db.get_user_dkp(winning_user_id, guild.id)
             except Exception:
                 new_total = None
             await send_dkp_change_dm(
                 winner,
-                interaction.guild,
+                guild,
                 -winning_amount,
                 f"Won auction for {auction['item_name']}",
                 new_total=new_total,
             )
 
-        embed = create_success_embed(
+        result_embed = create_success_embed(
             f"Auction Concluded: {auction['item_name']}",
             f"Congratulations to {winner_name} for winning with a bid of **{winning_amount} DKP**!",
         )
-        # Post winner publicly in the raid thread so everyone can see the result.
-        await interaction.channel.send(embed=embed)
+        if channel is not None:
+            try:
+                await channel.send(embed=result_embed)
+            except Exception:
+                pass
         self._log_step(interaction, trace_id, "end_auction.completed", auction_id=auction["id"])
 
-        if source == "raid_popup":
+        if source in ("raid_popup",):
             await respond_popup(
                 f"Ended auction for **{auction['item_name']}**. Winner: {winner_name} (**{winning_amount} DKP**).",
                 title="End Auction",
+            )
+        else:
+            try:
+                await interaction.followup.send(
+                    embed=create_success_embed(
+                        "Auction Ended",
+                        f"Winner: {winner_name} — **{winning_amount} DKP** for **{auction['item_name']}**.",
+                    ),
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
+
+        if guild:
+            await self._post_completed_auction_archive(
+                guild, dict(auction), winner_name, winning_amount, len(bids)
             )
 
 

@@ -158,6 +158,14 @@ class Database:
                 "guild_bank_transactions_channel_id",
                 "ALTER TABLE guilds ADD COLUMN guild_bank_transactions_channel_id INTEGER",
             ),
+            (
+                "completed_auctions_channel_id",
+                "ALTER TABLE guilds ADD COLUMN completed_auctions_channel_id INTEGER",
+            ),
+            (
+                "auction_panel_message_id",
+                "ALTER TABLE guilds ADD COLUMN auction_panel_message_id INTEGER",
+            ),
         ]
 
         for col, sql in migrations:
@@ -238,6 +246,29 @@ class Database:
             except aiosqlite.OperationalError:
                 continue
 
+        async with self.pool.execute("PRAGMA table_info(auctions)") as cursor:
+            auction_rows = await cursor.fetchall()
+        auction_existing = {row[1] for row in auction_rows}
+
+        auction_migrations: list[tuple[str, str]] = [
+            (
+                "guild_id",
+                "ALTER TABLE auctions ADD COLUMN guild_id INTEGER",
+            ),
+            (
+                "ended_at",
+                "ALTER TABLE auctions ADD COLUMN ended_at TIMESTAMP",
+            ),
+        ]
+
+        for col, sql in auction_migrations:
+            if col in auction_existing:
+                continue
+            try:
+                await self.pool.execute(sql)
+            except aiosqlite.OperationalError:
+                continue
+
         async with self.pool.execute("PRAGMA table_info(raid_dkp_transactions)") as cursor:
             raid_dkp_rows = await cursor.fetchall()
         raid_dkp_existing = {row[1] for row in raid_dkp_rows}
@@ -312,7 +343,9 @@ class Database:
                     guild_bank_channel_id INTEGER,
                     guild_bank_category_id INTEGER,
                     guild_bank_inventory_channel_id INTEGER,
-                    guild_bank_transactions_channel_id INTEGER
+                    guild_bank_transactions_channel_id INTEGER,
+                    completed_auctions_channel_id INTEGER,
+                    auction_panel_message_id INTEGER
                 )
             """)
             await cursor.execute("""
@@ -435,12 +468,14 @@ class Database:
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS auctions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER,
                     raid_id INTEGER,
                     item_name TEXT,
                     is_active INTEGER DEFAULT 1,
                     highest_bidder_id INTEGER,
                     highest_bid INTEGER DEFAULT 0,
                     message_id INTEGER,
+                    ended_at TIMESTAMP,
                     FOREIGN KEY (raid_id) REFERENCES raids(id)
                 )
             """)
@@ -560,6 +595,39 @@ class Database:
                 )
                 await asyncio.sleep(delay)
                 delay *= 2
+
+    async def execute_rowcount(self, sql, params=()) -> int:
+        """Execute SQL, commit, and return the number of affected rows."""
+        attempts = 3
+        delay = 0.2
+        did_reconnect = False
+        for attempt in range(attempts):
+            try:
+                async with self.pool.execute(sql, params) as cursor:
+                    rowcount = cursor.rowcount
+                    await self.pool.commit()
+                return rowcount if rowcount is not None else 0
+            except (aiosqlite.OperationalError, OSError) as e:
+                if not did_reconnect and self._should_reconnect(e):
+                    did_reconnect = True
+                    logging.warning("DB execute_rowcount error; reconnecting: %s", e)
+                    try:
+                        await self.reconnect()
+                        continue
+                    except Exception:
+                        logging.exception("DB reconnect failed")
+                if attempt == attempts - 1:
+                    logging.error("DB execute_rowcount failed after %s attempts: %s", attempts, e)
+                    raise
+                logging.warning(
+                    "Transient DB execute_rowcount error (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
+        return 0
 
     async def add_raid_member_exclusion(self, raid_id: int, user_id: int, reason: str = "manual"):
         """Add an exclusion. reason should be 'manual', 'inactivity', or 'voluntary'."""
@@ -1177,6 +1245,18 @@ class Database:
 
     async def get_active_auction(self, raid_id):
         return await self.fetchone("SELECT * FROM auctions WHERE raid_id = ? AND is_active = 1", (raid_id,))
+
+    async def get_active_guild_auction(self, guild_id: int):
+        return await self.fetchone(
+            "SELECT * FROM auctions WHERE guild_id = ? AND raid_id IS NULL AND is_active = 1 ORDER BY id DESC LIMIT 1",
+            (guild_id,),
+        )
+
+    async def get_completed_auctions(self, guild_id: int, limit: int = 20):
+        return await self.fetchall(
+            "SELECT * FROM auctions WHERE guild_id = ? AND is_active = 0 ORDER BY id DESC LIMIT ?",
+            (guild_id, limit),
+        )
 
     async def get_raid_rules(self, raid_id: int):
         row = await self.fetchone("SELECT rules FROM raids WHERE id = ?", (raid_id,))
