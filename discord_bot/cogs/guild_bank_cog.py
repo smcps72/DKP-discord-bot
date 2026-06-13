@@ -1,4 +1,5 @@
 import asyncio
+import difflib
 import discord
 import logging
 from discord.ext import commands
@@ -126,44 +127,51 @@ class GuildBankCog(commands.Cog):
         if held_by_member is None:
             held_by_member = interaction.user
 
+        try:
+            inventory = await self.bot.db.guild_bank_get_inventory(interaction.guild.id)
+            existing_names = [item["item_name"] for item in (inventory or [])]
+        except Exception:
+            existing_names = []
+
+        fuzzy_match = self._find_best_fuzzy_match(item_name, existing_names)
+        if fuzzy_match:
+            corrected_name, ratio = fuzzy_match
+            from ..ui.views import GuildBankFuzzyMatchView
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            pct = int(ratio * 100)
+            await interaction.followup.send(
+                f"⚠️ **Possible spelling mismatch detected!**\n"
+                f"You entered: `{item_name}`\n"
+                f"Similar item already in bank: **{corrected_name}** ({pct}% match)\n"
+                f"Depositing as the existing name will combine quantities automatically.",
+                view=GuildBankFuzzyMatchView(
+                    self,
+                    item_name=item_name,
+                    corrected_name=corrected_name,
+                    similarity_pct=pct,
+                    quantity=quantity,
+                    category=category.value,
+                    location=location,
+                    held_by=held_by_member,
+                    note=note,
+                ),
+                ephemeral=True,
+            )
+            return
+
         if not interaction.response.is_done():
             await interaction.response.defer()
 
-        item_id = await self.bot.db.guild_bank_deposit(
-            guild_id=interaction.guild.id,
+        await self._execute_deposit(
+            interaction,
             item_name=item_name,
             quantity=quantity,
             category=category.value,
             location=location,
-            held_by_user_id=held_by_member.id,
-            actor_id=interaction.user.id,
+            held_by=held_by_member,
             note=note,
         )
-
-        await self._post_transaction_notification(
-            interaction.guild,
-            action="deposit",
-            item_id=item_id,
-            item_name=item_name,
-            quantity=quantity,
-            category=category.value,
-            location=location,
-            held_by_user_id=held_by_member.id,
-            actor_id=interaction.user.id,
-            note=note,
-        )
-
-        embed = create_success_embed(
-            "Item Deposited",
-            f"**{quantity}x {item_name}** deposited into the guild bank.\n"
-            f"Category: `{category.value}`\n"
-            f"Location: `{location}`\n"
-            f"Held by: {held_by_member.mention}\n"
-            f"Item ID: `{item_id}`",
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-        await self._update_bank_panel(interaction.guild)
 
     @app_commands.command(
         name="bank_withdraw",
@@ -385,44 +393,43 @@ class GuildBankCog(commands.Cog):
         else:
             held_by = interaction.user
 
+        try:
+            inventory = await self.bot.db.guild_bank_get_inventory(guild.id)
+            existing_names = [item["item_name"] for item in (inventory or [])]
+        except Exception:
+            existing_names = []
+
+        fuzzy_match = self._find_best_fuzzy_match(item_name, existing_names)
+        if fuzzy_match:
+            corrected_name, ratio = fuzzy_match
+            from ..ui.views import GuildBankFuzzyMatchView
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            pct = int(ratio * 100)
+            await interaction.followup.send(
+                f"⚠️ **Possible spelling mismatch detected!**\n"
+                f"You entered: `{item_name}`\n"
+                f"Similar item already in bank: **{corrected_name}** ({pct}% match)\n"
+                f"Depositing as the existing name will combine quantities automatically.",
+                view=GuildBankFuzzyMatchView(
+                    self,
+                    item_name=item_name,
+                    corrected_name=corrected_name,
+                    similarity_pct=pct,
+                    quantity=quantity,
+                    category=category,
+                    location=location,
+                    held_by=held_by,
+                    note=note,
+                ),
+                ephemeral=True,
+            )
+            return
+
         if not interaction.response.is_done():
             await interaction.response.defer()
 
-        item_id = await self.bot.db.guild_bank_deposit(
-            guild_id=guild.id,
-            item_name=item_name,
-            quantity=quantity,
-            category=category,
-            location=location,
-            held_by_user_id=held_by.id,
-            actor_id=interaction.user.id,
-            note=note,
-        )
-
-        await self._post_transaction_notification(
-            guild,
-            action="deposit",
-            item_id=item_id,
-            item_name=item_name,
-            quantity=quantity,
-            category=category,
-            location=location,
-            held_by_user_id=held_by.id,
-            actor_id=interaction.user.id,
-            note=note,
-        )
-
-        embed = create_success_embed(
-            "Item Deposited",
-            f"**{quantity}x {item_name}** deposited into the guild bank.\n"
-            f"Category: `{category}`\n"
-            f"Location: `{location}`\n"
-            f"Held by: {held_by.mention}\n"
-            f"Item ID: `{item_id}`",
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-        await self._update_bank_panel(guild)
+        await self._execute_deposit(interaction, item_name, quantity, category, location, held_by, note)
 
     async def process_withdraw(
         self,
@@ -507,6 +514,83 @@ class GuildBankCog(commands.Cog):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_best_fuzzy_match(
+        item_name: str,
+        existing_names: list[str],
+        threshold: float = 0.80,
+    ) -> tuple[str, float] | None:
+        """Return (canonical_name, ratio) for the best fuzzy match above threshold.
+
+        Returns None if an exact case-insensitive match exists (existing DB
+        combining handles that) or if no name exceeds the threshold.
+        """
+        needle = item_name.lower()
+        best: tuple[str, float] | None = None
+        seen: set[str] = set()
+        for name in existing_names:
+            key = name.lower()
+            if key == needle:
+                return None  # exact match — DB combining handles it
+            if key in seen:
+                continue
+            seen.add(key)
+            ratio = difflib.SequenceMatcher(None, needle, key).ratio()
+            if ratio >= threshold:
+                if best is None or ratio > best[1]:
+                    best = (name, ratio)
+        return best
+
+    async def _execute_deposit(
+        self,
+        interaction: discord.Interaction,
+        item_name: str,
+        quantity: int,
+        category: str,
+        location: str,
+        held_by: discord.Member | discord.User,
+        note: str,
+    ) -> None:
+        """Core deposit logic shared by the direct path and fuzzy-match confirm."""
+        guild = interaction.guild
+        if not guild:
+            return
+
+        item_id = await self.bot.db.guild_bank_deposit(
+            guild_id=guild.id,
+            item_name=item_name,
+            quantity=quantity,
+            category=category,
+            location=location,
+            held_by_user_id=held_by.id,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
+        await self._post_transaction_notification(
+            guild,
+            action="deposit",
+            item_id=item_id,
+            item_name=item_name,
+            quantity=quantity,
+            category=category,
+            location=location,
+            held_by_user_id=held_by.id,
+            actor_id=interaction.user.id,
+            note=note,
+        )
+
+        embed = create_success_embed(
+            "Item Deposited",
+            f"**{quantity}x {item_name}** deposited into the guild bank.\n"
+            f"Category: `{category}`\n"
+            f"Location: `{location}`\n"
+            f"Held by: {held_by.mention}\n"
+            f"Item ID: `{item_id}`",
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        await self._update_bank_panel(guild)
 
     def _build_inventory_embed(
         self, items, guild: discord.Guild

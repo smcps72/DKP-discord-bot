@@ -6634,6 +6634,67 @@ class GuildBankPanelView(discord.ui.View):
         await interaction.response.send_modal(GuildBankWithdrawModal(bank_cog))
 
 
+class GuildBankFuzzyMatchView(discord.ui.View):
+    """Ephemeral view shown when a deposit item name fuzzy-matches an existing inventory entry."""
+
+    def __init__(
+        self,
+        bank_cog,
+        *,
+        item_name: str,
+        corrected_name: str,
+        similarity_pct: int,
+        quantity: int,
+        category: str,
+        location: str,
+        held_by,
+        note: str,
+    ):
+        super().__init__(timeout=120)
+        self.bank_cog = bank_cog
+        self.item_name = item_name
+        self.corrected_name = corrected_name
+        self.similarity_pct = similarity_pct
+        self.quantity = quantity
+        self.category = category
+        self.location = location
+        self.held_by = held_by
+        self.note = note
+
+        label_name = corrected_name if len(corrected_name) <= 55 else corrected_name[:52] + "..."
+        self.yes_btn.label = f'Yes, use "{label_name}"'
+
+    @discord.ui.button(label="...", style=discord.ButtonStyle.primary)
+    async def yes_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        await self.bank_cog._execute_deposit(
+            interaction,
+            item_name=self.corrected_name,
+            quantity=self.quantity,
+            category=self.category,
+            location=self.location,
+            held_by=self.held_by,
+            note=self.note,
+        )
+
+    @discord.ui.button(label="No, keep as entered", style=discord.ButtonStyle.secondary)
+    async def no_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        await self.bank_cog._execute_deposit(
+            interaction,
+            item_name=self.item_name,
+            quantity=self.quantity,
+            category=self.category,
+            location=self.location,
+            held_by=self.held_by,
+            note=self.note,
+        )
+
+
 class AuctionManagePanelView(discord.ui.View):
     """Ephemeral panel shown after clicking 'Open Auction Panel'. Buttons are hidden based on permissions and active auction state."""
 
