@@ -170,6 +170,19 @@ class Database:
                 "active_auctions_channel_id",
                 "ALTER TABLE guilds ADD COLUMN active_auctions_channel_id INTEGER",
             ),
+            (
+                "voice_enabled",
+                "ALTER TABLE guilds ADD COLUMN voice_enabled INTEGER DEFAULT 0",
+            ),
+            (
+                "voice_tier",
+                "ALTER TABLE guilds ADD COLUMN voice_tier TEXT DEFAULT 'free'",
+            ),
+            ("voice_channel_id", "ALTER TABLE guilds ADD COLUMN voice_channel_id INTEGER"),
+            (
+                "voice_minutes_used",
+                "ALTER TABLE guilds ADD COLUMN voice_minutes_used INTEGER DEFAULT 0",
+            ),
         ]
 
         for col, sql in migrations:
