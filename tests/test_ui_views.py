@@ -536,7 +536,7 @@ class TestRaidControlView:
         _args, kwargs = mock_raid_control_interaction.response.edit_message.call_args
         assert isinstance(kwargs.get("view"), RaidMemberAssignGroupView)
 
-    async def test_group_signup_modal_set_group_uses_searchable_user_select(self, mock_bot, mock_raid_control_interaction):
+    async def test_group_signup_modal_set_group_scopes_picker_to_raid_roster(self, mock_bot, mock_raid_control_interaction):
         mock_bot.db = MagicMock()
         mock_bot.db.get_guild_config = AsyncMock(return_value={"raid_member_list_order": "name"})
         mock_bot.db.get_raid_by_thread = AsyncMock(return_value={"id": 1, "leader_id": mock_raid_control_interaction.user.id, "group_count": 3})
@@ -546,9 +546,11 @@ class TestRaidControlView:
         member1 = MagicMock()
         member1.bot = False
         member1.id = 1
+        member1.display_name = "Alpha"
         member2 = MagicMock()
         member2.bot = False
         member2.id = 2
+        member2.display_name = "Bravo"
         mock_raid_control_interaction.guild.get_member.side_effect = lambda uid: member1 if uid == 1 else (member2 if uid == 2 else None)
 
         mock_raid_control_interaction.response.edit_message = AsyncMock()
@@ -558,14 +560,38 @@ class TestRaidControlView:
 
         _args, kwargs = mock_raid_control_interaction.response.edit_message.call_args
         assign_view = kwargs.get("view")
-        picker = next(c for c in assign_view.children if isinstance(c, discord.ui.UserSelect))
+
+        # The single-member picker must be a roster-scoped static Select, not a
+        # guild-wide UserSelect (which would surface members from old sessions).
+        assert not any(isinstance(c, discord.ui.UserSelect) for c in assign_view.children)
+        picker = next(
+            c for c in assign_view.children
+            if isinstance(c, discord.ui.Select)
+            and getattr(c, "placeholder", "").startswith("Select a member...")
+        )
         assert picker.max_values == 1
         assert getattr(picker, "_allowed_member_ids", set()) == {1, 2}
-        assert not any(
-            isinstance(c, discord.ui.Select) and not isinstance(c, discord.ui.UserSelect)
-            and getattr(c, "placeholder", None) == "Select a member..."
-            for c in assign_view.children
+        assert {option.value for option in picker.options} == {"1", "2"}
+
+    async def test_assign_group_view_paginates_members(self):
+        bot = MagicMock()
+        members = []
+        for index in range(30):
+            member = MagicMock()
+            member.id = 1000 + index
+            member.bot = False
+            member.display_name = f"Member {index:02d}"
+            members.append(member)
+
+        view = RaidMemberAssignGroupView(bot, raid_id=1, members=members, group_count=3, member_list_order="name")
+
+        picker = next(
+            c for c in view.children
+            if isinstance(c, discord.ui.Select) and getattr(c, "placeholder", "").startswith("Select a member...")
         )
+        assert len(picker.options) == 25
+        assert picker.placeholder == "Select a member... (Page 1/2)"
+        assert not any(isinstance(c, discord.ui.UserSelect) for c in view.children)
 
     async def test_group_signup_modal_bulk_set_group_keeps_picker(self, mock_bot, mock_raid_control_interaction):
         mock_bot.db = MagicMock()
