@@ -5,9 +5,9 @@ app = Flask(__name__)
 # In a real application, this would be a database of customers.
 # The key is the license key, the value could be an object with subscription status, expiry, etc.
 VALID_LICENSES = {
-    "YOUR_SUPER_SECRET_LICENSE_KEY": {"status": "active"},
+    "YOUR_SUPER_SECRET_LICENSE_KEY": {"status": "active", "tier": "free"},
     "ANOTHER-EXPIRED-KEY-EXAMPLE": {"status": "lapsed"},
-    "D1ZmwnrP91Lan-PLRQ7tBEYYYod7Eypos_KBKvwaHLg": {"status": "active"}
+    "D1ZmwnrP91Lan-PLRQ7tBEYYYod7Eypos_KBKvwaHLg": {"status": "active", "tier": "paid"}
 }
 
 

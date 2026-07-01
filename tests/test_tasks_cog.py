@@ -110,6 +110,37 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
         self.bot.db.execute.assert_any_call("UPDATE guilds SET warning_sent = 0 WHERE guild_id = ?", (mock_guild.id,))
 
 
+    async def test_license_check_persists_tier_when_present(self):
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = 12345
+        self.bot.guilds = [mock_guild]
+        self.bot.db.get_guild_config.return_value = {'dkp_channel_id': 67890, 'warning_sent': 0, 'license_status': 'unknown'}
+
+        self._setup_mock_http_response(status_code=200, json_payload={"status": "active", "tier": "paid"})
+
+        await self.cog.license_check()
+
+        self.bot.db.execute.assert_any_call(
+            "UPDATE guilds SET voice_tier = ? WHERE guild_id = ?", ("paid", mock_guild.id)
+        )
+
+    async def test_license_check_downgrades_tier_on_lapse(self):
+        # A lapsed subscription must revoke voice by writing tier 'free', even if
+        # the server still reports tier='paid'.
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = 12345
+        self.bot.guilds = [mock_guild]
+        self.bot.get_channel.return_value = AsyncMock(spec=discord.TextChannel)
+        self.bot.db.get_guild_config.return_value = {'dkp_channel_id': 67890, 'warning_sent': 0, 'license_status': 'active'}
+
+        self._setup_mock_http_response(status_code=200, json_payload={"status": "lapsed", "tier": "paid"})
+
+        await self.cog.license_check()
+
+        self.bot.db.execute.assert_any_call(
+            "UPDATE guilds SET voice_tier = ? WHERE guild_id = ?", ("free", mock_guild.id)
+        )
+
     async def test_license_check_lapsed_license_sends_warning(self):
         mock_guild = MagicMock(spec=discord.Guild)
         mock_guild.id = 12345

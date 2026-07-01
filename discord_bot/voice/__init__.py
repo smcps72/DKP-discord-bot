@@ -24,6 +24,39 @@ from .receive import (
 )
 from .audio_utils import downmix_stereo_to_mono, resample, to_stt_format
 from .vad import EnergyVAD
+from .tiering import (
+    FREE,
+    PAID,
+    VALID_TIERS,
+    VOICE_MINUTE_LIMITS,
+    Entitlements,
+    tier_from_license,
+    voice_allowed,
+    usage_state,
+    load_entitlements,
+    reset_if_new_period,
+)
+from .plugins import (
+    ManifestError,
+    RESERVED_COMMAND_NAMES,
+    validate_command_manifest,
+    build_command_from_manifest,
+    register_manifest,
+    discover_plugins,
+)
+from .stt import SttEngine, ScriptedStt, DeepgramStt, FasterWhisperStt, SttUnavailable
+from .session import VoiceSession, VoiceSessionConfig
+from .personas import (
+    Persona,
+    PERSONAS,
+    DEFAULT_PERSONA_KEY,
+    get_persona,
+    list_personas,
+    sanitize_for_speech,
+    screen_text,
+    apply_persona,
+)
+from .tts import TtsEngine, ScriptedTts, ElevenLabsTts, TtsUnavailable, speak
 
 __all__ = [
     "CommandRegistry",
@@ -48,4 +81,44 @@ __all__ = [
     "resample",
     "to_stt_format",
     "EnergyVAD",
+    # Phase 4 — tiering + metering
+    "FREE",
+    "PAID",
+    "VALID_TIERS",
+    "VOICE_MINUTE_LIMITS",
+    "Entitlements",
+    "tier_from_license",
+    "voice_allowed",
+    "usage_state",
+    "load_entitlements",
+    "reset_if_new_period",
+    # Phase 6 — programmable third-party command interface
+    "ManifestError",
+    "RESERVED_COMMAND_NAMES",
+    "validate_command_manifest",
+    "build_command_from_manifest",
+    "register_manifest",
+    "discover_plugins",
+    # Phase 3 — push-to-talk + live audio
+    "SttEngine",
+    "ScriptedStt",
+    "DeepgramStt",
+    "FasterWhisperStt",
+    "SttUnavailable",
+    "VoiceSession",
+    "VoiceSessionConfig",
+    # Phase 5 — TTS + personas
+    "Persona",
+    "PERSONAS",
+    "DEFAULT_PERSONA_KEY",
+    "get_persona",
+    "list_personas",
+    "sanitize_for_speech",
+    "screen_text",
+    "apply_persona",
+    "TtsEngine",
+    "ScriptedTts",
+    "ElevenLabsTts",
+    "TtsUnavailable",
+    "speak",
 ]
