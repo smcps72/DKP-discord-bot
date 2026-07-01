@@ -13,13 +13,14 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..utils import create_info_embed, create_success_embed, create_error_embed
+from ..utils import create_info_embed, create_success_embed, create_error_embed, is_officer
 from ..voice import (
     build_default_registry,
     ClaudeIntentParser,
     Dispatcher,
     DispatchContext,
 )
+from ..voice.handlers.undo import undo_last_command
 
 
 class VoiceConfirmView(discord.ui.View):
@@ -77,7 +78,10 @@ class VoiceCog(commands.Cog):
     @staticmethod
     def _result_embed(result) -> discord.Embed:
         if result.status == "ok":
-            return create_success_embed("Done", result.message)
+            message = result.message
+            if isinstance(result.data, dict) and result.data.get("undo_entry_id"):
+                message = f"{message}\n\nIf that was wrong, run `/undo_last_command`."
+            return create_success_embed("Done", message)
         if result.status in ("denied", "invalid_args", "unknown_command", "error"):
             return create_error_embed("Couldn't run that", result.message)
         return create_info_embed("AI command", result.message)
@@ -151,6 +155,39 @@ class VoiceCog(commands.Cog):
             )
             return
 
+        await interaction.followup.send(embed=self._result_embed(result), ephemeral=True)
+
+    @app_commands.command(
+        name="undo_last_command",
+        description="Undo your last successful undoable AI command in this server.",
+    )
+    async def undo_last_command_cmd(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                embed=create_error_embed(
+                    "Server only", "This command can only be used in a server."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        if not await is_officer(interaction):
+            await interaction.response.send_message(
+                embed=create_error_embed(
+                    "Not allowed", "You must be an officer to undo AI commands."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        ctx = DispatchContext(
+            bot=self.bot,
+            interaction=interaction,
+            guild_id=interaction.guild.id,
+            actor_id=interaction.user.id,
+        )
+        result = await undo_last_command({}, ctx)
         await interaction.followup.send(embed=self._result_embed(result), ephemeral=True)
 
 

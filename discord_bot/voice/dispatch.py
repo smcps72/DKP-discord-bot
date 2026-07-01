@@ -164,13 +164,33 @@ class Dispatcher:
 
         # 5. Run the handler.
         try:
-            return await command.handler(intent.args or {}, ctx)
+            result = await command.handler(intent.args or {}, ctx)
         except Exception as exc:
             logging.exception("Handler for %s raised", command.name)
             return DispatchResult(
                 status="error",
                 message=f"The command failed: {exc}",
             )
+
+        if result.status == "ok" and isinstance(result.data, dict):
+            undo = result.data.get("undo")
+            if isinstance(undo, dict):
+                action = undo.get("action")
+                data = undo.get("data") if isinstance(undo.get("data"), dict) else {}
+                if action:
+                    try:
+                        entry_id = await ctx.bot.db.record_command_undo(
+                            ctx.guild_id,
+                            ctx.actor_id,
+                            command.name,
+                            intent.args or {},
+                            str(action),
+                            data,
+                        )
+                        result.data["undo_entry_id"] = entry_id
+                    except Exception:
+                        logging.exception("Failed to record undo entry for %s", command.name)
+        return result
 
     @staticmethod
     def _confirm_summary(command: VoiceCommand, args: dict[str, Any]) -> str:

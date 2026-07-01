@@ -61,10 +61,10 @@ def test_tool_specs_shape():
     assert "handler" not in spec
 
 
-def test_default_registry_has_four_commands():
+def test_default_registry_has_default_commands():
     reg = build_default_registry()
     names = {c.name for c in reg.all()}
-    assert names == {"award_dkp", "deduct_dkp", "bank_withdraw", "bank_deposit"}
+    assert names == {"award_dkp", "deduct_dkp", "bank_withdraw", "bank_deposit", "undo_last_command"}
 
 
 def test_default_registry_destructive_flags():
@@ -73,6 +73,7 @@ def test_default_registry_destructive_flags():
     assert reg.get("deduct_dkp").destructive is True
     assert reg.get("bank_withdraw").destructive is True
     assert reg.get("bank_deposit").destructive is False
+    assert reg.get("undo_last_command").destructive is True
 
 
 def test_default_registry_schemas_are_strict_objects():

@@ -58,7 +58,25 @@ async def bank_withdraw(args: dict[str, Any], ctx: DispatchContext) -> DispatchR
     return DispatchResult(
         status="ok",
         message=f"Withdrew {quantity} of '{item['item_name']}' from the guild bank.",
-        data={"item_id": item_id, "quantity": quantity},
+        data={
+            "item_id": item_id,
+            "quantity": quantity,
+            "undo": {
+                "action": "bank_withdraw",
+                "data": {
+                    "item_id": item_id,
+                    "item_name": str(item["item_name"]),
+                    "quantity": int(quantity),
+                    "category": str(item["category"] or "other"),
+                    "location": str(item["location"] or ""),
+                    "held_by_user_id": (
+                        int(item["held_by_user_id"])
+                        if item["held_by_user_id"] is not None
+                        else int(ctx.actor_id)
+                    ),
+                },
+            },
+        },
     )
 
 
@@ -85,5 +103,20 @@ async def bank_deposit(args: dict[str, Any], ctx: DispatchContext) -> DispatchRe
     return DispatchResult(
         status="ok",
         message=f"Deposited {quantity} of '{item_name}' into the guild bank.",
-        data={"item_id": item_id, "quantity": quantity, "category": category},
+        data={
+            "item_id": item_id,
+            "quantity": quantity,
+            "category": category,
+            "undo": {
+                "action": "bank_deposit",
+                "data": {
+                    "item_id": int(item_id),
+                    "item_name": item_name,
+                    "quantity": int(quantity),
+                    "category": category,
+                    "location": location,
+                    "held_by_user_id": int(held_by_user_id),
+                },
+            },
+        },
     )

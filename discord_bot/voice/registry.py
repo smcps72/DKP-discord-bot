@@ -79,11 +79,12 @@ _CATEGORY_ENUM = [
 
 
 def build_default_registry() -> CommandRegistry:
-    """Wire up the four built-in commands (DKP + guild bank)."""
+    """Wire up the built-in commands."""
     # Imported here (not at module top) so the package import stays light and
     # the handlers module can import from registry without a cycle.
     from .handlers.dkp import award_dkp, deduct_dkp
     from .handlers.guild_bank import bank_deposit, bank_withdraw
+    from .handlers.undo import undo_last_command
 
     registry = CommandRegistry()
 
@@ -235,6 +236,22 @@ def build_default_registry() -> CommandRegistry:
             },
             handler=bank_deposit,
             destructive=False,
+            permission="officer",
+        )
+    )
+
+    registry.register(
+        VoiceCommand(
+            name="undo_last_command",
+            description="Undo the caller's last successful undoable AI command in this server.",
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            handler=undo_last_command,
+            destructive=True,
             permission="officer",
         )
     )

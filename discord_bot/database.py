@@ -2,6 +2,7 @@ import aiosqlite
 import logging
 import os
 import asyncio
+import json
 
 # Allow overriding the database file path via environment variable so that
 # production deployments (e.g., Railway) can store the SQLite file on a
@@ -576,6 +577,19 @@ class Database:
                 )
             """)
             await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS command_undo_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    actor_id INTEGER NOT NULL,
+                    command_name TEXT NOT NULL,
+                    command_args TEXT DEFAULT '{}',
+                    undo_action TEXT NOT NULL,
+                    undo_data TEXT DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    undone_at TIMESTAMP
+                )
+            """)
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS raid_managers (
                     raid_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
@@ -1029,6 +1043,62 @@ class Database:
             )
         row = await self.fetchone("SELECT dkp FROM users WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
         return row['dkp'] if row else 0
+
+    async def record_command_undo(
+        self,
+        guild_id: int,
+        actor_id: int,
+        command_name: str,
+        command_args: dict | None,
+        undo_action: str,
+        undo_data: dict | None,
+    ) -> int:
+        return await self.execute_insert(
+            """
+            INSERT INTO command_undo_entries
+                (guild_id, actor_id, command_name, command_args, undo_action, undo_data)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(guild_id),
+                int(actor_id),
+                str(command_name),
+                json.dumps(command_args or {}, sort_keys=True),
+                str(undo_action),
+                json.dumps(undo_data or {}, sort_keys=True),
+            ),
+        )
+
+    async def get_last_pending_command_undo(self, guild_id: int, actor_id: int):
+        row = await self.fetchone(
+            """
+            SELECT * FROM command_undo_entries
+            WHERE guild_id = ? AND actor_id = ? AND undone_at IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (int(guild_id), int(actor_id)),
+        )
+        if not row:
+            return None
+        entry = dict(row)
+        for key in ("command_args", "undo_data"):
+            try:
+                entry[key] = json.loads(entry.get(key) or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                entry[key] = {}
+        return entry
+
+    async def mark_command_undo_entry_undone(self, entry_id: int) -> bool:
+        changed = await self.execute_rowcount(
+            """
+            UPDATE command_undo_entries
+            SET undone_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND undone_at IS NULL
+            """,
+            (int(entry_id),),
+        )
+        return changed == 1
 
     async def modify_user_dkp(self, user_id, guild_id, amount, reason, username: str | None = None):
         await self.get_user_dkp(user_id, guild_id, username=username) # Ensure user exists and update username
