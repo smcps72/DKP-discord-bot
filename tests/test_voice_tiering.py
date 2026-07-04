@@ -177,12 +177,33 @@ async def test_load_entitlements_paid():
 
 
 @pytest.mark.asyncio
-async def test_load_entitlements_free_default():
+async def test_load_entitlements_free_open_beta(monkeypatch):
+    # Open beta (default, billing NOT enforced): a free guild still gets voice,
+    # treated as paid for entitlement purposes. The stored tier is still FREE.
+    monkeypatch.delenv("VOICE_REQUIRE_PAID", raising=False)
     db = Database(":memory:")
     try:
         await db.connect()
         await db.execute("INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)", (5,))
         ent = await load_entitlements(db, 5)
+        assert ent.tier == FREE            # real stored tier unchanged
+        assert ent.voice_allowed is True   # ...but voice is open to everyone
+        assert ent.minutes_limit == 1000
+        assert ent.level == "ok"
+    finally:
+        if db.pool:
+            await db.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_load_entitlements_free_denied_when_billing_enforced(monkeypatch):
+    # Premium mode (VOICE_REQUIRE_PAID=true): a free guild loses voice.
+    monkeypatch.setenv("VOICE_REQUIRE_PAID", "true")
+    db = Database(":memory:")
+    try:
+        await db.connect()
+        await db.execute("INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)", (7,))
+        ent = await load_entitlements(db, 7)
         assert ent.tier == FREE
         assert ent.voice_allowed is False
         assert ent.minutes_limit == 0
@@ -190,6 +211,18 @@ async def test_load_entitlements_free_default():
     finally:
         if db.pool:
             await db.pool.close()
+
+
+def test_voice_billing_enforced_flag(monkeypatch):
+    from discord_bot.voice.tiering import voice_billing_enforced
+
+    monkeypatch.delenv("VOICE_REQUIRE_PAID", raising=False)
+    assert voice_billing_enforced() is False  # open beta by default
+    for truthy in ("1", "true", "TRUE", "yes", "on"):
+        monkeypatch.setenv("VOICE_REQUIRE_PAID", truthy)
+        assert voice_billing_enforced() is True
+    monkeypatch.setenv("VOICE_REQUIRE_PAID", "false")
+    assert voice_billing_enforced() is False
 
 
 @pytest.mark.asyncio

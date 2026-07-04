@@ -11,9 +11,32 @@ it stays trivially unit-testable.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+# --- Open-beta gate ---------------------------------------------------------
+# Voice AI commands are currently an OPEN BETA — free for everyone — while the
+# feature is being tested. The paid-tier machinery below stays fully intact; it
+# is simply not enforced until this switch is turned on. Set the env var
+# VOICE_REQUIRE_PAID to a truthy value ("1"/"true"/"yes"/"on") to make voice
+# premium (paid-tier only) again.
+VOICE_REQUIRE_PAID_ENV = "VOICE_REQUIRE_PAID"
+
+
+def voice_billing_enforced() -> bool:
+    """Whether the paid-tier gate for voice is enforced.
+
+    Defaults to ``False`` (open beta: voice free for all). Flip on later by
+    setting ``VOICE_REQUIRE_PAID`` in the environment — no code change needed.
+    """
+    return os.environ.get(VOICE_REQUIRE_PAID_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 # --- Tier constants ---------------------------------------------------------
 FREE = "free"
@@ -139,11 +162,15 @@ async def load_entitlements(db, guild_id) -> Entitlements:
         if "voice_minutes_used" in keys and cfg["voice_minutes_used"] is not None:
             used = float(cfg["voice_minutes_used"])
 
-    limit = VOICE_MINUTE_LIMITS.get(tier, 0)
+    # Open beta: until billing is enforced, every guild is treated as paid for
+    # entitlement purposes (voice free for all, full minute budget). The real
+    # stored ``tier`` is still reported for display/future use.
+    effective_tier = tier if voice_billing_enforced() else PAID
+    limit = VOICE_MINUTE_LIMITS.get(effective_tier, 0)
     state = usage_state(used, limit)
     return Entitlements(
         tier=tier,
-        voice_allowed=voice_allowed(tier),
+        voice_allowed=voice_allowed(effective_tier),
         minutes_used=state["used"],
         minutes_limit=state["limit"],
         level=state["level"],

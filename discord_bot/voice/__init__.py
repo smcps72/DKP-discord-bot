@@ -35,6 +35,7 @@ from .tiering import (
     usage_state,
     load_entitlements,
     reset_if_new_period,
+    voice_billing_enforced,
 )
 from .plugins import (
     ManifestError,
@@ -92,6 +93,7 @@ __all__ = [
     "usage_state",
     "load_entitlements",
     "reset_if_new_period",
+    "voice_billing_enforced",
     # Phase 6 — programmable third-party command interface
     "ManifestError",
     "RESERVED_COMMAND_NAMES",
