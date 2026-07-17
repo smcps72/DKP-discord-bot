@@ -171,8 +171,10 @@ class VoiceCog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         if not await is_officer(interaction):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=create_error_embed(
                     "Not allowed", "You must be an officer to undo AI commands."
                 ),
@@ -180,7 +182,6 @@ class VoiceCog(commands.Cog):
             )
             return
 
-        await interaction.response.defer(ephemeral=True)
         ctx = DispatchContext(
             bot=self.bot,
             interaction=interaction,
