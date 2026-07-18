@@ -407,23 +407,6 @@ class TasksCog(commands.Cog):
                 except Exception:
                     continue
 
-            if not vc_ids:
-                try:
-                    await self.bot.db.execute(
-                        "DELETE FROM raid_voice_absences WHERE raid_id = ?",
-                        (raid_id,),
-                    )
-                except Exception:
-                    pass
-                try:
-                    await self.bot.db.execute(
-                        "DELETE FROM raid_leader_absences WHERE raid_id = ?",
-                        (raid_id,),
-                    )
-                except Exception:
-                    pass
-                continue
-
             voice_ids: set[int] = set()
             has_valid_voice_channel = False
             for vc_id in list(vc_ids):
@@ -436,24 +419,14 @@ class TasksCog(commands.Cog):
                         continue
                     voice_ids.add(int(m.id))
 
-            if not has_valid_voice_channel:
-                try:
-                    await self.bot.db.execute(
-                        "DELETE FROM raid_voice_absences WHERE raid_id = ?",
-                        (raid_id,),
-                    )
-                except Exception:
-                    pass
-                try:
-                    await self.bot.db.execute(
-                        "DELETE FROM raid_leader_absences WHERE raid_id = ?",
-                        (raid_id,),
-                    )
-                except Exception:
-                    pass
-                continue
-
             # --- Raid Leader Absence Check (10-minute auto-close) ---
+            # The leader counts as "present" only if they are in a resolvable raid
+            # voice channel. When the raid has no linked voice channels, or none of
+            # them can be resolved (deleted, or the association was cleared by the
+            # cleanup task once the channel emptied out), the leader is by
+            # definition absent, so the auto-close timer must still run. Without
+            # this, a raid becomes orphaned and never closes once its voice channel
+            # empties and its vc_id association is dropped.
             leader_in_voice = leader_id in voice_ids
             if leader_in_voice:
                 # Leader is in voice - clear any absence record
@@ -520,6 +493,20 @@ class TasksCog(commands.Cog):
                             raid_id,
                         )
                     continue  # Skip member absence checks for this raid since it's now closed
+
+            # Member voice-absence checks need at least one resolvable voice
+            # channel to evaluate presence. If none are available, clear member
+            # absence timers and move on; the leader-absence timer above still
+            # runs and will auto-close the raid if the leader stays gone.
+            if not has_valid_voice_channel:
+                try:
+                    await self.bot.db.execute(
+                        "DELETE FROM raid_voice_absences WHERE raid_id = ?",
+                        (raid_id,),
+                    )
+                except Exception:
+                    pass
+                continue
 
             try:
                 member_rows = await self.bot.db.get_raid_members(raid_id)

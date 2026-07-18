@@ -525,6 +525,55 @@ class TestTasksCog(unittest.IsolatedAsyncioTestCase):
             assert str(leader_id) in call_args
 
 
+    async def test_enforce_raid_voice_absences_auto_closes_raid_when_leader_absent_and_no_voice_channel(self):
+        """Regression: a raid must still auto-close after the leader is gone for
+        10+ minutes even once its voice channel has emptied/been removed and the
+        vc_id association has been cleared (no resolvable voice channel)."""
+        raid_id = 1
+        leader_id = 111
+        guild_id = 12345
+        thread_id = 222
+
+        mock_thread = MagicMock(spec=discord.Thread)
+        mock_thread.name = "Test Raid"
+        mock_thread.send = AsyncMock()
+        mock_thread.edit = AsyncMock()
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.id = guild_id
+        mock_guild.get_thread = MagicMock(return_value=mock_thread)
+        mock_guild.get_member = MagicMock(return_value=None)
+        mock_guild.get_role = MagicMock(return_value=None)
+        # No resolvable voice channel (association cleared / channel deleted)
+        mock_guild.get_channel = MagicMock(return_value=None)
+        self.bot.get_guild = MagicMock(return_value=mock_guild)
+        self.bot.get_channel = MagicMock(return_value=mock_thread)
+
+        self.bot.db.fetchall = AsyncMock(return_value=[
+            {"id": raid_id, "guild_id": guild_id, "leader_id": leader_id, "thread_id": thread_id, "vc_id": None, "announcement_message_id": None},
+        ])
+        self.bot.db.get_raid_voice_channels = AsyncMock(return_value=[])
+        self.bot.db.get_raid_members = AsyncMock(return_value=[])
+        self.bot.db.is_raid_member_excluded = AsyncMock(return_value=False)
+        self.bot.db.set_raid_timed_award_enabled = AsyncMock()
+        self.bot.db.get_guild_config = AsyncMock(return_value={"raid_leader_role_id": None, "raid_channel_id": None})
+
+        # Leader has been absent for 11 minutes (past the 10-minute threshold)
+        leader_absent_since = (datetime.utcnow() - timedelta(minutes=11)).isoformat()
+        self.bot.db.fetchone = AsyncMock(return_value={"absent_since": leader_absent_since})
+
+        await self.cog.enforce_raid_voice_absences()
+
+        # Raid deactivated despite there being no resolvable voice channel
+        self.bot.db.execute.assert_any_call(
+            "UPDATE raids SET is_active = 0 WHERE id = ?",
+            (raid_id,),
+        )
+        self.bot.db.set_raid_timed_award_enabled.assert_called_once_with(raid_id, False)
+        mock_thread.send.assert_called()
+        call_args = mock_thread.send.call_args[0][0]
+        assert "auto-closed" in call_args.lower()
+
     async def test_enforce_raid_voice_absences_clears_leader_absence_when_leader_returns(self):
         """Test that leader absence tracking is cleared when leader returns to voice."""
         class FakeVoiceChannel:
