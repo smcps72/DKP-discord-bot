@@ -184,6 +184,22 @@ class Database:
                 "voice_minutes_used",
                 "ALTER TABLE guilds ADD COLUMN voice_minutes_used INTEGER DEFAULT 0",
             ),
+            (
+                "voice_warn_75_sent",
+                "ALTER TABLE guilds ADD COLUMN voice_warn_75_sent INTEGER DEFAULT 0",
+            ),
+            (
+                "voice_warn_100_sent",
+                "ALTER TABLE guilds ADD COLUMN voice_warn_100_sent INTEGER DEFAULT 0",
+            ),
+            (
+                "voice_persona",
+                "ALTER TABLE guilds ADD COLUMN voice_persona TEXT DEFAULT 'default'",
+            ),
+            (
+                "voice_minutes_period",
+                "ALTER TABLE guilds ADD COLUMN voice_minutes_period TEXT",
+            ),
         ]
 
         for col, sql in migrations:
@@ -1033,6 +1049,43 @@ class Database:
     
     async def get_guild_config(self, guild_id):
         return await self.fetchone("SELECT * FROM guilds WHERE guild_id = ?", (guild_id,))
+
+    async def set_voice_tier(self, guild_id, tier):
+        """Persist a guild's voice entitlement tier (e.g. 'free'/'paid')."""
+        await self.execute(
+            "UPDATE guilds SET voice_tier = ? WHERE guild_id = ?",
+            (tier, guild_id),
+        )
+
+    async def add_voice_minutes(self, guild_id, minutes) -> int:
+        """Accumulate consumed voice minutes for a guild and return the new total."""
+        await self.execute(
+            "INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)",
+            (guild_id,),
+        )
+        await self.execute(
+            "UPDATE guilds SET voice_minutes_used = COALESCE(voice_minutes_used, 0) + ? WHERE guild_id = ?",
+            (minutes, guild_id),
+        )
+        row = await self.fetchone(
+            "SELECT voice_minutes_used FROM guilds WHERE guild_id = ?",
+            (guild_id,),
+        )
+        return row["voice_minutes_used"] if row else 0
+
+    async def reset_voice_minutes(self, guild_id):
+        """Reset monthly voice usage and clear the 75%/100% warning flags."""
+        await self.execute(
+            "UPDATE guilds SET voice_minutes_used = 0, voice_warn_75_sent = 0, voice_warn_100_sent = 0 WHERE guild_id = ?",
+            (guild_id,),
+        )
+
+    async def set_voice_persona(self, guild_id, persona_key):
+        """Persist a guild's selected TTS speak-back persona key."""
+        await self.execute(
+            "UPDATE guilds SET voice_persona = ? WHERE guild_id = ?",
+            (persona_key, guild_id),
+        )
 
     async def get_user_dkp(self, user_id, guild_id, username: str | None = None):
         await self.execute("INSERT OR IGNORE INTO users (user_id, guild_id) VALUES (?, ?)", (user_id, guild_id))

@@ -254,6 +254,15 @@ class VoiceRecvAdapter(VoiceReceiver):
         self._client = None
         self._started = False
 
+    @property
+    def voice_client(self):
+        """The connected discord voice client, or ``None`` before :meth:`start`.
+
+        Exposed so speak-back (TTS) can stream audio to the same connection
+        without reaching into the private ``_client`` attribute.
+        """
+        return self._client
+
     async def start(self, voice_channel) -> None:  # pragma: no cover - needs live VC
         # Lazy import: never required to import this module / package.
         try:

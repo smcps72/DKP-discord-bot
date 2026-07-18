@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import logging
 import os
 from ..utils import create_error_embed, create_info_embed
+from ..voice.tiering import tier_from_license
 
 LEADER_ABSENCE_THRESHOLD_MINUTES = 10
 MEMBER_ABSENCE_THRESHOLD_MINUTES = 5
@@ -47,6 +48,12 @@ class TasksCog(commands.Cog):
                     config = await self.bot.db.get_guild_config(guild_id)
                     if not config: return
                     await self.bot.db.execute("UPDATE guilds SET license_status = ? WHERE guild_id = ?", (status, guild_id))
+                    # Resolve the entitlement tier from the FULL license result, not
+                    # the raw 'tier' field: a non-active (lapsed/invalid) subscription
+                    # must downgrade to free so voice/TTS is revoked, even if the
+                    # server still reports tier='paid'. tier_from_license enforces this.
+                    new_tier = tier_from_license(data)
+                    await self.bot.db.execute("UPDATE guilds SET voice_tier = ? WHERE guild_id = ?", (new_tier, guild_id))
                     if status == "lapsed" and not config['warning_sent']:
                         dkp_channel = self.bot.get_channel(config['dkp_channel_id'])
                         if dkp_channel:

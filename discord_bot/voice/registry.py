@@ -54,6 +54,10 @@ class CommandRegistry:
     def all(self) -> list[VoiceCommand]:
         return list(self._commands.values())
 
+    def names(self) -> list[str]:
+        """Return the names of every registered command (insertion order)."""
+        return list(self._commands.keys())
+
     def tool_specs(self) -> list[dict[str, Any]]:
         """Return Anthropic tool specs for every registered command."""
         return [
